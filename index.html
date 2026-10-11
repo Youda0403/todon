@@ -1142,7 +1142,7 @@ function notifEl(n){
 }
 
 /* ---------- 화면들 ---------- */
-function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글이 없어요', hint = null, filter = null, limit = 20} = {}){
+function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글이 없어요', hint = null, filter = null, limit = 20, linkOnly = false} = {}){
   const root = document.createElement('div');
   const hintKey = 'ytt.hint.' + endpoint + JSON.stringify(params);
   if (hint && !LS.get(hintKey, false)){
@@ -1155,6 +1155,7 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
   const sent = document.createElement('div'); sent.className = 'sentinel';
   root.append(list, sent);
   let nextPath = null, loading = false, done = false, gen = 0, topSpin = null;
+  const seenIds = new Set();   /* 이미 보여 준 글은 다시 붙이지 않음 */
   const firstPath = () => endpoint + '?' + qs({limit:String(limit), ...params});
   async function load(reset){
     if (reset){ gen++; nextPath = null; done = false; loading = false; }
@@ -1167,10 +1168,14 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
     try{
       const {data: items, next} = await api(nextPath && !reset ? nextPath : firstPath(), {withLink:true});
       if (my !== gen) return;
-      if (reset) list.replaceChildren();
-      for (const it of (filter ? items.filter(filter) : items)) list.append(kind === 'notif' ? notifEl(it) : statusEl(it));
-      if (items.length){
-        nextPath = next || (endpoint + '?' + qs({limit:String(limit), ...params, max_id:items[items.length - 1].id}));
+      if (reset){ list.replaceChildren(); seenIds.clear(); }
+      const fresh = items.filter(it => !seenIds.has(String(it.id)));
+      fresh.forEach(it => seenIds.add(String(it.id)));
+      for (const it of (filter ? fresh.filter(filter) : fresh)) list.append(kind === 'notif' ? notifEl(it) : statusEl(it));
+      /* 새 글이 하나도 없는 페이지 = 끝. 북마크·좋아요처럼 서버가 알려 준 다음 주소로만 넘길 수 있는 목록은 그 주소가 없으면 끝 */
+      const nextGuess = next || (linkOnly ? null : endpoint + '?' + qs({limit:String(limit), ...params, max_id:items.length ? items[items.length - 1].id : ''}));
+      if (fresh.length && nextGuess){
+        nextPath = nextGuess;
         sent.innerHTML = ''; ok = true;
       }
       else { done = true; sent.innerHTML = list.childElementCount ? '<div class="end">여기까지 다 봤어요</div>' : `<div class="empty">${esc(empty)}</div>`; }
@@ -1702,6 +1707,7 @@ function dmListView(){
   const sent = document.createElement('div'); sent.className = 'sentinel';
   root.append(list, sent);
   let groups = new Map(), rows = new Map(), nextPath = null, loading = false, done = false, gen = 0;
+  const seenConv = new Set();   /* 같은 대화가 다시 와도 무한히 불러오지 않게 */
   function render(g){
     let row = rows.get(g.key); const fresh = !row;
     if (!row){ row = document.createElement('div'); row.className = 'dmrow'; rows.set(g.key, row); row.onclick = () => nav('#/chat/' + g.key); }
@@ -1728,8 +1734,10 @@ function dmListView(){
     try{
       const {data, next} = await api(nextPath && !reset ? nextPath : '/api/v1/conversations?limit=40', {withLink:true});
       if (my !== gen) return;
-      if (reset){ groups = new Map(); rows = new Map(); list.replaceChildren(); }
-      for (const c of data){
+      if (reset){ groups = new Map(); rows = new Map(); list.replaceChildren(); seenConv.clear(); }
+      const freshConv = data.filter(c => !seenConv.has(String(c.id)));
+      freshConv.forEach(c => seenConv.add(String(c.id)));
+      for (const c of freshConv){
         if (!c.last_status) continue;
         const key = partKey(c.accounts);
         let g = groups.get(key);
@@ -1739,7 +1747,7 @@ function dmListView(){
         convStore.set(me.acct + '|' + key, g);
         const row = render(g); if (row) list.append(row);
       }
-      if (data.length){
+      if (freshConv.length){
         const tail = data[data.length - 1];
         nextPath = next || ('/api/v1/conversations?' + qs({limit:'40', max_id:(tail.last_status || tail).id}));
         sent.innerHTML = ''; ok = true;
@@ -2944,8 +2952,8 @@ function buildView(name, arg, arg2){
     case 'fed': return feedView('/api/v1/timelines/public', {hint:'이 서버와 연결된 다른 서버의 공개 글까지 모두 보여요.', empty:'아직 글이 없어요.'});
     case 'list': return feedView(`/api/v1/timelines/list/${encodeURIComponent(arg)}`, {empty:'이 리스트에 아직 글이 없어요.'});
     case 'tag': return feedView(`/api/v1/timelines/tag/${encodeURIComponent(decodeURIComponent(arg))}`, {empty:'이 해시태그가 붙은 글이 아직 없어요.'});
-    case 'bookmarks': return feedView('/api/v1/bookmarks', {empty:'북마크한 글이 없어요.'});
-    case 'favs': return feedView('/api/v1/favourites', {empty:'좋아요를 누른 글이 없어요.'});
+    case 'bookmarks': return feedView('/api/v1/bookmarks', {empty:'북마크한 글이 없어요.', linkOnly:true});
+    case 'favs': return feedView('/api/v1/favourites', {empty:'좋아요를 누른 글이 없어요.', linkOnly:true});
     case 'settings': return settingsView(arg);
     case 'dm': return dmListView();
     case 'chat': return chatView(arg);

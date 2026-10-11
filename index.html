@@ -727,12 +727,43 @@ function unlockScroll(){
   Object.assign(document.body.style, {position:'', top:'', left:'', right:'', width:''});
   window.scrollTo(0, lockY);
 }
+/* 창(글쓰기·아래쪽 창·사진)이 열릴 때 뒤로가기 기록을 하나 남겨서, 뒤로가기를 누르면 앱이 꺼지지 않고 창만 닫히게 */
+const ovStack = [];
+let ovSeq = 0, ignorePop = 0;
+const isDeadEntry = st => !!(st && st.ytt === 'ov' && !ovStack.some(o => o.id === st.id));
+function pushOverlay(closeFn){
+  const id = ++ovSeq;
+  ovStack.push({id, closeFn});
+  history.pushState({ytt:'ov', id}, '');
+  return id;
+}
+/* 버튼으로 창을 닫았을 때: 그 창이 남긴 뒤로가기 기록을 지움.
+   닫자마자 다른 화면으로 넘어갔다면 지우지 않고, 나중에 뒤로가기로 지나갈 때 건너뜀 */
+function overlayClosedByUI(id){
+  const i = ovStack.findIndex(o => o.id === id);
+  if (i < 0) return;
+  ovStack.splice(i, 1);
+  setTimeout(() => {
+    if (history.state && history.state.ytt === 'ov' && history.state.id === id){ ignorePop++; history.back(); }
+  }, 0);
+}
+window.addEventListener('popstate', e => {
+  if (ignorePop > 0){ ignorePop--; return; }
+  if (ovStack.length){
+    ovStack.pop().closeFn();
+    if (isDeadEntry(e.state)){ ignorePop++; history.back(); }
+    return;
+  }
+  if (isDeadEntry(e.state)) history.back();
+});
 function sheet(build){
   const ov = document.createElement('div'); ov.className = 'ov';
   const sh = document.createElement('div'); sh.className = 'sheet'; sh.innerHTML = '<div class="grab"></div>';
   ov.append(sh);
   let closed = false;
-  const close = () => { if (closed) return; closed = true; ov.remove(); unlockScroll(); };
+  const shut = () => { if (closed) return false; closed = true; ov.remove(); unlockScroll(); return true; };
+  const id = pushOverlay(shut);
+  const close = () => { if (shut()) overlayClosedByUI(id); };
   lockScroll();
   ov.addEventListener('click', e => { if (e.target === ov) close(); });
   build(sh, close); document.body.append(ov); return close;
@@ -989,7 +1020,10 @@ function lightbox(list, i){
   const img = $('img', ov);
   const show = () => { img.src = imgs[k].url; $('.alt', ov).textContent = imgs[k].description || ''; };
   show();
-  const close = () => ov.remove();
+  let closed = false;
+  const shut = () => { if (closed) return false; closed = true; ov.remove(); return true; };
+  const id = pushOverlay(shut);
+  const close = () => { if (shut()) overlayClosedByUI(id); };
   ov.onclick = e => { if (e.target === ov || e.target === img) close(); };
   $('.x', ov).onclick = close;
   if (imgs.length > 1){
@@ -1328,7 +1362,8 @@ async function resolveId(st, acc){
 function openCompose({replyTo = null} = {}){
   const viewAcc = cur();
   let acc = viewAcc, accIdx = curIdx;
-  const draft = replyTo ? null : LS.get('ytt.draft', null);
+  const rkey = replyTo ? String(replyTo.id) : null;
+  const draft = replyTo ? (LS.get('ytt.rdraft', {})[rkey] || null) : LS.get('ytt.draft', null);
   const S = {cwOn:!!(draft && draft.cwOn), media:[], vis:'public', visTouched:false, prefix:'', posting:false};
   const ov = document.createElement('div'); ov.className = 'cov';
   ov.innerHTML = `<div class="compose" role="dialog" aria-label="글쓰기">
@@ -1368,7 +1403,7 @@ function openCompose({replyTo = null} = {}){
     r.append(head, body);
   }
   if (draft && draft.cw) cw.value = draft.cw;
-  if (replyTo && replyTo.spoiler_text){ S.cwOn = true; cw.value = replyTo.spoiler_text; }
+  if (replyTo && replyTo.spoiler_text && !draft){ S.cwOn = true; cw.value = replyTo.spoiler_text; }
 
   const update = () => {
     const n = countChars(ta.value) + (S.cwOn ? [...cw.value].length : 0);
@@ -1381,8 +1416,17 @@ function openCompose({replyTo = null} = {}){
     if (!replyTo){
       LS.set('ytt.draft', {text:ta.value, cw:cw.value, cwOn:S.cwOn});
       q('.c-draft').textContent = ta.value.trim() ? '임시저장됨' : '';
+    } else {
+      const m = LS.get('ytt.rdraft', {});
+      if (hasWriting()) m[rkey] = {text:ta.value, cw:cw.value, cwOn:S.cwOn, at:Date.now()};
+      else delete m[rkey];
+      const keys = Object.keys(m).sort((a, b) => m[b].at - m[a].at);
+      keys.slice(30).forEach(k => delete m[k]);
+      LS.set('ytt.rdraft', m);
+      q('.c-draft').textContent = hasWriting() ? '임시저장됨' : '';
     }
   };
+  function hasWriting(){ return !!(ta.value.trim() && ta.value.trim() !== S.prefix.trim()); }
   const paintVis = () => { q('.c-vis').innerHTML = ic(VIS[S.vis].icon) + `<span>${VIS[S.vis].label}</span>`; };
   const paintCw = () => { cw.hidden = !S.cwOn; q('.c-cwbtn').classList.toggle('on', S.cwOn); };
   const paintAcc = () => {
@@ -1391,7 +1435,7 @@ function openCompose({replyTo = null} = {}){
   };
   const applyAcc = first => {
     const np = replyTo ? mentionPrefix(replyTo, viewAcc.domain || viewAcc.instance, acc) : '';
-    if (first) ta.value = replyTo ? np : (draft ? draft.text || '' : '');
+    if (first) ta.value = draft && draft.text ? draft.text : (replyTo ? np : '');
     else if (replyTo && ta.value.startsWith(S.prefix)) ta.value = np + ta.value.slice(S.prefix.length);
     S.prefix = np;
     if (!S.visTouched){ let v = defaultVis(acc); if (replyTo) v = moreRestrictive(v, replyTo.visibility); S.vis = VIS[v] ? v : 'public'; }
@@ -1450,17 +1494,20 @@ function openCompose({replyTo = null} = {}){
     if (off > 120){ ov.style.height = vv.height + 'px'; ov.style.top = vv.offsetTop + 'px'; }
     else { ov.style.height = ''; ov.style.top = ''; }
   };
-  let closed = false;
-  const close = () => {
-    if (closed) return; closed = true;
+  let closed = false, ovId = 0;
+  const shut = () => {
+    if (closed) return false; closed = true;
     if (vv){ vv.removeEventListener('resize', fit); vv.removeEventListener('scroll', fit); }
     S.media.forEach(m => URL.revokeObjectURL(m.preview));
     ov.remove(); document.body.classList.remove('noscroll'); unlockScroll();
+    return true;
   };
-  q('.c-cancel').onclick = () => {
-    if (replyTo && ta.value.trim() && ta.value.trim() !== S.prefix.trim() && !confirm('쓰던 답글을 버릴까요?')) return;
-    close();
+  const close = () => { if (shut()) overlayClosedByUI(ovId); };
+  const leave = () => {
+    const saved = replyTo ? hasWriting() : !!ta.value.trim();
+    if (saved) toast('쓰던 글은 임시저장했어요');
   };
+  q('.c-cancel').onclick = () => { leave(); close(); };
   const idem = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
   post.onclick = async () => {
     if (post.disabled) return;
@@ -1472,6 +1519,7 @@ function openCompose({replyTo = null} = {}){
       if (replyTo) body.in_reply_to_id = acc.instance === viewAcc.instance ? replyTo.id : await resolveId(replyTo, acc);
       await api('/api/v1/statuses', {method:'POST', body, acc, headers:{'Idempotency-Key':idem}});
       if (!replyTo) LS.del('ytt.draft');
+      else { const m = LS.get('ytt.rdraft', {}); delete m[rkey]; LS.set('ytt.rdraft', m); }
       close();
       toast(acc === cur() ? '올렸어요' : `${acc.display_name || acc.username} 계정으로 올렸어요`);
       afterPost(acc, !!replyTo);
@@ -1481,6 +1529,7 @@ function openCompose({replyTo = null} = {}){
   };
 
   document.body.append(ov); document.body.classList.add('noscroll'); lockScroll();
+  ovId = pushOverlay(() => { if (shut()) leave(); });
   if (vv){ vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); fit(); }
   paintCw(); applyAcc(true); paintMedia();
   setTimeout(() => { ta.focus(); const L = ta.value.length; ta.setSelectionRange(L, L); }, 60);

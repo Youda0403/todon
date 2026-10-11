@@ -19,7 +19,9 @@
 :root{--bg:#fff;--fg:#0f1419;--sub:#536471;--line:#eff3f4;--hover:#f7f9f9;--accent:#6364ff;--accent-fg:#fff;--accent-soft:#efefff;--boost:#00ba7c;--fav:#f91880;--danger:#f4212e;--shadow:0 8px 28px rgba(0,0,0,.12);--glass:rgba(255,255,255,.86)}
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#15181c;--fg:#e7e9ea;--sub:#8b98a5;--line:#2f3336;--hover:#1c1f23;--accent:#8a8bff;--accent-fg:#fff;--accent-soft:#25264a;--shadow:0 8px 28px rgba(0,0,0,.5);--glass:rgba(21,24,28,.86)}}
 :root[data-theme=dark]{--bg:#15181c;--fg:#e7e9ea;--sub:#8b98a5;--line:#2f3336;--hover:#1c1f23;--accent:#8a8bff;--accent-fg:#fff;--accent-soft:#25264a;--shadow:0 8px 28px rgba(0,0,0,.5);--glass:rgba(21,24,28,.86);color-scheme:dark}
-:root{--post-fs:15px}
+:root{--post-fs:15px;--thread:#cfd9de}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--thread:#425059}}
+:root[data-theme=dark]{--thread:#425059}
 html{background:var(--bg)}
 body{margin:0;background:var(--bg);color:var(--fg);font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,system-ui,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:15px;line-height:1.5;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;word-break:keep-all}
 body.noscroll{overflow:hidden}
@@ -80,7 +82,7 @@ body.in-login #shell{padding-bottom:0;border:0}
 .row{display:flex;gap:12px}
 .left{display:flex;flex-direction:column;align-items:center;flex:none}
 .av{width:44px;height:44px;border-radius:50%;object-fit:cover;background:var(--line);display:block}
-.line{flex:1;width:2px;background:var(--line);margin-top:4px;margin-bottom:-12px}
+.line{flex:1;width:2px;border-radius:1px;background:var(--thread);margin-top:4px;margin-bottom:-12px}
 .status.up{border-bottom:0;padding-bottom:0}
 .status.up .actions{padding-bottom:8px}
 .body{flex:1;min-width:0}
@@ -138,6 +140,8 @@ img.emoji{height:1.25em;width:auto;vertical-align:-.25em;margin:0 .05em;object-f
 .status.focus .content{font-size:calc(var(--post-fs) + 2px);margin-top:10px}
 .fulltime{margin-top:12px;padding-bottom:10px;border-bottom:1px solid var(--line);color:var(--sub);font-size:14px}
 .tail{min-height:55vh}
+.thsec{display:flex;align-items:center;gap:6px;padding:10px 16px;font-size:14px;font-weight:700;color:var(--sub);background:var(--hover);border-bottom:1px solid var(--line)}
+.thsec .ic{width:16px;height:16px}
 
 /* 피드 상태 */
 .sentinel{min-height:80px;display:flex;align-items:center;justify-content:center;padding:16px}
@@ -596,26 +600,7 @@ body.no-counts .fstats b{display:none}
 .taghead .t b{display:block;font-size:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .taghead .t small{display:block;color:var(--sub);font-size:13px}
 .taghead .btns{display:flex;gap:8px;align-items:center;width:100%;padding-left:56px}
-.frow .oi{width:44px;height:44px}
 
-/* 검색 */
-.sbox{position:sticky;top:calc(54px + env(safe-area-inset-top));z-index:10;background:var(--glass);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
-.sbar{display:flex;align-items:center;gap:6px;margin:8px 12px;padding:0 4px 0 14px;border-radius:999px;background:var(--hover);border:1px solid transparent}
-.sbar:focus-within{border-color:var(--accent);background:var(--bg)}
-.sbar .sic{display:flex;color:var(--sub)}
-.sbar .sic .ic{width:18px;height:18px}
-.sbar input{flex:1;min-width:0;border:0;background:none;outline:none;font-size:16px;padding:10px 0;-webkit-appearance:none;appearance:none}
-.sbar input::-webkit-search-cancel-button{display:none}
-.sbar .ibtn{width:32px;height:32px;color:var(--sub)}
-.sbar .ibtn .ic{width:16px;height:16px}
-.stabs{border-top:1px solid var(--line)}
-.srec .t{cursor:pointer;font-weight:500}
-.shelp{margin:16px;padding:12px 14px;border-radius:12px;background:var(--hover);font-size:13.5px;color:var(--sub)}
-.shelp b{color:var(--fg)}
-.shelp ul{margin:6px 0 0;padding-left:18px}
-.shelp li{margin-top:4px}
-.shelp code{font-size:12.5px;background:var(--bg);border-radius:4px;padding:1px 4px}
-.empty small{font-size:13px}
 .reqchip{flex:none}
 </style>
 </head>
@@ -638,7 +623,6 @@ body.no-counts .fstats b{display:none}
 </div>
 <nav class="bnav" id="bnav"><div class="in">
   <button type="button" data-n="home" data-ic="home"><span>홈</span></button>
-  <button type="button" data-n="search" data-ic="search"><span>검색</span></button>
   <button type="button" data-n="notifications" data-ic="bell"><span>알림</span><i class="badge" hidden></i></button>
   <button type="button" data-n="dm" data-ic="mail"><span>쪽지</span><i class="badge" hidden></i></button>
   <button type="button" data-n="me" data-ic="user"><span>내 계정</span></button>
@@ -653,7 +637,7 @@ const OOB = 'urn:ietf:wg:oauth:2.0:oob';
 
 /* ---------- 아이콘 ---------- */
 const P = {
-  reply:'<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.4A8 8 0 1 1 21 12z"/>',
+  reply:'<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/>',
   boost:'<path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
   heart:'<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z"/>',
   bookmark:'<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
@@ -689,7 +673,6 @@ const P = {
   down:'<path d="M6 9l6 6 6-6"/>',
   sliders:'<path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/>',
   settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
-  search:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
   edit:'<path d="M11 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-6"/><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/>',
   smile:'<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01"/><path d="M15 9h.01"/>',
   poll:'<path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/>',
@@ -1001,7 +984,7 @@ function statusEl(s, o = {}){
   const by = s.reblog ? s.account : null;
   const st = s.reblog || s;
   const el = document.createElement('article');
-  el.className = 'status' + (o.focus ? ' focus' : '') + (o.up ? ' up' : '');
+  el.className = 'status' + (o.focus ? ' focus' : '') + (o.up ? ' up' : '') + (o.chained ? ' chained' : '');
   const v = st.visibility !== 'public' && VIS[st.visibility];
   const canBoost = st.visibility === 'public' || st.visibility === 'unlisted';
   el.innerHTML = `${by ? `<div class="pre">${ic('boost')}<span class="bb"></span></div>` : ''}
@@ -1046,7 +1029,7 @@ function statusEl(s, o = {}){
       if (fs.childElementCount) ft.after(fs);
     }
   }
-  if (st.in_reply_to_id){
+  if (st.in_reply_to_id && !o.chained){
     const r = $('.replyto', el); r.hidden = false;
     const self = st.in_reply_to_account_id === st.account.id;
     let txt = '이어지는 글';
@@ -1172,7 +1155,7 @@ function replaceStatusEverywhere(ns){
   const sel = `[data-sid="${CSS.escape(String(ns.id))}"]`;
   roots.forEach(r => r.querySelectorAll(sel).forEach(old => {
     if (!old.classList.contains('status')) return;
-    const el = statusEl(ns, {focus:old.classList.contains('focus'), up:old.classList.contains('up')});
+    const el = statusEl(ns, {focus:old.classList.contains('focus'), up:old.classList.contains('up'), chained:old.classList.contains('chained')});
     if (!el.classList || !el.classList.contains('status')) return;
     const oldPre = old.firstElementChild && old.firstElementChild.classList.contains('pre') ? old.firstElementChild : null;
     if (oldPre){ const np = el.firstElementChild && el.firstElementChild.classList.contains('pre') ? el.firstElementChild : null; if (np) np.replaceWith(oldPre); else el.prepend(oldPre); }
@@ -1562,7 +1545,14 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
       if (reset){ list.replaceChildren(); seenIds.clear(); }
       const fresh = items.filter(it => !seenIds.has(String(it.id)));
       fresh.forEach(it => seenIds.add(String(it.id)));
-      for (const it of (filter ? fresh.filter(filter) : fresh)) list.append(kind === 'notif' ? notifEl(it) : statusEl(it));
+      const shown = filter ? fresh.filter(filter) : fresh;
+      if (kind === 'notif') shown.forEach(it => list.append(notifEl(it)));
+      else for (let i = 0; i < shown.length; ){
+        let j = i;
+        while (j + 1 < shown.length && !shown[j].reblog && !shown[j + 1].reblog && shown[j].in_reply_to_id && String(shown[j].in_reply_to_id) === String(shown[j + 1].id)) j++;
+        for (let k = j; k >= i; k--) list.append(statusEl(shown[k], {up:k > i, chained:k < j}));
+        i = j + 1;
+      }
       /* 새 글이 하나도 없는 페이지 = 끝. 북마크·좋아요처럼 서버가 알려 준 다음 주소로만 넘길 수 있는 목록은 그 주소가 없으면 끝 */
       const nextGuess = next || (linkOnly ? null : endpoint + '?' + qs({limit:String(limit), ...params, max_id:items.length ? items[items.length - 1].id : ''}));
       if (fresh.length && nextGuess){
@@ -1585,6 +1575,19 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
   load(true);
   return root;
 }
+/* 답글 순서: 대화 갈래마다 끝까지 따라가며 보여 줌. 글쓴이가 이어 쓴 글을 먼저 */
+function threadOrder(focus, desc){
+  const kids = new Map(), byId = new Map(desc.map(d => [String(d.id), d]));
+  desc.forEach(d => { const p = String(d.in_reply_to_id); if (!kids.has(p)) kids.set(p, []); kids.get(p).push(d); });
+  const out = [], seen = new Set();
+  const walk = (id, author) => {
+    const ch = (kids.get(String(id)) || []).slice().sort((a, b) => (String(b.account.id) === author) - (String(a.account.id) === author));
+    ch.forEach(c => { if (seen.has(String(c.id))) return; seen.add(String(c.id)); out.push(c); walk(c.id, String(c.account.id)); });
+  };
+  walk(focus.id, String(focus.account.id));
+  desc.forEach(d => { if (!seen.has(String(d.id))){ seen.add(String(d.id)); out.push(d); walk(d.id, String(d.account.id)); } });
+  return out;
+}
 function threadView(id){
   const root = document.createElement('div');
   const load = async () => {
@@ -1592,9 +1595,14 @@ function threadView(id){
     try{
       const [s, ctx] = await Promise.all([api(`/api/v1/statuses/${id}`), api(`/api/v1/statuses/${id}/context`)]);
       root.replaceChildren();
-      ctx.ancestors.forEach(a => root.append(statusEl(a, {up:true})));
+      ctx.ancestors.forEach((a, i) => root.append(statusEl(a, {up:true, chained:i > 0})));
       const f = statusEl(s, {focus:true}); root.append(f);
-      ctx.descendants.forEach(d => root.append(statusEl(d)));
+      const order = threadOrder(s, ctx.descendants);
+      if (order.length) root.append(h(`<div class="thsec">${ic('reply')}<span>답글 ${order.length}개</span></div>`));
+      order.forEach((d, i) => {
+        const nx = order[i + 1], pv = order[i - 1];
+        root.append(statusEl(d, {up:!!nx && String(nx.in_reply_to_id) === String(d.id), chained:!!pv && String(d.in_reply_to_id) === String(pv.id)}));
+      });
       root.append(h('<div class="tail"></div>'));
       if (ctx.ancestors.length) requestAnimationFrame(() => { if (root.isConnected) f.scrollIntoView({block:'start'}); });
     }catch(e){
@@ -3544,120 +3552,6 @@ function tagView(name){
   root.refresh = () => { loadHead(); feed.refresh(); };
   return root;
 }
-/* ---------- 검색 ---------- */
-const recentKey = () => 'ytt.recent.' + cur().acct;
-function addRecent(qv){
-  qv = qv.trim(); if (!qv) return;
-  const l = LS.get(recentKey(), []).filter(x => x !== qv); l.unshift(qv); LS.set(recentKey(), l.slice(0, 10));
-}
-function searchView(){
-  const root = document.createElement('div');
-  const box = h(`<div class="sbox"><form class="sbar" role="search"><span class="sic">${ic('search')}</span><input type="search" enterkeyhint="search" placeholder="사람, #해시태그, 툿 주소로 찾기" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="검색어"><button class="ibtn sclear" type="button" aria-label="검색어 지우기" hidden>${ic('x')}</button></form><div class="tabs stabs" hidden><button type="button" data-k="accounts" class="on">사람</button><button type="button" data-k="hashtags">해시태그</button><button type="button" data-k="statuses">글</button></div></div>`);
-  const inp = $('input', box), clr = $('.sclear', box), tabs = $('.stabs', box);
-  const out = document.createElement('div');
-  root.append(box, out);
-  let k = 'accounts', res = null, seq = 0, timer = 0, lastQ = '';
-  const LABEL = {accounts:'사람', hashtags:'해시태그', statuses:'글'};
-  const tagRow = t => {
-    const uses = (t.history || []).slice(0, 7).reduce((n, d) => n + Number(d.uses || 0), 0);
-    const r = h(`<div class="frow"><span class="oi">${ic('hash')}</span><div class="t"><b></b><small></small></div></div>`);
-    $('b', r).textContent = '#' + t.name; $('small', r).textContent = uses ? `최근 일주일 ${uses}개 글` : '최근 글 없음';
-    r.onclick = () => { addRecent(inp.value); nav('#/htag/' + encodeURIComponent(t.name)); };
-    return r;
-  };
-  async function idle(){
-    tabs.hidden = true; out.replaceChildren();
-    const rec = LS.get(recentKey(), []);
-    if (rec.length){
-      const s = secEl('최근 찾은 것');
-      rec.forEach(x => {
-        const r = h(`<div class="tabrow srec"><span class="t"></span><button class="ibtn" type="button" aria-label="기록에서 지우기">${ic('x')}</button></div>`);
-        $('.t', r).textContent = x; $('.t', r).onclick = () => { inp.value = x; run(true); };
-        $('button', r).onclick = () => { LS.set(recentKey(), LS.get(recentKey(), []).filter(y => y !== x)); idle(); };
-        s.append(r);
-      });
-      out.append(s);
-    }
-    const ft = secEl('내가 팔로우하는 해시태그');
-    out.append(ft);
-    out.append(h('<div class="shelp"><b>이렇게 찾을 수 있어요</b><ul><li><b>사람</b>: 이름이나 아이디 (다른 서버 사람은 <code>@아이디@서버주소</code> 전체를 적고 검색 버튼을 눌러 주세요)</li><li><b>해시태그</b>: <code>#역극</code>처럼 태그 이름</li><li><b>툿·프로필 주소</b>: 링크를 붙여 넣으면 바로 열려요</li><li><b>글</b>: 단어로 찾기는 서버 설정에 따라 내가 쓴 글·좋아요·북마크·나를 부른 글이나, 검색을 허용한 사람의 공개 글만 찾을 수 있어요</li></ul></div>'));
-    try{
-      const tags = await api('/api/v1/followed_tags?limit=40');
-      if (inp.value.trim()) return;
-      if (!tags.length) ft.append(h('<p class="secdesc" style="padding:0 16px 14px">아직 없어요. 해시태그 화면에서 ‘팔로우’를 누르면 여기에 모여요.</p>'));
-      tags.forEach(t => ft.append(tagRow(t)));
-    }catch(e){ ft.remove(); }
-  }
-  function paintTabs(){
-    tabs.hidden = !res;
-    tabs.querySelectorAll('button').forEach(b => {
-      const n = res ? (res[b.dataset.k] || []).length : 0;
-      b.textContent = LABEL[b.dataset.k] + (n ? ` ${n >= 20 ? '20+' : n}` : '');
-      b.classList.toggle('on', b.dataset.k === k);
-    });
-  }
-  function show(){
-    paintTabs(); out.replaceChildren();
-    const items = (res && res[k]) || [];
-    if (!items.length){
-      out.append(h(`<div class="empty">${k === 'statuses' ? '찾은 글이 없어요.<br><small>단어로 글 찾기는 서버 설정에 따라 내 글·좋아요·북마크·나를 부른 글 등만 찾을 수 있어요.</small>' : k === 'accounts' ? '찾은 사람이 없어요.<br><small>다른 서버 사람은 @아이디@서버주소 전체를 적고 검색 버튼을 눌러 보세요.</small>' : '찾은 해시태그가 없어요.'}</div>`));
-      return;
-    }
-    items.forEach(it => out.append(k === 'accounts' ? personRow(it) : k === 'hashtags' ? tagRow(it) : statusEl(it)));
-    if (k === 'accounts') out.querySelectorAll('.frow').forEach(r => r.addEventListener('click', () => addRecent(inp.value), {capture:true}));
-    if (items.length >= 20){
-      const more = h('<div class="secpad" style="padding-top:12px"><button class="pill ghost wide" type="button">더 보기</button></div>');
-      const mb = $('button', more);
-      mb.onclick = async () => {
-        mb.disabled = true;
-        try{
-          const r = await api('/api/v2/search?' + qs({q:lastQ, type:k, limit:'20', offset:String(items.length), resolve:'false'}));
-          const add = (r && r[k]) || [];
-          const ids = new Set(items.map(x => String(x.id || x.name)));
-          add.filter(x => !ids.has(String(x.id || x.name))).forEach(x => items.push(x));
-          if (add.length < 20) res[k + 'Done'] = true;
-          const y = window.scrollY; show(); window.scrollTo(0, y);
-          if (res[k + 'Done']) out.querySelectorAll('.secpad').forEach(x => x.remove());
-        }catch(e){ toast(e.message); mb.disabled = false; }
-      };
-      if (!res[k + 'Done']) out.append(more);
-    }
-  }
-  async function run(commit){
-    const qv = inp.value.trim();
-    clr.hidden = !qv;
-    clearTimeout(timer);
-    if (!qv){ seq++; res = null; idle(); return; }
-    const my = ++seq;
-    const isUrl = /^https?:\/\/\S+$/i.test(qv);
-    if (isUrl && !commit) return;
-    out.replaceChildren(h('<div class="sentinel"><div class="spin"></div></div>'));
-    try{
-      const r = await api('/api/v2/search?' + qs({q:qv, limit:'20', resolve:String(!!commit)}));
-      if (my !== seq) return;
-      lastQ = qv;
-      if (commit) addRecent(qv);
-      if (isUrl){
-        if (r.statuses && r.statuses.length){ nav('#/thread/' + r.statuses[0].id); return; }
-        if (r.accounts && r.accounts.length){ nav('#/user/' + r.accounts[0].id); return; }
-      }
-      res = {accounts:r.accounts || [], hashtags:r.hashtags || [], statuses:r.statuses || []};
-      if (!(res[k] || []).length) k = ['accounts','hashtags','statuses'].find(x => res[x].length) || (qv.startsWith('#') ? 'hashtags' : k);
-      show();
-    }catch(e){
-      if (my !== seq) return;
-      out.replaceChildren();
-      const b = h('<div class="err" style="padding:24px 16px"><p></p></div>'); $('p', b).textContent = e.message; out.append(b);
-    }
-  }
-  inp.addEventListener('input', () => { clr.hidden = !inp.value.trim(); clearTimeout(timer); timer = setTimeout(() => run(false), 400); });
-  $('form', box).onsubmit = e => { e.preventDefault(); inp.blur(); run(true); };
-  clr.onclick = () => { inp.value = ''; run(false); inp.focus(); };
-  tabs.querySelectorAll('button').forEach(b => { b.onclick = () => { k = b.dataset.k; show(); window.scrollTo(0, 0); }; });
-  root.refresh = () => { if (inp.value.trim()) run(true); else idle(); };
-  idle();
-  return root;
-}
 /* ---------- 팔로우 요청 (잠금 계정) ---------- */
 function requestsPage(root){
   const s1 = secEl('나를 팔로우하고 싶은 사람', '수락하면 이 사람이 나를 팔로우하게 돼요. 팔로워만 볼 수 있는 글도 보여요.');
@@ -4004,7 +3898,7 @@ async function checkNotif(){
 
 /* ---------- 라우터 ---------- */
 const HOME_NAMES = ['home','local','fed','list','tag','bookmarks','favs'];
-const TABS = [...HOME_NAMES, 'search','notifications','mentions','dm','me'];
+const TABS = [...HOME_NAMES, 'notifications','mentions','dm','me'];
 const cache = new Map();
 let curKey = null, lastTab = '#/home', lastNotifTab = '#/notifications', lastHome = null;
 function parse(){
@@ -4057,7 +3951,6 @@ function buildView(name, arg, arg2){
     case 'thread': return threadView(arg);
     case 'user': return userView(arg);
     case 'follows': return followsView(arg, arg2 === 'followers' ? 'followers' : 'following');
-    case 'search': return searchView();
     case 'htag': return tagView(decodeURIComponent(arg));
     case 'who': return whoView(arg, arg2);
     default: return meView();
@@ -4106,7 +3999,7 @@ function setHeader(name, el){
   } else {
     L.innerHTML = ic('back'); L.setAttribute('aria-label', '뒤로'); L.onclick = goBack;
   }
-  T.textContent = {notifications:'알림', mentions:'알림', search:'검색', dm:'쪽지', me:'내 계정', thread:'글', user:'프로필', edit:'프로필 편집'}[name] || ((name === 'chat' || name === 'settings' || name === 'follows' || name === 'htag' || name === 'who') ? (el && el._title) || '쪽지' : APP_NAME);
+  T.textContent = {notifications:'알림', mentions:'알림', dm:'쪽지', me:'내 계정', thread:'글', user:'프로필', edit:'프로필 편집'}[name] || ((name === 'chat' || name === 'settings' || name === 'follows' || name === 'htag' || name === 'who') ? (el && el._title) || '쪽지' : APP_NAME);
   R.innerHTML = ic('refresh'); R.style.visibility = (name === 'edit' || name === 'settings') ? 'hidden' : 'visible';
   renderHomeTabs();
   $('#tTabs').hidden = !(HOME_NAMES.includes(name) && homeTabs().length > 1);

@@ -268,7 +268,9 @@ details.gl p{margin:0;padding:0 16px 14px;color:var(--sub);font-size:14px}
 .lb .x{top:calc(12px + env(safe-area-inset-top));left:12px}
 .lb .prev{left:8px;top:50%;transform:translateY(-50%)}
 .lb .next{right:8px;top:50%;transform:translateY(-50%)}
-.lb .alt{position:absolute;left:16px;right:16px;bottom:calc(16px + env(safe-area-inset-bottom));color:#fff;font-size:14px;text-align:center}
+.lb .altbtn{position:absolute;left:14px;bottom:calc(16px + env(safe-area-inset-bottom));border:0;border-radius:8px;background:rgba(255,255,255,.18);color:#fff;font-size:12px;font-weight:800;letter-spacing:.04em;padding:6px 9px}
+.lb .altbtn.on{background:#fff;color:#000}
+.lb .altbox{position:absolute;left:12px;right:12px;bottom:calc(58px + env(safe-area-inset-bottom));max-height:40vh;overflow-y:auto;overscroll-behavior:contain;background:rgba(0,0,0,.82);color:#fff;font-size:14.5px;line-height:1.55;padding:12px 14px;border-radius:12px;white-space:pre-wrap;overflow-wrap:anywhere}
 
 /* 인용글 */
 .has-quote .content .quote-inline{display:none}
@@ -1098,9 +1100,17 @@ function lightbox(list, i){
   const imgs = list.filter(m => m.type === 'image');
   let k = imgs.indexOf(list[i]); if (k < 0) return;
   const ov = document.createElement('div'); ov.className = 'lb';
-  ov.innerHTML = `<img alt=""><button class="ibtn x" type="button" aria-label="닫기">${ic('x')}</button>${imgs.length > 1 ? `<button class="ibtn prev" type="button" aria-label="이전">${ic('left')}</button><button class="ibtn next" type="button" aria-label="다음">${ic('right')}</button>` : ''}<div class="alt"></div>`;
+  ov.innerHTML = `<img alt=""><button class="ibtn x" type="button" aria-label="닫기">${ic('x')}</button>${imgs.length > 1 ? `<button class="ibtn prev" type="button" aria-label="이전">${ic('left')}</button><button class="ibtn next" type="button" aria-label="다음">${ic('right')}</button>` : ''}<button class="altbtn" type="button" aria-label="사진 설명 보기" hidden>ALT</button><div class="altbox" hidden></div>`;
   const img = $('img', ov);
-  const show = () => { img.src = imgs[k].url; $('.alt', ov).textContent = imgs[k].description || ''; };
+  const altBtn = $('.altbtn', ov), altBox = $('.altbox', ov);
+  const show = () => {
+    img.src = imgs[k].url;
+    const d = (imgs[k].description || '').trim();
+    altBox.textContent = d; altBox.hidden = true;
+    altBtn.hidden = !d; altBtn.classList.remove('on');
+  };
+  altBtn.onclick = e => { e.stopPropagation(); altBox.hidden = !altBox.hidden; altBtn.classList.toggle('on', !altBox.hidden); };
+  altBox.onclick = e => e.stopPropagation();
   show();
   let closed = false;
   const shut = () => { if (closed) return false; closed = true; ov.remove(); return true; };

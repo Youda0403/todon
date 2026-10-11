@@ -513,6 +513,110 @@ body.in-chat #shell{padding-bottom:0;min-height:0}
 .twobtn .pill{flex:1}
 .pushst{font-size:14px;color:var(--sub);margin:0 0 10px}
 .pushst b{color:var(--fg)}
+
+/* 수정됨·수정 기록·좋아요한 사람 */
+.edt{color:var(--sub);flex:none;font-size:13px}
+.edbtn{border:0;background:none;padding:0;color:var(--accent);font:inherit;font-weight:600}
+.fstats{display:flex;gap:18px;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px;flex-wrap:wrap}
+.fstats button{border:0;background:none;padding:0;color:var(--sub)}
+.fstats b{color:var(--fg)}
+body.no-counts .fstats b{display:none}
+.hv{padding:12px 20px;border-top:1px solid var(--line)}
+.hvt{display:flex;gap:8px;align-items:baseline;font-size:13px;color:var(--sub);margin-bottom:4px}
+.hvt b{color:var(--fg);font-size:14px}
+.hvcw{font-weight:600;margin-bottom:4px}
+.hvx{color:var(--sub);font-size:13px;margin-top:4px}
+
+/* 투표하기 */
+.pvo{display:flex;align-items:center;gap:10px;width:100%;border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:9px 12px;font-size:14px;text-align:left}
+.pvo .pbox{width:18px;height:18px;border:2px solid var(--sub);border-radius:50%;flex:none}
+.pvo.multi .pbox{border-radius:5px}
+.pvo.on{border-color:var(--accent);background:var(--accent-soft)}
+.pvo.on .pbox{border-color:var(--accent);background:var(--accent);box-shadow:inset 0 0 0 3px var(--bg)}
+.pvo .pt{flex:1;min-width:0;overflow-wrap:anywhere}
+.pvbar{display:flex;align-items:center;gap:12px;margin-top:2px}
+.pvbar .pill{padding:7px 18px;font-size:14px}
+.poll .linkbtn{padding:0;font-size:13px}
+.po.top{font-weight:700}
+.pmine{display:inline-flex;color:var(--accent);vertical-align:-3px}
+.pmine .ic{width:15px;height:15px;stroke-width:2.6}
+
+/* 글쓰기: 사진 설명·민감 표시·투표·인용·자동완성·이모지 */
+.calt{position:absolute;left:6px;bottom:6px;z-index:2;border:0;border-radius:6px;background:rgba(0,0,0,.65);color:#fff;font-size:11px;font-weight:800;letter-spacing:.04em;padding:4px 7px}
+.calt.on{background:#fff;color:#000}
+.c-sens{display:flex;align-items:center;gap:6px;margin-top:8px;border:0;background:none;color:var(--sub);font-size:13px;font-weight:600;padding:4px 0}
+.c-sens .ic{width:16px;height:16px}
+.c-sens.on{color:var(--danger)}
+.altsheet .altpv{display:block;max-width:calc(100% - 40px);max-height:28vh;margin:0 20px 10px;border-radius:12px;object-fit:contain;background:var(--line)}
+.altsheet textarea,.repsheet textarea{display:block;width:calc(100% - 40px);margin:0 20px;min-height:110px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--bg);font-size:16px;line-height:1.5;resize:vertical;outline:none}
+.altsheet textarea:focus,.repsheet textarea:focus{border-color:var(--accent)}
+.altrow{display:flex;align-items:center;gap:8px;padding:10px 20px 4px}
+.altrow small{flex:1;color:var(--sub);font-size:12px}
+.c-poll{margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:14px;display:flex;flex-direction:column;gap:8px}
+.cpo{display:flex;align-items:center;gap:4px}
+.cpo input{flex:1;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);font-size:16px;outline:none}
+.cpo input:focus{border-color:var(--accent)}
+.cpo .ibtn{width:32px;height:32px;color:var(--sub)}
+.cpo .ibtn:disabled{opacity:.3}
+.cpo .ibtn .ic{width:16px;height:16px}
+.cpadd{display:flex;align-items:center;gap:6px;border:1px dashed var(--line);background:none;border-radius:10px;padding:9px 12px;color:var(--accent);font-weight:700;font-size:14px}
+.cpadd .ic{width:16px;height:16px}
+.cpopts{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13.5px}
+.cpopts select{padding:7px 8px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);font:inherit;font-size:14px}
+.cpopts label{display:flex;align-items:center;gap:4px;flex:1;min-width:140px}
+.c-pollbtn.on{background:var(--accent-soft)}
+.c-note{margin:6px 0 0;font-size:12.5px;color:var(--sub)}
+.c-quote .quote.cq{pointer-events:none}
+.c-sugg{max-height:40vh;overflow-y:auto;overscroll-behavior:contain;border-top:1px solid var(--line);background:var(--bg)}
+.c-sugg .sg{display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;text-align:left;padding:8px 16px}
+.c-sugg .sg:active{background:var(--hover)}
+.c-sugg .sg .av{width:34px;height:34px}
+.c-sugg .sg .em{width:30px;height:30px;object-fit:contain}
+.c-sugg .sg .oi{width:34px;height:34px}
+.c-sugg .sg .oi .ic{width:16px;height:16px}
+.c-sugg .sg .t{flex:1;min-width:0}
+.c-sugg .sg b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.c-sugg .sg small{display:block;color:var(--sub);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.emogrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(44px,1fr));gap:2px;padding:0 12px 8px}
+.emogrid button{border:0;background:none;border-radius:10px;height:44px;display:flex;align-items:center;justify-content:center;padding:4px}
+.emogrid button:active{background:var(--hover)}
+.emogrid img{max-width:32px;max-height:32px;object-fit:contain}
+.emocat{grid-column:1/-1;font-size:12.5px;font-weight:700;color:var(--sub);padding:10px 4px 2px}
+.emosheet{max-height:70vh}
+
+/* 신고 */
+.rrules{padding:0 20px 8px}
+.rrule{display:flex;gap:10px;align-items:flex-start;padding:8px 0;font-size:14px;border-top:1px solid var(--line)}
+.rrule input{margin-top:3px;flex:none;width:18px;height:18px;accent-color:var(--accent)}
+.repsheet .tg{padding:12px 20px}
+
+/* 해시태그 화면 */
+.taghead{display:flex;align-items:center;flex-wrap:wrap;gap:10px 12px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.taghead .t{flex:1;min-width:0}
+.taghead .t b{display:block;font-size:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.taghead .t small{display:block;color:var(--sub);font-size:13px}
+.taghead .btns{display:flex;gap:8px;align-items:center;width:100%;padding-left:56px}
+.frow .oi{width:44px;height:44px}
+
+/* 검색 */
+.sbox{position:sticky;top:calc(54px + env(safe-area-inset-top));z-index:10;background:var(--glass);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.sbar{display:flex;align-items:center;gap:6px;margin:8px 12px;padding:0 4px 0 14px;border-radius:999px;background:var(--hover);border:1px solid transparent}
+.sbar:focus-within{border-color:var(--accent);background:var(--bg)}
+.sbar .sic{display:flex;color:var(--sub)}
+.sbar .sic .ic{width:18px;height:18px}
+.sbar input{flex:1;min-width:0;border:0;background:none;outline:none;font-size:16px;padding:10px 0;-webkit-appearance:none;appearance:none}
+.sbar input::-webkit-search-cancel-button{display:none}
+.sbar .ibtn{width:32px;height:32px;color:var(--sub)}
+.sbar .ibtn .ic{width:16px;height:16px}
+.stabs{border-top:1px solid var(--line)}
+.srec .t{cursor:pointer;font-weight:500}
+.shelp{margin:16px;padding:12px 14px;border-radius:12px;background:var(--hover);font-size:13.5px;color:var(--sub)}
+.shelp b{color:var(--fg)}
+.shelp ul{margin:6px 0 0;padding-left:18px}
+.shelp li{margin-top:4px}
+.shelp code{font-size:12.5px;background:var(--bg);border-radius:4px;padding:1px 4px}
+.empty small{font-size:13px}
+.reqchip{flex:none}
 </style>
 </head>
 <body>
@@ -534,6 +638,7 @@ body.in-chat #shell{padding-bottom:0;min-height:0}
 </div>
 <nav class="bnav" id="bnav"><div class="in">
   <button type="button" data-n="home" data-ic="home"><span>홈</span></button>
+  <button type="button" data-n="search" data-ic="search"><span>검색</span></button>
   <button type="button" data-n="notifications" data-ic="bell"><span>알림</span><i class="badge" hidden></i></button>
   <button type="button" data-n="dm" data-ic="mail"><span>쪽지</span><i class="badge" hidden></i></button>
   <button type="button" data-n="me" data-ic="user"><span>내 계정</span></button>
@@ -583,7 +688,17 @@ const P = {
   up:'<path d="M18 15l-6-6-6 6"/>',
   down:'<path d="M6 9l6 6 6-6"/>',
   sliders:'<path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/>',
-  settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'
+  settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  search:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+  edit:'<path d="M11 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-6"/><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/>',
+  smile:'<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01"/><path d="M15 9h.01"/>',
+  poll:'<path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/>',
+  eye:'<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff:'<path d="M17.9 17.9A10.1 10.1 0 0 1 12 20c-7 0-11-8-11-8a18.5 18.5 0 0 1 5.1-5.9"/><path d="M9.9 4.2A9.1 9.1 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.2 3.2"/><path d="M14.1 14.1a3 3 0 1 1-4.2-4.2"/><path d="M1 1l22 22"/>',
+  flag:'<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/>',
+  list:'<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
+  bellOff:'<path d="M13.7 21a2 2 0 0 1-3.4 0"/><path d="M18.6 13A17.9 17.9 0 0 1 18 8"/><path d="M6.3 6.3A5.9 5.9 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.3-5"/><path d="M1 1l22 22"/>',
+  hash:'<path d="M4 9h16"/><path d="M4 15h16"/><path d="M10 3L8 21"/><path d="M16 3l-2 18"/>'
 };
 const ic = n => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[n]}</svg>`;
 
@@ -893,7 +1008,7 @@ function statusEl(s, o = {}){
 <div class="row">
  <div class="left"><img class="av" alt="" loading="lazy">${o.up ? '<div class="line"></div>' : ''}</div>
  <div class="body">
-  <div class="meta"><span class="name"></span><span class="handle"></span><span class="dot">·</span><time class="time"></time>${v ? `<span class="vis" title="${v.label}">${ic(v.icon)}</span>` : ''}</div>
+  <div class="meta"><span class="name"></span><span class="handle"></span><span class="dot">·</span><time class="time"></time>${st.edited_at && !o.focus ? '<span class="edt">· 수정됨</span>' : ''}${v ? `<span class="vis" title="${v.label}">${ic(v.icon)}</span>` : ''}</div>
   <div class="replyto" hidden></div>
   <div class="cwbox" hidden><span class="cwt"></span><button class="cwbtn" type="button">내용 보기</button></div>
   <div class="cwbody"><div class="content"></div></div>
@@ -914,7 +1029,23 @@ function statusEl(s, o = {}){
   $('.name', el).append(richName(st.account));
   $('.handle', el).textContent = '@' + st.account.acct;
   const tm = $('.time', el); tm.textContent = rel(st.created_at); tm.dateTime = st.created_at; tm.title = full(st.created_at);
-  if (o.focus) $('.fulltime', el).textContent = full(st.created_at) + (st.edited_at ? ' · 수정됨' : '');
+  if (o.focus){
+    const ft = $('.fulltime', el); ft.textContent = full(st.created_at);
+    if (st.edited_at){
+      const eb = h('<button class="edbtn" type="button"></button>');
+      eb.textContent = `수정됨 ${rel(st.edited_at)} · 기록 보기`;
+      eb.onclick = e => { e.stopPropagation(); editHistory(st); };
+      ft.append(' · ', eb);
+    }
+    if (st.favourites_count || st.reblogs_count || st.quotes_count){
+      const fs = h('<div class="fstats"></div>');
+      const stat = (n, label, fn) => { if (!n) return; const b = h('<button type="button"><b></b><span></span></button>'); $('b', b).textContent = n; $('span', b).textContent = label; b.onclick = e => { e.stopPropagation(); fn(); }; fs.append(b); };
+      stat(st.reblogs_count, ' 부스트', () => nav(`#/who/${st.id}/boost`));
+      if (String(st.account.id) === String(cur().id)) stat(st.quotes_count, ' 인용', () => nav(`#/who/${st.id}/quote`));   /* 인용 목록은 내 툿만 볼 수 있음 */
+      stat(st.favourites_count, ' 좋아요', () => nav(`#/who/${st.id}/fav`));
+      if (fs.childElementCount) ft.after(fs);
+    }
+  }
   if (st.in_reply_to_id){
     const r = $('.replyto', el); r.hidden = false;
     const self = st.in_reply_to_account_id === st.account.id;
@@ -934,12 +1065,17 @@ function statusEl(s, o = {}){
       const a = e.target.closest('a'); if (!a) return;
       e.stopPropagation();
       const m = (st.mentions || []).find(m => m.url === a.href);
-      if (m){ e.preventDefault(); nav('#/user/' + m.id); }
+      if (m){ e.preventDefault(); nav('#/user/' + m.id); return; }
+      /* 해시태그는 앱 안의 해시태그 화면으로 */
+      if (a.classList.contains('hashtag') || /^#\S+$/.test(a.textContent.trim())){
+        const tag = a.textContent.trim().replace(/^#/, '');
+        if (tag){ e.preventDefault(); nav('#/htag/' + encodeURIComponent(tag)); }
+      }
     });
   } else c.remove();
   const md = mediaEl(st.media_attachments, st.sensitive && !st.spoiler_text);
   if (md) cb.append(md);
-  if (st.poll) cb.append(pollEl(st.poll, st.emojis));
+  if (st.poll) cb.append(pollEl(st.poll, st.emojis, st));
   if (st.quote){ el.classList.add('has-quote'); cb.append(quoteEl(st.quote)); }
   if (st.spoiler_text){
     const box = $('.cwbox', el); box.hidden = false;
@@ -1013,13 +1149,122 @@ function statusMenu(st){
     };
     if (own){
       const as = own === cur() ? '' : ` (${own.display_name || own.username} 계정)`;
+      add('edit', '수정하기' + as, '좋아요·답글은 그대로 두고 내용만 고쳐요', () => editStatus(st, own));
       if (st.visibility === 'public' || st.visibility === 'unlisted')
         add('pin', st.pinned ? '프로필 고정 풀기' : '프로필에 고정', st.pinned ? '프로필 맨 위에서 내려요' : '내 프로필 툿 탭 맨 위에 보여요', () => togglePin(st, own));
       add('pen', '지우고 다시 쓰기', '내용을 글쓰기 창으로 불러오고 이 툿은 지워요', () => redraftStatus(st, own));
       add('x', '지우기' + as, '지우면 되돌릴 수 없어요', () => deleteStatus(st, own), true);
     }
+    if (st.visibility !== 'direct') add('quote', '인용하기', '이 툿을 내 글 안에 넣어서 올려요', () => quoteStatus(st));
+    const meId = String(cur().id);
+    if (own || String(st.in_reply_to_account_id) === meId || (st.mentions || []).some(m => String(m.id) === meId))
+      add(st.muted ? 'bell' : 'bellOff', st.muted ? '이 대화 알림 다시 받기' : '이 대화 알림 끄기', st.muted ? '이 대화의 답글·좋아요 알림이 다시 와요' : '이 대화에 달리는 답글·좋아요 알림이 더 이상 안 와요', () => toggleConvMute(st));
     add('share', '링크 복사', '이 툿의 주소를 복사해요', () => share(st));
-    if (!own) add('user', `@${st.account.acct} 메뉴`, '뮤트·차단·프로필 링크', () => profileMenu(st.account));
+    if (!own){
+      add('user', `@${st.account.acct} 메뉴`, '뮤트·차단·리스트·프로필 링크', () => profileMenu(st.account));
+      add('flag', '신고하기', '서버 관리자에게 이 툿을 알려요', () => reportSheet(st.account, [st]), true);
+    }
+  });
+}
+/* 같은 툿이 떠 있는 모든 화면에서 새 내용으로 바꾸기 (수정한 뒤) */
+function replaceStatusEverywhere(ns){
+  const roots = new Set([...cache.values()].map(e => e.el)); roots.add($('#main'));
+  const sel = `[data-sid="${CSS.escape(String(ns.id))}"]`;
+  roots.forEach(r => r.querySelectorAll(sel).forEach(old => {
+    if (!old.classList.contains('status')) return;
+    const el = statusEl(ns, {focus:old.classList.contains('focus'), up:old.classList.contains('up')});
+    if (!el.classList || !el.classList.contains('status')) return;
+    const oldPre = old.firstElementChild && old.firstElementChild.classList.contains('pre') ? old.firstElementChild : null;
+    if (oldPre){ const np = el.firstElementChild && el.firstElementChild.classList.contains('pre') ? el.firstElementChild : null; if (np) np.replaceWith(oldPre); else el.prepend(oldPre); }
+    old.classList.forEach(c => { if (c !== 'has-quote') el.classList.add(c); });
+    old.replaceWith(el);
+  }));
+}
+async function editStatus(st, acc){
+  let src = {text:plain(st.content), spoiler_text:st.spoiler_text || ''};
+  try{ const r = await api(`/api/v1/statuses/${st.id}/source`, {acc}); if (r && r.text != null) src = r; }catch(e){}
+  openCompose({edit:{acc, st, text:src.text, spoiler_text:src.spoiler_text || ''}});
+}
+function quoteStatus(st){
+  const ap = st.quote_approval && st.quote_approval.current_user;
+  if (ap === 'denied'){ toast('글쓴이가 이 툿은 인용할 수 없게 해 뒀어요'); return; }
+  openCompose({quote:st});
+}
+async function toggleConvMute(st){
+  try{
+    const r = await api(`/api/v1/statuses/${st.id}/${st.muted ? 'unmute' : 'mute'}`, {method:'POST'});
+    st.muted = !!(r && r.muted);
+    toast(st.muted ? '이 대화 알림을 껐어요' : '이 대화 알림을 다시 받아요');
+  }catch(e){ toast(e.message); }
+}
+/* 수정 기록 */
+async function editHistory(st){
+  let list;
+  try{ list = await api(`/api/v1/statuses/${st.id}/history`); }catch(e){ toast(e.message); return; }
+  sheet(sh => {
+    sh.classList.add('histsheet');
+    sh.append(h('<h3>수정 기록</h3>'));
+    (list || []).slice().reverse().forEach((v, i, arr) => {
+      const box = h('<div class="hv"><div class="hvt"><b></b><span></span></div><div class="hvcw" hidden></div><div class="content"></div></div>');
+      $('b', box).textContent = i === 0 ? '지금 내용' : i === arr.length - 1 ? '처음 쓴 글' : '수정 전';
+      $('span', box).textContent = full(v.created_at);
+      if (v.spoiler_text){ const c = $('.hvcw', box); c.hidden = false; c.textContent = '⚠ ' + v.spoiler_text; emojifyNode(c, v.emojis); }
+      const c = $('.content', box); c.append(cleanHTML(v.content)); emojifyNode(c, v.emojis);
+      if (v.media_attachments && v.media_attachments.length) box.append(h(`<div class="hvx">사진·영상 ${v.media_attachments.length}개</div>`));
+      if (v.poll && v.poll.options) box.append(Object.assign(document.createElement('div'), {className:'hvx', textContent:'투표: ' + v.poll.options.map(o => o.title).join(' / ')}));
+      sh.append(box);
+    });
+  });
+}
+/* 서버 커스텀 이모지 (서버마다 한 번만 불러옴) */
+const emojiCache = new Map();
+async function customEmojis(acc){
+  if (emojiCache.has(acc.instance)) return emojiCache.get(acc.instance);
+  const l = (await api('/api/v1/custom_emojis', {acc})) || [];
+  const list = l.filter(e => e.visible_in_picker !== false)
+    .sort((a, b) => (a.category || '').localeCompare(b.category || '') || a.shortcode.localeCompare(b.shortcode));
+  emojiCache.set(acc.instance, list);
+  return list;
+}
+/* 신고하기 */
+async function reportSheet(a, statuses = []){
+  let rules = [];
+  try{ rules = (await api('/api/v1/instance/rules')) || []; }catch(e){}
+  const remote = a.acct.includes('@') ? a.acct.split('@')[1] : null;
+  sheet((sh, close) => {
+    sh.classList.add('repsheet');
+    const t = document.createElement('h3'); t.textContent = `@${a.acct} 신고하기`; sh.append(t);
+    sh.append(h(`<p class="secdesc" style="padding:0 20px 6px">${statuses.length ? '이 툿을' : '이 계정을'} 서버 관리자에게 알려요. 상대에게는 누가 신고했는지 알려지지 않아요.</p>`));
+    let cat = 'spam'; const picked = new Set();
+    const cats = [['spam','스팸·광고','원치 않는 홍보나 도배'], ...(rules.length ? [['violation','서버 규칙 위반','아래에서 어긴 규칙을 골라 주세요']] : []), ['other','그 밖의 문제','위에 없는 이유']];
+    const cbox = document.createElement('div'), rbox = document.createElement('div'); rbox.className = 'rrules'; rbox.hidden = true;
+    const paint = () => {
+      cbox.replaceChildren();
+      cats.forEach(([k, l, s]) => { const b = optBtn(`<span class="oi">${ic(k === 'spam' ? 'mail' : k === 'violation' ? 'warn' : 'flag')}</span>`, l, s, k === cat); b.onclick = () => { cat = k; paint(); }; cbox.append(b); });
+      rbox.hidden = cat !== 'violation';
+    };
+    rules.forEach(r => {
+      const l = h('<label class="rrule"><input type="checkbox"><span></span></label>');
+      $('span', l).textContent = r.text; $('input', l).onchange = e => { if (e.target.checked) picked.add(r.id); else picked.delete(r.id); };
+      rbox.append(l);
+    });
+    const ta = h('<textarea class="rcomment" maxlength="1000" placeholder="관리자에게 덧붙일 말 (안 써도 돼요)"></textarea>');
+    let fwd = false;
+    const fwdRow = remote ? toggleRow(`${remote} 서버 관리자에게도 알리기`, '상대가 있는 서버에도 익명으로 신고 내용을 보내요', null, false, v => { fwd = v; }) : null;
+    const go = h('<div class="secpad"><button class="pill wide" type="button" style="background:var(--danger)">신고하기</button></div>');
+    const goBtn = $('button', go);
+    goBtn.onclick = async () => {
+      if (cat === 'violation' && !picked.size){ toast('어긴 규칙을 하나 이상 골라 주세요'); return; }
+      goBtn.disabled = true;
+      try{
+        const body = {account_id:a.id, status_ids:statuses.map(s => s.id), comment:ta.value.trim(), category:cat, forward:fwd};
+        if (cat === 'violation') body.rule_ids = [...picked];
+        await api('/api/v1/reports', {method:'POST', body});
+        close(); toast('신고했어요. 서버 관리자가 확인할 거예요');
+      }catch(err){ toast(err.message); goBtn.disabled = false; }
+    };
+    paint();
+    sh.append(cbox, rbox, ta); if (fwdRow) sh.append(fwdRow); sh.append(go);
   });
 }
 async function deleteStatus(st, acc){
@@ -1037,7 +1282,8 @@ async function redraftStatus(st, acc){
     const r = await api('/api/v1/statuses/' + st.id, {method:'DELETE', acc});
     removeStatusEverywhere(st.id);
     const rd = {acc, text:(r && r.text != null) ? r.text : plain(st.content), spoiler_text:(r && r.spoiler_text != null) ? r.spoiler_text : (st.spoiler_text || ''),
-      visibility:st.visibility, in_reply_to_id:st.in_reply_to_id || null, media:(r && r.media_attachments) || st.media_attachments || []};
+      visibility:st.visibility, in_reply_to_id:st.in_reply_to_id || null, media:(r && r.media_attachments) || st.media_attachments || [],
+      sensitive:(r && r.sensitive != null) ? r.sensitive : st.sensitive, poll:(r && r.poll) || st.poll || null};
     if (curKey === '#/thread/' + st.id){ goBack(); setTimeout(() => openCompose({redraft:rd}), 400); }
     else openCompose({redraft:rd});
   }catch(e){ toast(e.message); }
@@ -1145,16 +1391,68 @@ function mediaEl(list, blur){
   }
   return w;
 }
-function pollEl(p, emojis){
+function pollLeft(p){
+  if (p.expired) return '마감됨';
+  if (!p.expires_at) return '진행 중';
+  const s = (new Date(p.expires_at) - Date.now()) / 1000;
+  if (s <= 0) return '마감됨';
+  if (s < 3600) return Math.max(1, Math.floor(s / 60)) + '분 남음';
+  if (s < 86400) return Math.floor(s / 3600) + '시간 남음';
+  return Math.floor(s / 86400) + '일 남음';
+}
+function pollEl(p, emojis, st){
   const w = document.createElement('div'); w.className = 'poll';
-  const denom = p.multiple ? (p.voters_count || p.votes_count) : p.votes_count;
-  p.options.forEach(o => {
-    const pct = denom ? Math.round((o.votes_count || 0) / denom * 100) : 0;
-    const row = h(`<div class="po"><i style="width:${pct}%"></i><span class="pt"></span><span>${pct}%</span></div>`);
-    const t = $('.pt', row); t.textContent = o.title; emojifyNode(t, emojis);
-    w.append(row);
-  });
-  w.append(h(`<div class="pmeta">${p.votes_count || 0}표 · ${p.expired ? '마감됨' : '진행 중'}</div>`));
+  w.addEventListener('click', e => e.stopPropagation());
+  const own = st && ownerAcc(st);
+  let showResults = !st || p.expired || p.voted || !!own;
+  const draw = () => {
+    w.replaceChildren();
+    const voters = p.multiple ? (p.voters_count || p.votes_count) : p.votes_count;
+    if (showResults){
+      const mine = new Set((p.own_votes || []).map(Number));
+      const most = Math.max(0, ...p.options.map(o => o.votes_count || 0));
+      p.options.forEach((o, i) => {
+        const pct = voters ? Math.round((o.votes_count || 0) / voters * 100) : 0;
+        const row = h(`<div class="po${most && o.votes_count === most ? ' top' : ''}"><i style="width:${pct}%"></i><span class="pt"></span><span>${pct}%</span></div>`);
+        const t = $('.pt', row); t.textContent = o.title; emojifyNode(t, emojis);
+        if (mine.has(i)) t.insertAdjacentHTML('beforeend', ` <span class="pmine">${ic('check')}</span>`);
+        w.append(row);
+      });
+    } else {
+      const picked = new Set();
+      p.options.forEach((o, i) => {
+        const b = h(`<button class="pvo${p.multiple ? ' multi' : ''}" type="button"><span class="pbox"></span><span class="pt"></span></button>`);
+        const t = $('.pt', b); t.textContent = o.title; emojifyNode(t, emojis);
+        b.onclick = () => {
+          if (p.multiple){ if (picked.has(i)) picked.delete(i); else picked.add(i); }
+          else { picked.clear(); picked.add(i); }
+          w.querySelectorAll('.pvo').forEach((x, j) => x.classList.toggle('on', picked.has(j)));
+          vote.disabled = !picked.size;
+        };
+        w.append(b);
+      });
+      const bar = h('<div class="pvbar"><button class="pill" type="button" disabled>투표하기</button><button class="linkbtn" type="button">결과만 보기</button></div>');
+      const [vote, peek] = bar.querySelectorAll('button');
+      vote.onclick = async () => {
+        vote.disabled = true; vote.textContent = '투표하는 중…';
+        try{
+          const r = await api(`/api/v1/polls/${p.id}/votes`, {method:'POST', body:{choices:[...picked].map(String)}});
+          if (r) Object.assign(p, r);
+          p.voted = true; showResults = true; draw(); toast('투표했어요');
+        }catch(e){ toast(e.message); vote.disabled = false; vote.textContent = '투표하기'; }
+      };
+      peek.onclick = () => { showResults = true; draw(); };
+      w.append(bar);
+    }
+    const meta = h(`<div class="pmeta">${voters || 0}명 참여 · ${pollLeft(p)}${p.multiple ? ' · 여러 개 선택' : ''}</div>`);
+    if (showResults && !p.voted && !p.expired && st && !own){
+      const back = h('<button class="linkbtn" type="button">투표하러 가기</button>');
+      back.onclick = () => { showResults = false; draw(); };
+      meta.append(' · ', back);
+    }
+    w.append(meta);
+  };
+  draw();
   return w;
 }
 function lightbox(list, i){
@@ -1484,7 +1782,21 @@ function meView(){
   root.append(head, chips);
   const loadHead = async () => {
     head.innerHTML = '<div class="sentinel"><div class="spin"></div></div>';
-    try{ head.replaceChildren(profileEl(await api(`/api/v1/accounts/${me.id}`))); }
+    try{
+      const a = await api(`/api/v1/accounts/${me.id}`);
+      head.replaceChildren(profileEl(a));
+      /* 팔로우 승인제 계정이면 기다리는 팔로우 요청 수를 보여 줌 */
+      chips.querySelectorAll('.reqchip').forEach(x => x.remove());
+      if (a.locked){
+        api('/api/v1/follow_requests?limit=40').then(rq => {
+          if (!rq || !rq.length) return;
+          const c = h(`<button class="pill reqchip" type="button">${ic('user')}<span></span></button>`);
+          $('span', c).textContent = `팔로우 요청 ${rq.length >= 40 ? '40+' : rq.length}`;
+          c.onclick = () => nav('#/settings/requests');
+          chips.prepend(c);
+        }).catch(() => {});
+      }
+    }
     catch(e){ head.innerHTML = ''; const p = h('<div class="err" style="padding:24px 16px"><p></p></div>'); $('p', p).textContent = e.message; head.append(p); }
   };
   loadHead();
@@ -1611,16 +1923,34 @@ async function resolveId(st, acc){
   if (!r.statuses || !r.statuses.length) throw new Error('고른 계정의 서버에서 이 글을 찾지 못했어요');
   return r.statuses[0].id;
 }
-function openCompose({replyTo = null, redraft = null} = {}){
+function openCompose({replyTo = null, redraft = null, edit = null, quote = null} = {}){
   const viewAcc = cur();
-  let acc = redraft ? redraft.acc : viewAcc, accIdx = redraft ? Math.max(0, accounts.indexOf(redraft.acc)) : curIdx;
+  const fixedAcc = edit ? edit.acc : redraft ? redraft.acc : null;
+  let acc = fixedAcc || viewAcc, accIdx = fixedAcc ? Math.max(0, accounts.indexOf(fixedAcc)) : curIdx;
   const rkey = replyTo ? String(replyTo.id) : null;
+  /* 임시저장을 쓰지 않는 창: 지우고 다시 쓰기·수정하기·인용하기 */
+  const transient = !!(redraft || edit || quote);
   const draft = redraft ? {text:redraft.text, cw:redraft.spoiler_text, cwOn:!!redraft.spoiler_text}
+    : edit ? {text:edit.text, cw:edit.spoiler_text, cwOn:!!edit.spoiler_text}
+    : quote ? null
     : replyTo ? (LS.get('ytt.rdraft', {})[rkey] || null) : LS.get('ytt.draft', null);
-  const S = {cwOn:!!(draft && draft.cwOn), media:[], vis:'public', visTouched:false, prefix:'', posting:false, replyId:null};
+  const S = {cwOn:!!(draft && draft.cwOn), media:[], vis:'public', visTouched:false, prefix:'', posting:false, replyId:null, poll:null, sensitive:false};
+  const fromAtt = m => ({id:m.id, preview:m.preview_url || m.url, type:(m.type === 'video' || m.type === 'gifv') ? 'video' : (m.type === 'audio' ? 'audio' : 'image'), uploading:false, desc:m.description || '', descDirty:false});
   if (redraft){
     S.vis = VIS[redraft.visibility] ? redraft.visibility : 'public'; S.visTouched = true; S.replyId = redraft.in_reply_to_id;
-    S.media = (redraft.media || []).slice(0, 4).map(m => ({id:m.id, preview:m.preview_url || m.url, type:(m.type === 'video' || m.type === 'gifv') ? 'video' : 'image', uploading:false}));
+    S.media = (redraft.media || []).slice(0, 4).map(fromAtt);
+    S.sensitive = !!redraft.sensitive && !redraft.spoiler_text;
+    if (redraft.poll) S.poll = {options:redraft.poll.options.map(o => o.title), multiple:!!redraft.poll.multiple, expiresIn:86400};
+  }
+  if (edit){
+    const st = edit.st;
+    S.vis = VIS[st.visibility] ? st.visibility : 'public'; S.visTouched = true;
+    S.media = (st.media_attachments || []).slice(0, 4).map(fromAtt);
+    S.sensitive = !!st.sensitive && !st.spoiler_text;
+    if (st.poll){
+      const left = st.poll.expires_at ? Math.round((new Date(st.poll.expires_at) - Date.now()) / 1000) : 86400;
+      S.poll = {options:st.poll.options.map(o => o.title), multiple:!!st.poll.multiple, expiresIn:Math.max(300, left), keep:Math.max(300, left)};
+    }
   }
   const ov = document.createElement('div'); ov.className = 'cov';
   ov.innerHTML = `<div class="compose" role="dialog" aria-label="글쓰기">
@@ -1633,13 +1963,19 @@ function openCompose({replyTo = null, redraft = null} = {}){
      <div class="c-main">
       <button class="c-accname" type="button"></button>
       <input class="c-cw" type="text" placeholder="내용 경고 문구 (예: 스포일러, 유혈 묘사)" hidden>
-      <textarea class="c-text" placeholder="${replyTo ? '답글을 적어 보세요' : '캐릭터의 대사나 행동을 적어 보세요'}"></textarea>
+      <textarea class="c-text" placeholder="${replyTo ? '답글을 적어 보세요' : quote ? '인용하면서 할 말을 적어 보세요' : '캐릭터의 대사나 행동을 적어 보세요'}"></textarea>
       <div class="c-media"></div>
+      <button class="c-sens" type="button" hidden></button>
+      <div class="c-poll" hidden></div>
+      <div class="c-quote" hidden></div>
      </div>
     </div>
    </div>
+   <div class="c-sugg" hidden></div>
    <div class="c-bar">
     <button class="ibtn c-img" type="button" aria-label="이미지 추가">${ic('image')}</button>
+    <button class="ibtn c-pollbtn" type="button" aria-label="투표 만들기">${ic('poll')}</button>
+    <button class="ibtn c-emo" type="button" aria-label="커스텀 이모지">${ic('smile')}</button>
     <button class="ibtn tbtn c-cwbtn" type="button" aria-label="내용 경고(CW)">CW</button>
     <button class="ibtn c-memobtn" type="button" aria-label="계정 메모 보기" hidden>${ic('memo')}</button>
     <button class="vbtn c-vis" type="button"></button>
@@ -1650,8 +1986,22 @@ function openCompose({replyTo = null, redraft = null} = {}){
   </div>`;
   const q = s => $(s, ov);
   const ta = q('.c-text'), cw = q('.c-cw'), post = q('.c-post'), cnt = q('.c-count');
-  const postLabel = redraft ? '다시 올리기' : replyTo ? '답글 올리기' : '올리기';
+  const postLabel = edit ? '수정하기' : redraft ? '다시 올리기' : replyTo ? '답글 올리기' : '올리기';
   post.textContent = postLabel;
+  if (edit){
+    const r = q('.c-replyto'); r.hidden = false;
+    r.append(h('<div class="crh">툿 수정하기</div>'), h('<div class="crb">좋아요·부스트·답글은 그대로 남아요. 공개 범위와 쓴 계정은 바꿀 수 없어요. 수정한 기록은 다른 사람도 볼 수 있어요.</div>'));
+  }
+  /* 서버가 인용 기능(마스토돈 4.5 이상)을 모르면 원글 링크를 붙여서 올림 */
+  const quoteLink = !!quote && !quote.quote_approval;
+  if (quote){
+    const qb = q('.c-quote'); qb.hidden = false;
+    const card = quoteBody(quote); card.classList.add('cq');
+    qb.append(card);
+    const ap = quote.quote_approval && quote.quote_approval.current_user;
+    if (ap === 'manual') qb.append(h('<p class="c-note">원글 작성자가 승인해야 인용이 보여요. 승인 전에는 ‘승인 대기 중’으로 보여요.</p>'));
+    if (quoteLink) qb.append(h('<p class="c-note">이 서버는 인용 기능을 지원하지 않아서, 원글 링크를 글에 붙여서 올려요.</p>'));
+  }
 
   if (replyTo){
     const r = q('.c-replyto'); r.hidden = false;
@@ -1670,9 +2020,10 @@ function openCompose({replyTo = null, redraft = null} = {}){
     cnt.textContent = `${n} / ${max}`;
     cnt.classList.toggle('over', left < 0);
     const uploading = S.media.some(m => m.uploading);
-    post.disabled = S.posting || uploading || left < 0 || (!ta.value.trim() && !S.media.length);
+    const pollBad = !!S.poll && S.poll.options.some(o => !o.trim());
+    post.disabled = S.posting || uploading || left < 0 || pollBad || (!ta.value.trim() && !S.media.length);
     ta.style.height = 'auto'; ta.style.height = Math.max(140, ta.scrollHeight) + 'px';
-    if (redraft){ /* 지우고 다시 쓰는 중에는 임시저장을 덮어쓰지 않음 */ }
+    if (transient){ /* 지우고 다시 쓰기·수정·인용 중에는 임시저장을 덮어쓰지 않음 */ }
     else if (!replyTo){
       LS.set('ytt.draft', {text:ta.value, cw:cw.value, cwOn:S.cwOn});
       q('.c-draft').textContent = ta.value.trim() ? '임시저장됨' : '';
@@ -1713,11 +2064,37 @@ function openCompose({replyTo = null, redraft = null} = {}){
       if (m.uploading) c.insertAdjacentHTML('beforeend', '<div class="spin"></div>');
       const x = h(`<button class="x" type="button" aria-label="첨부 빼기">${ic('x')}</button>`);
       x.onclick = () => { const i = S.media.indexOf(m); if (i >= 0) S.media.splice(i, 1); URL.revokeObjectURL(m.preview); paintMedia(); update(); };
-      c.append(x); box.append(c);
+      c.append(x);
+      /* 사진 설명(ALT): 사진을 볼 수 없는 사람에게 읽어 주는 글 */
+      const alt = h('<button class="calt" type="button">ALT</button>');
+      alt.classList.toggle('on', !!m.desc);
+      alt.setAttribute('aria-label', m.desc ? '사진 설명 고치기' : '사진 설명 쓰기');
+      alt.onclick = () => altEditor(m);
+      c.append(alt);
+      box.append(c);
     });
+    const sens = q('.c-sens');
+    sens.hidden = !S.media.length || S.cwOn;
+    sens.innerHTML = ic(S.sensitive ? 'eyeOff' : 'eye') + `<span>${S.sensitive ? '민감한 사진으로 표시함 (흐리게 가려져요)' : '민감한 사진으로 표시하기'}</span>`;
+    sens.classList.toggle('on', S.sensitive);
   };
+  q('.c-sens').onclick = () => { S.sensitive = !S.sensitive; paintMedia(); };
+  const altEditor = m => sheet((sh, close) => {
+    sh.classList.add('altsheet');
+    sh.append(h('<h3>사진 설명 (ALT)</h3>'), h('<p class="secdesc" style="padding:0 20px 8px">사진을 볼 수 없는 사람이나 화면 읽기 프로그램이 이 글을 읽어요. 사진을 크게 볼 때 ALT 버튼으로도 볼 수 있어요.</p>'));
+    const isV = m.type.startsWith('video');
+    const pv = document.createElement(isV ? 'video' : 'img'); pv.src = m.preview; pv.className = 'altpv'; if (isV){ pv.muted = true; pv.playsInline = true; }
+    const ta2 = h('<textarea maxlength="1500" placeholder="예: 교복을 입은 캐릭터가 창가에 앉아 웃고 있는 그림"></textarea>');
+    ta2.value = m.desc || '';
+    const row = h('<div class="altrow"><small></small><button class="pill" type="button">저장</button></div>');
+    const cntA = $('small', row), upd2 = () => { cntA.textContent = `${[...ta2.value].length} / 1500`; };
+    ta2.oninput = upd2; upd2();
+    $('button', row).onclick = () => { m.desc = ta2.value.trim(); m.descDirty = true; close(); paintMedia(); };
+    sh.append(pv, ta2, row);
+    setTimeout(() => ta2.focus(), 250);
+  });
   const uploadOne = async file => {
-    const m = {uploading:true, preview:URL.createObjectURL(file), type:file.type || 'image', id:null};
+    const m = {uploading:true, preview:URL.createObjectURL(file), type:file.type || 'image', id:null, desc:'', descDirty:false};
     S.media.push(m); paintMedia(); update();
     try{
       const fd = new FormData(); fd.append('file', file);
@@ -1730,9 +2107,150 @@ function openCompose({replyTo = null, redraft = null} = {}){
     }
     paintMedia(); update();
   };
-  q('.c-img').onclick = () => { if (S.media.length >= 4){ toast('이미지는 4장까지 붙일 수 있어요'); return; } q('.c-file').click(); };
+  q('.c-img').onclick = () => { if (S.poll){ toast('투표와 사진은 함께 넣을 수 없어요'); return; } if (S.media.length >= 4){ toast('이미지는 4장까지 붙일 수 있어요'); return; } q('.c-file').click(); };
   q('.c-file').onchange = e => { const files = [...e.target.files].slice(0, 4 - S.media.length); e.target.value = ''; files.forEach(uploadOne); };
-  q('.c-cwbtn').onclick = () => { S.cwOn = !S.cwOn; paintCw(); if (S.cwOn) cw.focus(); update(); };
+  q('.c-cwbtn').onclick = () => { S.cwOn = !S.cwOn; paintCw(); if (S.cwOn) cw.focus(); update(); paintMedia(); };
+  /* 투표 만들기 */
+  const POLL_TIMES = [[300,'5분'],[1800,'30분'],[3600,'1시간'],[21600,'6시간'],[43200,'12시간'],[86400,'1일'],[259200,'3일'],[604800,'7일']];
+  const paintPoll = () => {
+    const box = q('.c-poll'); box.hidden = !S.poll; q('.c-pollbtn').classList.toggle('on', !!S.poll);
+    if (!S.poll){ box.replaceChildren(); return; }
+    box.replaceChildren();
+    S.poll.options.forEach((o, i) => {
+      const r = h(`<div class="cpo"><input type="text" maxlength="50"><button class="ibtn" type="button" aria-label="선택지 빼기">${ic('x')}</button></div>`);
+      const inp = $('input', r); inp.value = o; inp.placeholder = `선택지 ${i + 1}`;
+      inp.oninput = () => { S.poll.options[i] = inp.value; update(); };
+      const xb = $('button', r); xb.disabled = S.poll.options.length <= 2;
+      xb.onclick = () => { S.poll.options.splice(i, 1); paintPoll(); update(); };
+      box.append(r);
+    });
+    if (S.poll.options.length < 4){
+      const add = h(`<button class="cpadd" type="button">${ic('plus')}<span>선택지 추가</span></button>`);
+      add.onclick = () => { S.poll.options.push(''); paintPoll(); update(); const ins = box.querySelectorAll('input'); ins[ins.length - 1].focus(); };
+      box.append(add);
+    }
+    const opts = h('<div class="cpopts"><select aria-label="투표 기간"></select><label><input type="checkbox"> 여러 개 고를 수 있게</label><button class="mini danger" type="button">투표 빼기</button></div>');
+    const sel = $('select', opts);
+    const times = S.poll.keep ? [[S.poll.keep, '남은 시간 그대로'], ...POLL_TIMES] : POLL_TIMES;
+    times.forEach(([v, l]) => sel.append(new Option(l + (S.poll.keep && v !== S.poll.keep ? ' (처음부터)' : '') + ' 동안', v)));
+    sel.value = String(S.poll.expiresIn);
+    sel.onchange = () => { S.poll.expiresIn = Number(sel.value); };
+    const mc = $('input', opts); mc.checked = S.poll.multiple; mc.onchange = () => { S.poll.multiple = mc.checked; };
+    $('button', opts).onclick = () => { S.poll = null; paintPoll(); update(); };
+    box.append(opts);
+    if (edit && edit.st.poll) box.append(h('<p class="c-note">선택지를 바꾸면 지금까지 받은 표가 모두 사라져요.</p>'));
+  };
+  q('.c-pollbtn').onclick = () => {
+    if (S.poll){ S.poll = null; paintPoll(); update(); return; }
+    if (S.media.length){ toast('사진과 투표는 함께 넣을 수 없어요'); return; }
+    S.poll = {options:['', ''], multiple:false, expiresIn:86400};
+    paintPoll(); update(); q('.c-poll input').focus();
+  };
+  /* 커서 자리에 글자 넣기 (이모지·자동완성) */
+  let lastSel = [0, 0];
+  const remember = () => { lastSel = [ta.selectionStart, ta.selectionEnd]; };
+  ta.addEventListener('keyup', remember); ta.addEventListener('click', remember); ta.addEventListener('input', remember); ta.addEventListener('blur', remember);
+  const insertText = (text, from = lastSel[0], to = lastSel[1]) => {
+    const v = ta.value, pre = v.slice(0, from), post = v.slice(to);
+    const lead = pre && !/\s$/.test(pre) ? ' ' : '';
+    const tail = /^\s/.test(post) ? '' : ' ';
+    ta.value = pre + lead + text + tail + post;
+    const p = (pre + lead + text + tail).length;
+    ta.focus(); ta.setSelectionRange(p, p); remember(); update(); hideSugg();
+  };
+  /* 커스텀 이모지 고르기 */
+  q('.c-emo').addEventListener('pointerdown', remember);
+  q('.c-emo').onclick = async () => {
+    let list;
+    try{ list = await customEmojis(acc); }catch(e){ toast(e.message); return; }
+    if (!list.length){ toast('이 서버에는 커스텀 이모지가 없어요'); return; }
+    sheet((sh, close) => {
+      sh.classList.add('emosheet');
+      sh.append(h('<h3>커스텀 이모지</h3>'));
+      const f = h('<div class="field" style="padding:0 16px 8px"><input type="search" placeholder="이모지 이름으로 찾기" autocapitalize="off" autocorrect="off" spellcheck="false"></div>');
+      const grid = document.createElement('div'); grid.className = 'emogrid';
+      sh.append(f, grid);
+      const draw = word => {
+        grid.replaceChildren();
+        const w = (word || '').trim().toLowerCase();
+        const shown = list.filter(e => !w || e.shortcode.toLowerCase().includes(w));
+        let lastCat = null;
+        shown.slice(0, 600).forEach(e => {
+          if (!w && (e.category || '') !== lastCat){ lastCat = e.category || ''; const c = document.createElement('div'); c.className = 'emocat'; c.textContent = lastCat || '기본'; grid.append(c); }
+          const b = document.createElement('button'); b.type = 'button'; b.title = ':' + e.shortcode + ':';
+          const img = new Image(); img.src = SET.anim ? e.url : (e.static_url || e.url); img.alt = ':' + e.shortcode + ':'; img.loading = 'lazy';
+          b.append(img);
+          b.onclick = () => { close(); setTimeout(() => insertText(':' + e.shortcode + ':'), 30); };
+          grid.append(b);
+        });
+        if (!shown.length) grid.append(h('<p class="secdesc" style="grid-column:1/-1">찾는 이모지가 없어요.</p>'));
+      };
+      $('input', f).oninput = e => draw(e.target.value);
+      draw('');
+    });
+  };
+  /* @사람 · #해시태그 · :이모지 자동완성 */
+  const sugg = q('.c-sugg');
+  let suggSeq = 0, suggTimer = 0;
+  function hideSugg(){ suggSeq++; clearTimeout(suggTimer); sugg.hidden = true; sugg.replaceChildren(); }
+  sugg.addEventListener('pointerdown', e => e.preventDefault());
+  const showSugg = (items, from, to) => {
+    sugg.replaceChildren();
+    if (!items.length){ sugg.hidden = true; return; }
+    items.forEach(it => {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'sg';
+      if (it.img){ const im = new Image(); im.src = it.img; im.className = it.round ? 'av' : 'em'; b.append(im); }
+      else b.insertAdjacentHTML('beforeend', `<span class="oi">${ic('hash')}</span>`);
+      const t = document.createElement('span'); t.className = 't';
+      const bb = document.createElement('b'); if (it.title instanceof Node) bb.append(it.title); else bb.textContent = it.title;
+      const sm = document.createElement('small'); sm.textContent = it.sub || '';
+      t.append(bb, sm); b.append(t);
+      b.onclick = () => insertText(it.insert, from, to);
+      sugg.append(b);
+    });
+    sugg.hidden = false;
+  };
+  const checkSugg = () => {
+    const pos = ta.selectionStart;
+    if (pos !== ta.selectionEnd){ hideSugg(); return; }
+    const before = ta.value.slice(0, pos);
+    const mA = /(^|\s)@([\w.\-가-힣]{1,30}(?:@[\w.\-]*)?)$/u.exec(before);
+    const mT = /(^|\s)#([\p{L}\p{N}_]{1,50})$/u.exec(before);
+    const mE = /(^|\s):([\w]{2,30})$/.exec(before);
+    const m = mA || mT || mE;
+    if (!m){ hideSugg(); return; }
+    const word = m[2], from = pos - word.length - 1, my = ++suggSeq;
+    clearTimeout(suggTimer);
+    suggTimer = setTimeout(async () => {
+      try{
+        let items = [];
+        if (mE){
+          const list = await customEmojis(acc), w = word.toLowerCase();
+          items = list.filter(e => e.shortcode.toLowerCase().includes(w)).sort((a, b) => a.shortcode.toLowerCase().indexOf(w) - b.shortcode.toLowerCase().indexOf(w)).slice(0, 8)
+            .map(e => ({img:e.static_url || e.url, title:':' + e.shortcode + ':', insert:':' + e.shortcode + ':'}));
+        } else if (mA){
+          const [fol, all] = await Promise.all([
+            api('/api/v1/accounts/search?' + qs({q:word, following:'true', limit:'5'}), {acc}).catch(() => []),
+            api('/api/v1/accounts/search?' + qs({q:word, limit:'6'}), {acc}).catch(() => [])
+          ]);
+          const seen = new Set();
+          items = [...fol, ...all].filter(a => !seen.has(String(a.id)) && seen.add(String(a.id))).slice(0, 6)
+            .map(a => ({img:avOf(a), round:true, title:richName(a), sub:'@' + a.acct, insert:'@' + a.acct}));
+        } else {
+          const r = await api('/api/v2/search?' + qs({q:word, type:'hashtags', limit:'6'}), {acc});
+          items = (r.hashtags || []).map(t => {
+            const uses = (t.history || []).slice(0, 7).reduce((n, d) => n + Number(d.uses || 0), 0);
+            return {title:'#' + t.name, sub:uses ? `최근 일주일 ${uses}번 쓰였어요` : '', insert:'#' + t.name};
+          });
+        }
+        if (my !== suggSeq || ta.selectionStart !== pos) return;
+        showSugg(items, from, pos);
+      }catch(e){}
+    }, mE ? 60 : 220);
+  };
+  ta.addEventListener('input', checkSugg);
+  ta.addEventListener('click', checkSugg);
+  ta.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== ta) hideSugg(); }, 150));
   /* 답글 상대의 계정 메모: 버튼을 누르면 글 쓰는 창 안에 펼쳐져서 보면서 쓸 수 있음 */
   let memoSeq = 0;
   function memoPeople(){
@@ -1769,7 +2287,7 @@ function openCompose({replyTo = null, redraft = null} = {}){
     q('.c-memobtn').classList.toggle('on', !box.hidden);
     if (!box.hidden){ box.replaceChildren(h('<div class="sentinel" style="min-height:40px;padding:4px"><div class="spin"></div></div>')); loadMemos(true); q('.c-scroll').scrollTop = 0; }
   };
-  q('.c-vis').onclick = () => sheet((sh, close) => {
+  q('.c-vis').onclick = () => edit ? toast('공개 범위는 수정할 수 없어요. 바꾸려면 ⋯ 메뉴의 ‘지우고 다시 쓰기’를 써 주세요') : sheet((sh, close) => {
     sh.append(h('<h3>누가 볼 수 있나요?</h3>'));
     VIS_ORDER.forEach(k => {
       const b = optBtn(`<span class="oi">${ic(VIS[k].icon)}</span>`, VIS[k].label, VIS[k].desc, k === S.vis);
@@ -1778,6 +2296,7 @@ function openCompose({replyTo = null, redraft = null} = {}){
     });
   });
   const pickAcc = () => {
+    if (edit){ toast('수정할 때는 쓰는 계정을 바꿀 수 없어요'); return; }
     if (accounts.length < 2){ toast('내 계정 탭에서 계정을 더 추가하면 다른 캐릭터로 쓸 수 있어요'); return; }
     if (S.media.length){ toast('첨부한 이미지를 빼야 계정을 바꿀 수 있어요'); return; }
     accountPicker({title:'어느 계정으로 쓸까요?', selected:accIdx, allowAdd:false, onPick:i => { accIdx = i; acc = accounts[i]; applyAcc(false); }});
@@ -1801,7 +2320,8 @@ function openCompose({replyTo = null, redraft = null} = {}){
   };
   const close = () => { if (shut()) overlayClosedByUI(ovId); };
   const leave = () => {
-    if (redraft){
+    if (edit) return;   /* 수정은 취소해도 원래 툿이 그대로 있음 */
+    if (redraft || quote){
       /* 이미 지운 툿이라 그냥 닫으면 내용이 사라지므로 새 글 임시저장으로 옮겨 둠 */
       if (ta.value.trim()){ LS.set('ytt.draft', {text:ta.value, cw:cw.value, cwOn:S.cwOn}); toast('쓰던 내용은 새 글 임시저장에 옮겨 뒀어요'); }
       return;
@@ -1818,10 +2338,28 @@ function openCompose({replyTo = null, redraft = null} = {}){
       const body = {status:ta.value, visibility:S.vis};
       if (S.media.length) body.media_ids = S.media.map(m => m.id);
       if (S.cwOn && cw.value.trim()){ body.spoiler_text = cw.value.trim(); body.sensitive = true; }
+      else if (S.media.length && S.sensitive) body.sensitive = true;
+      if (S.poll) body.poll = {options:S.poll.options.map(o => o.trim()), expires_in:S.poll.expiresIn, multiple:S.poll.multiple};
+      if (edit){
+        /* 수정: 공개 범위는 못 바꾸고, 사진 설명은 media_attributes로 함께 보냄 */
+        delete body.visibility;
+        if (!body.spoiler_text) body.spoiler_text = '';
+        body.sensitive = !!body.sensitive;
+        body.media_ids = S.media.map(m => m.id);
+        body.media_attributes = S.media.map(m => ({id:m.id, description:m.desc || ''}));
+        const ns = await api('/api/v1/statuses/' + edit.st.id, {method:'PUT', body, acc});
+        close();
+        if (ns && ns.id) replaceStatusEverywhere(ns);
+        toast('수정했어요');
+        return;
+      }
+      /* 새로 올린 사진의 설명 저장 */
+      await Promise.all(S.media.filter(m => m.descDirty).map(m => api('/api/v1/media/' + m.id, {method:'PUT', body:{description:m.desc || ''}, acc})));
       if (replyTo) body.in_reply_to_id = acc.instance === viewAcc.instance ? replyTo.id : await resolveId(replyTo, acc);
       else if (S.replyId && redraft && acc.instance === redraft.acc.instance) body.in_reply_to_id = S.replyId;
+      if (quote && !quoteLink) body.quoted_status_id = acc.instance === viewAcc.instance ? quote.id : await resolveId(quote, acc);
       await api('/api/v1/statuses', {method:'POST', body, acc, headers:{'Idempotency-Key':idem}});
-      if (redraft){ /* 새 글 임시저장은 그대로 둠 */ }
+      if (transient){ /* 새 글 임시저장은 그대로 둠 */ }
       else if (!replyTo) LS.del('ytt.draft');
       else { const m = LS.get('ytt.rdraft', {}); delete m[rkey]; LS.set('ytt.rdraft', m); }
       close();
@@ -1835,8 +2373,9 @@ function openCompose({replyTo = null, redraft = null} = {}){
   document.body.append(ov); document.body.classList.add('noscroll'); lockScroll();
   ovId = pushOverlay(() => { if (shut()) leave(); });
   if (vv){ vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); fit(); }
-  paintCw(); applyAcc(true); paintMedia();
-  setTimeout(() => { ta.focus(); const L = ta.value.length; ta.setSelectionRange(L, L); }, 60);
+  paintCw(); applyAcc(true); paintMedia(); paintPoll();
+  if (quoteLink){ ta.value = '\n\n' + (quote.url || quote.uri); update(); }
+  setTimeout(() => { ta.focus(); const L = quoteLink ? 0 : ta.value.length; ta.setSelectionRange(L, L); remember(); }, 60);
 }
 function afterPost(acc, isReply){
   const {name} = parse(), e = cache.get(curKey);
@@ -2612,8 +3151,11 @@ async function seedReadingPrefs(){
 /* ---------- 설정 화면 ---------- */
 function settingsView(sub){
   const root = document.createElement('div');
-  root._title = {tabs:'홈 탭 편집', filters:'숨길 단어', mutes:'뮤트한 계정', blocks:'차단한 계정', domains:'차단한 서버', accounts:'계정 관리'}[sub] || '설정';
-  if (sub === 'tabs') tabsEditor(root);
+  root._title = {tabs:'홈 탭 편집', filters:'숨길 단어', mutes:'뮤트한 계정', blocks:'차단한 계정', domains:'차단한 서버', accounts:'계정 관리', requests:'팔로우 요청', lists:'리스트'}[sub] || (/^list-/.test(sub || '') ? '리스트' : '설정');
+  if (/^list-./.test(sub || '')) listMembersPage(root, sub.slice(5));
+  else if (sub === 'lists') listsPage(root);
+  else if (sub === 'requests') requestsPage(root);
+  else if (sub === 'tabs') tabsEditor(root);
   else if (sub === 'accounts') accountsPage(root);
   else if (sub === 'filters') filtersPage(root);
   else if (sub === 'mutes' || sub === 'blocks') peoplePage(root, sub);
@@ -2642,10 +3184,12 @@ function mainSettings(root){
   /* 홈 탭 */
   const s3 = secEl('홈 탭');
   s3.append(linkRow('sliders', '홈 탭 편집', homeTabs().map(tabLabel).join(' · '), () => nav('#/settings/tabs')));
+  s3.append(linkRow('list', '리스트 만들기·편집', '팔로우한 사람 중 일부만 모아 보는 목록', () => nav('#/settings/lists')));
   root.append(s3);
   /* 글쓰기 (서버에 저장) */
   const s4 = secEl('글쓰기', `@${me.acct} 계정에 저장돼요. 다른 앱에서 써도 똑같이 적용돼요.`);
   const s5 = secEl('계정 공개 범위', `@${me.acct} 계정에 저장돼요.`);
+  s5.append(linkRow('user', '팔로우 요청', '팔로우 승인제일 때 들어온 요청을 수락·거절해요', () => nav('#/settings/requests')));
   const wait = h('<div class="sentinel"><div class="spin"></div></div>');
   s4.append(wait);
   root.append(s4, s5);
@@ -2729,7 +3273,7 @@ function tabsEditor(root){
   };
   draw();
   api('/api/v1/lists').then(l => { lists = l || []; draw(); }).catch(() => {});
-  s2.append(h('<p class="secdesc" style="padding:4px 16px 14px">리스트는 마스토돈 웹의 ‘리스트’ 메뉴에서 만들 수 있어요. 커뮤 멤버만 모아 보는 리스트를 만들어 탭으로 넣으면 편해요.</p>'));
+  s2.append(linkRow('list', '리스트 만들기·편집', '커뮤 멤버만 모아 보는 리스트를 만들어 탭으로 넣으면 편해요', () => nav('#/settings/lists')));
 }
 function filtersPage(root){
   const s1 = secEl('새 숨길 단어', '이 단어가 들어간 글을 홈, 알림, 스레드, 프로필에서 가려요.');
@@ -2813,6 +3357,7 @@ async function profileMenu(a){
     const t = document.createElement('h3'); t.textContent = '@' + a.acct; sh.append(t);
     const add = (icon, title, sub, fn) => { const b = optBtn(`<span class="oi">${ic(icon)}</span>`, title, sub, false); b.onclick = () => { close(); fn(); }; sh.append(b); };
     add('share', '프로필 링크 복사', '이 사람 프로필 주소를 복사해요', () => share({url:a.url}));
+    if (rel.following) add('list', '리스트에 넣기·빼기', '이 사람을 내 리스트에 넣거나 빼요', () => listPicker(a));
     add('user', rel.muting ? '뮤트 풀기' : '뮤트하기', rel.muting ? '다시 이 사람 글이 보여요' : '이 사람 글이 홈과 알림에 안 보여요. 상대는 몰라요', async () => {
       try{ await api(`/api/v1/accounts/${a.id}/${rel.muting ? 'unmute' : 'mute'}`, {method:'POST'}); resetViews(); toast(rel.muting ? '뮤트를 풀었어요' : '뮤트했어요'); }catch(e){ toast(e.message); }
     });
@@ -2824,6 +3369,7 @@ async function profileMenu(a){
       if (!confirm(`${domain} 서버를 통째로 차단할까요?`)) return;
       try{ await api('/api/v1/domain_blocks?' + qs({domain}), {method:'POST'}); resetViews(); toast('서버를 차단했어요'); }catch(e){ toast(e.message); }
     });
+    add('flag', '신고하기', '서버 관리자에게 이 계정을 알려요', () => reportSheet(a));
   });
 }
 
@@ -2902,6 +3448,365 @@ function followsView(id, kind){
   root.refresh = () => load(true);
   load(true);
   return root;
+}
+
+/* ---------- 사람 한 줄 (검색·좋아요한 사람·리스트 등에서 같이 씀) ---------- */
+function personRow(a, right){
+  const r = h('<div class="frow"><img class="av" alt=""><div class="t"><b></b><small></small><div class="fnote"></div></div></div>');
+  $('img', r).src = avOf(a); $('b', r).append(richName(a));
+  $('small', r).textContent = '@' + a.acct;
+  $('.fnote', r).textContent = plain(a.note);
+  r.onclick = () => nav('#/user/' + a.id);
+  if (right){ right.addEventListener('click', e => e.stopPropagation()); r.append(right); }
+  return r;
+}
+/* 사람 목록 (서버가 알려 주는 다음 주소로 계속 불러옴) */
+function peopleList(path, empty){
+  const root = document.createElement('div');
+  const list = document.createElement('div'), sent = document.createElement('div'); sent.className = 'sentinel';
+  root.append(list, sent);
+  let nextPath = null, loading = false, done = false, gen = 0;
+  const seen = new Set();
+  async function load(reset){
+    if (reset){ gen++; nextPath = null; done = false; loading = false; }
+    if (loading || done) return;
+    loading = true; const my = gen;
+    if (!(reset && list.childElementCount)) sent.innerHTML = '<div class="spin"></div>';
+    let ok = false;
+    try{
+      const {data, next} = await api(nextPath && !reset ? nextPath : path, {withLink:true});
+      if (my !== gen) return;
+      if (reset){ list.replaceChildren(); seen.clear(); }
+      const fresh = (data || []).filter(a => !seen.has(String(a.id)));
+      fresh.forEach(a => { seen.add(String(a.id)); list.append(personRow(a)); });
+      if (fresh.length && next){ nextPath = next; sent.innerHTML = ''; ok = true; }
+      else { done = true; sent.innerHTML = list.childElementCount ? '' : `<div class="empty">${esc(empty)}</div>`; }
+    }catch(e){
+      if (my !== gen) return;
+      sent.innerHTML = '';
+      const b = h('<div class="err"><p></p><button class="pill ghost" type="button">다시 시도</button></div>');
+      $('p', b).textContent = e.message; $('button', b).onclick = () => load(reset);
+      sent.append(b);
+    }finally{ if (my === gen) loading = false; }
+    if (ok && root.isConnected && sent.getBoundingClientRect().top < innerHeight + 600) load(false);
+  }
+  new IntersectionObserver(es => { if (es[0].isIntersecting) load(false); }, {rootMargin:'600px 0px'}).observe(sent);
+  root.refresh = () => load(true);
+  load(true);
+  return root;
+}
+/* 이 툿을 좋아요·부스트·인용한 사람 */
+function whoView(id, kind){
+  if (kind === 'quote'){
+    const v = feedView(`/api/v1/statuses/${id}/quotes`, {empty:'아직 이 툿을 인용한 글이 없어요.', linkOnly:true});
+    v._title = '인용한 글'; return v;
+  }
+  const boost = kind === 'boost';
+  const v = peopleList(`/api/v1/statuses/${id}/${boost ? 'reblogged_by' : 'favourited_by'}?limit=40`, boost ? '아직 부스트한 사람이 없어요.' : '아직 좋아요를 누른 사람이 없어요.');
+  v._title = boost ? '부스트한 사람' : '좋아요한 사람';
+  return v;
+}
+/* 해시태그 화면: 글 모아 보기 + 팔로우 + 홈 탭에 넣기 */
+function tagView(name){
+  const root = document.createElement('div');
+  root._title = '#' + name;
+  const head = h(`<div class="taghead"><span class="oi">${ic('hash')}</span><div class="t"><b></b><small></small></div><div class="btns"></div></div>`);
+  $('b', head).textContent = '#' + name;
+  const btns = $('.btns', head);
+  const loadHead = async () => {
+    btns.replaceChildren();
+    const inTabs = () => homeTabs().some(t => t.t === 'tag' && t.tag.toLowerCase() === name.toLowerCase());
+    const tabBtn = h('<button class="mini" type="button"></button>');
+    const paintTab = () => { tabBtn.textContent = inTabs() ? '홈 탭에 있음' : '홈 탭에 넣기'; tabBtn.disabled = inTabs(); };
+    tabBtn.onclick = () => { if (inTabs()) return; saveHomeTabs([...homeTabs(), {t:'tag', tag:name}]); paintTab(); renderHomeTabs(); toast(`#${name} 탭을 홈에 넣었어요`); };
+    paintTab(); btns.append(tabBtn);
+    try{
+      let t = await api('/api/v1/tags/' + encodeURIComponent(name));
+      const uses = (t.history || []).slice(0, 7).reduce((n, d) => n + Number(d.uses || 0), 0);
+      $('small', head).textContent = uses ? `최근 일주일 동안 ${uses}개 글` : '최근 일주일 동안 쓴 글이 없어요';
+      if (typeof t.following === 'boolean'){
+        const fb = h('<button type="button"></button>');
+        const paint = () => { fb.className = t.following ? 'pill ghost' : 'pill'; fb.textContent = t.following ? '팔로잉' : '팔로우'; fb.style.cssText = 'padding:6px 14px;font-size:13.5px'; };
+        fb.onclick = async () => {
+          fb.disabled = true;
+          try{ t = await api(`/api/v1/tags/${encodeURIComponent(name)}/${t.following ? 'unfollow' : 'follow'}`, {method:'POST'}); toast(t.following ? '이 해시태그 글이 팔로잉 탭에도 올라와요' : '해시태그 팔로우를 끊었어요'); }
+          catch(e){ toast(e.message); }
+          fb.disabled = false; paint();
+        };
+        paint(); btns.prepend(fb);
+        btns.append(helpBtn('해시태그 팔로우', '해시태그를 팔로우하면 이 태그가 붙은 글이 사람을 팔로우하지 않아도 팔로잉 탭에 올라와요. ‘홈 탭에 넣기’는 이 태그 글만 따로 모아 보는 탭을 위에 추가해요.'));
+      }
+    }catch(e){}
+  };
+  loadHead();
+  const feed = feedView(`/api/v1/timelines/tag/${encodeURIComponent(name)}`, {empty:'이 해시태그가 붙은 글이 아직 없어요.'});
+  root.append(head, feed);
+  root.refresh = () => { loadHead(); feed.refresh(); };
+  return root;
+}
+/* ---------- 검색 ---------- */
+const recentKey = () => 'ytt.recent.' + cur().acct;
+function addRecent(qv){
+  qv = qv.trim(); if (!qv) return;
+  const l = LS.get(recentKey(), []).filter(x => x !== qv); l.unshift(qv); LS.set(recentKey(), l.slice(0, 10));
+}
+function searchView(){
+  const root = document.createElement('div');
+  const box = h(`<div class="sbox"><form class="sbar" role="search"><span class="sic">${ic('search')}</span><input type="search" enterkeyhint="search" placeholder="사람, #해시태그, 툿 주소로 찾기" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="검색어"><button class="ibtn sclear" type="button" aria-label="검색어 지우기" hidden>${ic('x')}</button></form><div class="tabs stabs" hidden><button type="button" data-k="accounts" class="on">사람</button><button type="button" data-k="hashtags">해시태그</button><button type="button" data-k="statuses">글</button></div></div>`);
+  const inp = $('input', box), clr = $('.sclear', box), tabs = $('.stabs', box);
+  const out = document.createElement('div');
+  root.append(box, out);
+  let k = 'accounts', res = null, seq = 0, timer = 0, lastQ = '';
+  const LABEL = {accounts:'사람', hashtags:'해시태그', statuses:'글'};
+  const tagRow = t => {
+    const uses = (t.history || []).slice(0, 7).reduce((n, d) => n + Number(d.uses || 0), 0);
+    const r = h(`<div class="frow"><span class="oi">${ic('hash')}</span><div class="t"><b></b><small></small></div></div>`);
+    $('b', r).textContent = '#' + t.name; $('small', r).textContent = uses ? `최근 일주일 ${uses}개 글` : '최근 글 없음';
+    r.onclick = () => { addRecent(inp.value); nav('#/htag/' + encodeURIComponent(t.name)); };
+    return r;
+  };
+  async function idle(){
+    tabs.hidden = true; out.replaceChildren();
+    const rec = LS.get(recentKey(), []);
+    if (rec.length){
+      const s = secEl('최근 찾은 것');
+      rec.forEach(x => {
+        const r = h(`<div class="tabrow srec"><span class="t"></span><button class="ibtn" type="button" aria-label="기록에서 지우기">${ic('x')}</button></div>`);
+        $('.t', r).textContent = x; $('.t', r).onclick = () => { inp.value = x; run(true); };
+        $('button', r).onclick = () => { LS.set(recentKey(), LS.get(recentKey(), []).filter(y => y !== x)); idle(); };
+        s.append(r);
+      });
+      out.append(s);
+    }
+    const ft = secEl('내가 팔로우하는 해시태그');
+    out.append(ft);
+    out.append(h('<div class="shelp"><b>이렇게 찾을 수 있어요</b><ul><li><b>사람</b>: 이름이나 아이디 (다른 서버 사람은 <code>@아이디@서버주소</code> 전체를 적고 검색 버튼을 눌러 주세요)</li><li><b>해시태그</b>: <code>#역극</code>처럼 태그 이름</li><li><b>툿·프로필 주소</b>: 링크를 붙여 넣으면 바로 열려요</li><li><b>글</b>: 단어로 찾기는 서버 설정에 따라 내가 쓴 글·좋아요·북마크·나를 부른 글이나, 검색을 허용한 사람의 공개 글만 찾을 수 있어요</li></ul></div>'));
+    try{
+      const tags = await api('/api/v1/followed_tags?limit=40');
+      if (inp.value.trim()) return;
+      if (!tags.length) ft.append(h('<p class="secdesc" style="padding:0 16px 14px">아직 없어요. 해시태그 화면에서 ‘팔로우’를 누르면 여기에 모여요.</p>'));
+      tags.forEach(t => ft.append(tagRow(t)));
+    }catch(e){ ft.remove(); }
+  }
+  function paintTabs(){
+    tabs.hidden = !res;
+    tabs.querySelectorAll('button').forEach(b => {
+      const n = res ? (res[b.dataset.k] || []).length : 0;
+      b.textContent = LABEL[b.dataset.k] + (n ? ` ${n >= 20 ? '20+' : n}` : '');
+      b.classList.toggle('on', b.dataset.k === k);
+    });
+  }
+  function show(){
+    paintTabs(); out.replaceChildren();
+    const items = (res && res[k]) || [];
+    if (!items.length){
+      out.append(h(`<div class="empty">${k === 'statuses' ? '찾은 글이 없어요.<br><small>단어로 글 찾기는 서버 설정에 따라 내 글·좋아요·북마크·나를 부른 글 등만 찾을 수 있어요.</small>' : k === 'accounts' ? '찾은 사람이 없어요.<br><small>다른 서버 사람은 @아이디@서버주소 전체를 적고 검색 버튼을 눌러 보세요.</small>' : '찾은 해시태그가 없어요.'}</div>`));
+      return;
+    }
+    items.forEach(it => out.append(k === 'accounts' ? personRow(it) : k === 'hashtags' ? tagRow(it) : statusEl(it)));
+    if (k === 'accounts') out.querySelectorAll('.frow').forEach(r => r.addEventListener('click', () => addRecent(inp.value), {capture:true}));
+    if (items.length >= 20){
+      const more = h('<div class="secpad" style="padding-top:12px"><button class="pill ghost wide" type="button">더 보기</button></div>');
+      const mb = $('button', more);
+      mb.onclick = async () => {
+        mb.disabled = true;
+        try{
+          const r = await api('/api/v2/search?' + qs({q:lastQ, type:k, limit:'20', offset:String(items.length), resolve:'false'}));
+          const add = (r && r[k]) || [];
+          const ids = new Set(items.map(x => String(x.id || x.name)));
+          add.filter(x => !ids.has(String(x.id || x.name))).forEach(x => items.push(x));
+          if (add.length < 20) res[k + 'Done'] = true;
+          const y = window.scrollY; show(); window.scrollTo(0, y);
+          if (res[k + 'Done']) out.querySelectorAll('.secpad').forEach(x => x.remove());
+        }catch(e){ toast(e.message); mb.disabled = false; }
+      };
+      if (!res[k + 'Done']) out.append(more);
+    }
+  }
+  async function run(commit){
+    const qv = inp.value.trim();
+    clr.hidden = !qv;
+    clearTimeout(timer);
+    if (!qv){ seq++; res = null; idle(); return; }
+    const my = ++seq;
+    const isUrl = /^https?:\/\/\S+$/i.test(qv);
+    if (isUrl && !commit) return;
+    out.replaceChildren(h('<div class="sentinel"><div class="spin"></div></div>'));
+    try{
+      const r = await api('/api/v2/search?' + qs({q:qv, limit:'20', resolve:String(!!commit)}));
+      if (my !== seq) return;
+      lastQ = qv;
+      if (commit) addRecent(qv);
+      if (isUrl){
+        if (r.statuses && r.statuses.length){ nav('#/thread/' + r.statuses[0].id); return; }
+        if (r.accounts && r.accounts.length){ nav('#/user/' + r.accounts[0].id); return; }
+      }
+      res = {accounts:r.accounts || [], hashtags:r.hashtags || [], statuses:r.statuses || []};
+      if (!(res[k] || []).length) k = ['accounts','hashtags','statuses'].find(x => res[x].length) || (qv.startsWith('#') ? 'hashtags' : k);
+      show();
+    }catch(e){
+      if (my !== seq) return;
+      out.replaceChildren();
+      const b = h('<div class="err" style="padding:24px 16px"><p></p></div>'); $('p', b).textContent = e.message; out.append(b);
+    }
+  }
+  inp.addEventListener('input', () => { clr.hidden = !inp.value.trim(); clearTimeout(timer); timer = setTimeout(() => run(false), 400); });
+  $('form', box).onsubmit = e => { e.preventDefault(); inp.blur(); run(true); };
+  clr.onclick = () => { inp.value = ''; run(false); inp.focus(); };
+  tabs.querySelectorAll('button').forEach(b => { b.onclick = () => { k = b.dataset.k; show(); window.scrollTo(0, 0); }; });
+  root.refresh = () => { if (inp.value.trim()) run(true); else idle(); };
+  idle();
+  return root;
+}
+/* ---------- 팔로우 요청 (잠금 계정) ---------- */
+function requestsPage(root){
+  const s1 = secEl('나를 팔로우하고 싶은 사람', '수락하면 이 사람이 나를 팔로우하게 돼요. 팔로워만 볼 수 있는 글도 보여요.');
+  const list = document.createElement('div'); s1.append(list); root.append(s1);
+  list.innerHTML = '<div class="sentinel"><div class="spin"></div></div>';
+  api('/api/v1/follow_requests?limit=80').then(people => {
+    list.replaceChildren();
+    if (!people.length) list.append(h('<p class="secdesc" style="padding:4px 16px 14px">기다리는 팔로우 요청이 없어요.</p>'));
+    people.forEach(a => {
+      const btns = h('<div class="btns" style="display:flex;gap:6px;flex:none"><button class="pill" type="button" style="padding:6px 14px;font-size:13.5px">수락</button><button class="mini" type="button">거절</button></div>');
+      const [ok, no] = btns.querySelectorAll('button');
+      const r = personRow(a, btns);
+      const act = async kind => {
+        ok.disabled = no.disabled = true;
+        try{ await api(`/api/v1/follow_requests/${a.id}/${kind}`, {method:'POST'}); btns.replaceChildren(h(`<span class="tag">${kind === 'authorize' ? '수락했어요' : '거절했어요'}</span>`)); }
+        catch(e){ toast(e.message); ok.disabled = no.disabled = false; }
+      };
+      ok.onclick = () => act('authorize'); no.onclick = () => act('reject');
+      list.append(r);
+    });
+  }).catch(e => { list.replaceChildren(); toast(e.message); });
+}
+/* ---------- 리스트 만들기·편집 ---------- */
+function listsPage(root){
+  const s1 = secEl('새 리스트', '커뮤 멤버나 같은 역극 사람들처럼, 팔로우한 사람 중 일부만 모아 보는 목록이에요. 만든 리스트는 홈 탭에 넣을 수 있어요.');
+  const add = h('<div class="addrow"><input placeholder="예: 커뮤 1기 멤버" maxlength="50"><button class="pill" type="button">만들기</button></div>');
+  s1.append(add);
+  const s2 = secEl('내 리스트');
+  const list = document.createElement('div'); s2.append(list);
+  root.append(s1, s2);
+  const load = async () => {
+    list.innerHTML = '<div class="sentinel"><div class="spin"></div></div>';
+    try{
+      const ls = await api('/api/v1/lists');
+      list.replaceChildren();
+      if (!ls.length) list.append(h('<p class="secdesc" style="padding:4px 16px 14px">아직 만든 리스트가 없어요.</p>'));
+      ls.forEach(l => {
+        const r = h(`<div class="tabrow"><span class="t" style="cursor:pointer"></span><button class="mini" type="button">이름 바꾸기</button><button class="mini danger" type="button">지우기</button></div>`);
+        const t = $('.t', r); t.textContent = l.title; t.append(Object.assign(document.createElement('small'), {textContent:'눌러서 멤버 보기·추가'}));
+        t.onclick = () => nav('#/settings/list-' + l.id);
+        const [rn, del] = r.querySelectorAll('button');
+        rn.onclick = async () => {
+          const v = prompt('새 리스트 이름', l.title); if (v == null || !v.trim() || v.trim() === l.title) return;
+          try{ await api('/api/v1/lists/' + l.id, {method:'PUT', body:{title:v.trim()}}); syncListTab(l.id, v.trim()); load(); toast('이름을 바꿨어요'); }catch(e){ toast(e.message); }
+        };
+        del.onclick = async () => {
+          if (!confirm(`‘${l.title}’ 리스트를 지울까요? 리스트 안의 사람 팔로우는 그대로예요.`)) return;
+          try{ await api('/api/v1/lists/' + l.id, {method:'DELETE'}); syncListTab(l.id, null); load(); toast('리스트를 지웠어요'); }catch(e){ toast(e.message); }
+        };
+        list.append(r);
+      });
+    }catch(e){ list.replaceChildren(); const p = h('<p class="secdesc" style="padding:4px 16px 14px"></p>'); p.textContent = e.message; list.append(p); }
+  };
+  const inp = $('input', add);
+  $('button', add).onclick = async () => {
+    const v = inp.value.trim(); if (!v) return;
+    try{ const l = await api('/api/v1/lists', {method:'POST', body:{title:v}}); inp.value = ''; toast(`‘${v}’ 리스트를 만들었어요. 이제 사람을 넣어 보세요`); nav('#/settings/list-' + l.id); }catch(e){ toast(e.message); }
+  };
+  load();
+}
+/* 홈 탭에 넣어 둔 리스트 이름 바꾸기·지우기 반영 */
+function syncListTab(id, title){
+  const t = homeTabs();
+  const nt = title ? t.map(x => x.t === 'list' && String(x.id) === String(id) ? {...x, title} : x) : t.filter(x => !(x.t === 'list' && String(x.id) === String(id)));
+  saveHomeTabs(nt.length ? nt : [{t:'home'}, {t:'local'}]); renderHomeTabs();
+}
+function listMembersPage(root, id){
+  const s0 = secEl('리스트');
+  const s1 = secEl('리스트에 사람 넣기', '내가 팔로우하는 사람만 넣을 수 있어요.');
+  const f = h('<div class="addrow"><input type="search" placeholder="이름이나 아이디로 찾기" autocapitalize="off" autocorrect="off" spellcheck="false"></div>');
+  const found = document.createElement('div');
+  s1.append(f, found);
+  const s2 = secEl('이 리스트에 있는 사람');
+  const list = document.createElement('div'); s2.append(list);
+  root.append(s0, s1, s2);
+  let members = new Set();
+  api('/api/v1/lists/' + id).then(l => { $('h3', s0).textContent = l.title; root._title = l.title; if (curKey === '#/settings/list-' + id) $('#tTitle').textContent = l.title; }).catch(() => {});
+  const memberRow = a => {
+    const b = h('<button class="mini danger" type="button">빼기</button>');
+    const r = personRow(a, b);
+    b.onclick = async () => {
+      try{ await api(`/api/v1/lists/${id}/accounts?` + qs({'account_ids[]':[a.id]}), {method:'DELETE'}); members.delete(String(a.id)); r.remove(); toast('리스트에서 뺐어요'); search(); }catch(e){ toast(e.message); }
+    };
+    return r;
+  };
+  const load = async () => {
+    list.innerHTML = '<div class="sentinel"><div class="spin"></div></div>';
+    try{
+      const ps = await api(`/api/v1/lists/${id}/accounts?limit=0`);
+      members = new Set(ps.map(a => String(a.id)));
+      list.replaceChildren(...ps.map(memberRow));
+      if (!ps.length) list.append(h('<p class="secdesc" style="padding:4px 16px 14px">아직 아무도 없어요. 위에서 찾아서 넣어 보세요.</p>'));
+    }catch(e){ list.replaceChildren(); toast(e.message); }
+  };
+  const inp = $('input', f);
+  let seq = 0, timer = 0;
+  async function search(){
+    const qv = inp.value.trim(), my = ++seq;
+    if (!qv){ found.replaceChildren(); return; }
+    try{
+      const ps = await api('/api/v1/accounts/search?' + qs({q:qv, following:'true', limit:'10'}));
+      if (my !== seq) return;
+      found.replaceChildren();
+      if (!ps.length) found.append(h('<p class="secdesc" style="padding:0 16px 12px">내가 팔로우하는 사람 중에 찾지 못했어요.</p>'));
+      ps.forEach(a => {
+        const inList = members.has(String(a.id));
+        const b = h(`<button class="${inList ? 'mini' : 'pill'}" type="button" style="${inList ? '' : 'padding:6px 14px;font-size:13.5px'}"></button>`);
+        b.textContent = inList ? '들어 있음' : '넣기'; b.disabled = inList;
+        b.onclick = async () => {
+          b.disabled = true;
+          try{ await api(`/api/v1/lists/${id}/accounts`, {method:'POST', body:{account_ids:[a.id]}}); toast('리스트에 넣었어요'); load().then(search); }
+          catch(e){ toast(e.message); b.disabled = false; }
+        };
+        found.append(personRow(a, b));
+      });
+    }catch(e){}
+  }
+  inp.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(search, 300); });
+  load();
+}
+/* 프로필 메뉴에서: 이 사람을 리스트에 넣기·빼기 */
+async function listPicker(a){
+  let all, mine;
+  try{ [all, mine] = await Promise.all([api('/api/v1/lists'), api(`/api/v1/accounts/${a.id}/lists`)]); }catch(e){ toast(e.message); return; }
+  const inSet = new Set((mine || []).map(l => String(l.id)));
+  sheet((sh, close) => {
+    const t = document.createElement('h3'); t.textContent = '리스트에 넣기·빼기'; sh.append(t);
+    (all || []).forEach(l => {
+      const make = () => {
+        const on = inSet.has(String(l.id));
+        const b = optBtn(`<span class="oi">${ic('list')}</span>`, l.title, on ? '들어 있어요 · 누르면 빼요' : '누르면 넣어요', on);
+        b.onclick = async () => {
+          b.disabled = true;
+          try{
+            if (on) await api(`/api/v1/lists/${l.id}/accounts?` + qs({'account_ids[]':[a.id]}), {method:'DELETE'});
+            else await api(`/api/v1/lists/${l.id}/accounts`, {method:'POST', body:{account_ids:[a.id]}});
+            if (on) inSet.delete(String(l.id)); else inSet.add(String(l.id));
+            toast(on ? `‘${l.title}’에서 뺐어요` : `‘${l.title}’에 넣었어요`);
+            b.replaceWith(make());
+          }catch(e){ toast(e.message); b.disabled = false; }
+        };
+        return b;
+      };
+      sh.append(make());
+    });
+    const nb = optBtn(`<span class="oi">${ic('plus')}</span>`, '새 리스트 만들기', (all || []).length ? '리스트 관리 화면으로 가요' : '아직 리스트가 없어요. 먼저 만들어 주세요', false);
+    nb.onclick = () => { close(); setTimeout(() => nav('#/settings/lists'), 50); };
+    sh.append(nb);
+  });
 }
 
 /* ---------- 옆으로 밀어서 탭 넘기기 (손가락을 따라 움직임) ---------- */
@@ -3099,7 +4004,7 @@ async function checkNotif(){
 
 /* ---------- 라우터 ---------- */
 const HOME_NAMES = ['home','local','fed','list','tag','bookmarks','favs'];
-const TABS = [...HOME_NAMES, 'notifications','mentions','dm','me'];
+const TABS = [...HOME_NAMES, 'search','notifications','mentions','dm','me'];
 const cache = new Map();
 let curKey = null, lastTab = '#/home', lastNotifTab = '#/notifications', lastHome = null;
 function parse(){
@@ -3152,6 +4057,9 @@ function buildView(name, arg, arg2){
     case 'thread': return threadView(arg);
     case 'user': return userView(arg);
     case 'follows': return followsView(arg, arg2 === 'followers' ? 'followers' : 'following');
+    case 'search': return searchView();
+    case 'htag': return tagView(decodeURIComponent(arg));
+    case 'who': return whoView(arg, arg2);
     default: return meView();
   }
 }
@@ -3166,7 +4074,7 @@ function route(){
   }
   document.body.classList.remove('in-login');
   if (name === 'open'){ openNotif(arg, arg2); return; }
-  if (![...TABS,'thread','user','chat','edit','settings','follows'].includes(name) || (['thread','user','chat','list','tag','follows'].includes(name) && !arg)){ hsh = '#/home'; name = 'home'; }
+  if (![...TABS,'thread','user','chat','edit','settings','follows','htag','who'].includes(name) || (['thread','user','chat','list','tag','follows','htag','who'].includes(name) && !arg)){ hsh = '#/home'; name = 'home'; }
   if (curKey && cache.has(curKey)) cache.get(curKey).y = window.scrollY;
   if (name === 'edit' || name === 'settings') cache.delete(hsh);
   const existed = cache.has(hsh);
@@ -3198,7 +4106,7 @@ function setHeader(name, el){
   } else {
     L.innerHTML = ic('back'); L.setAttribute('aria-label', '뒤로'); L.onclick = goBack;
   }
-  T.textContent = {notifications:'알림', mentions:'알림', dm:'쪽지', me:'내 계정', thread:'글', user:'프로필', edit:'프로필 편집'}[name] || ((name === 'chat' || name === 'settings' || name === 'follows') ? (el && el._title) || '쪽지' : APP_NAME);
+  T.textContent = {notifications:'알림', mentions:'알림', search:'검색', dm:'쪽지', me:'내 계정', thread:'글', user:'프로필', edit:'프로필 편집'}[name] || ((name === 'chat' || name === 'settings' || name === 'follows' || name === 'htag' || name === 'who') ? (el && el._title) || '쪽지' : APP_NAME);
   R.innerHTML = ic('refresh'); R.style.visibility = (name === 'edit' || name === 'settings') ? 'hidden' : 'visible';
   renderHomeTabs();
   $('#tTabs').hidden = !(HOME_NAMES.includes(name) && homeTabs().length > 1);

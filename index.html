@@ -200,7 +200,7 @@ img.emoji{height:1.25em;width:auto;vertical-align:-.25em;margin:0 .05em;object-f
 @media(min-width:640px){.cov{padding-top:5vh}.compose{height:auto;max-height:90%;border-radius:20px;overflow:hidden}}
 .c-top{display:flex;align-items:center;padding:8px 12px;gap:8px}
 .c-draft{font-size:12px;color:var(--sub)}
-.c-scroll{flex:1;overflow:auto;padding:4px 16px 12px;-webkit-overflow-scrolling:touch}
+.c-scroll{flex:1;overflow:auto;overscroll-behavior:contain;padding:4px 16px 12px;-webkit-overflow-scrolling:touch}
 .c-replyto{margin:0 0 12px;padding:10px 12px;border-radius:12px;background:var(--hover);font-size:14px}
 .crh{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .crb{color:var(--sub);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-line;margin-top:2px;overflow-wrap:anywhere}
@@ -321,8 +321,11 @@ details.gl p{margin:0;padding:0 16px 14px;color:var(--sub);font-size:14px}
 
 /* 쪽지 대화 */
 body.in-chat .bnav,body.in-chat .fab{display:none}
-body.in-chat #shell{padding-bottom:0}
-.chat{padding:0 12px calc(80px + env(safe-area-inset-bottom))}
+body.in-chat{overflow:hidden}
+body.in-chat #shell{padding-bottom:0;min-height:0}
+.chat{position:fixed;left:0;right:0;top:calc(54px + env(safe-area-inset-top));bottom:0;z-index:5;max-width:600px;margin:0 auto;display:flex;flex-direction:column;background:var(--bg)}
+@media(min-width:640px){.chat{border-left:1px solid var(--line);border-right:1px solid var(--line)}}
+.msgs{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:0 12px 14px}
 .chead{display:flex;flex-direction:column;align-items:center;text-align:center;padding:20px 16px 22px;border-bottom:1px solid var(--line);margin:0 -12px 8px;cursor:pointer}
 .chead .avs{display:flex}
 .chead .avs img{width:64px;height:64px;border-radius:50%;object-fit:cover;background:var(--line);border:3px solid var(--bg);margin-left:-14px}
@@ -354,7 +357,7 @@ body.in-chat #shell{padding-bottom:0}
 .msg.mine .bfav{right:auto;left:-4px}
 .bfav .ic{width:12px;height:12px;fill:currentColor}
 .mtime{font-size:11.5px;color:var(--sub);margin:3px 6px 0}
-.cbar{position:fixed;left:0;right:0;bottom:0;z-index:25;background:var(--bg);border-top:1px solid var(--line);padding:8px 10px calc(8px + env(safe-area-inset-bottom))}
+.cbar{flex:none;background:var(--bg);border-top:1px solid var(--line);padding:8px 10px calc(8px + env(safe-area-inset-bottom))}
 .cbar .in{max-width:580px;margin:0 auto;display:flex;align-items:flex-end;gap:4px}
 .cbar .ibtn{color:var(--accent)}
 .cbox{flex:1;min-width:0;background:var(--hover);border-radius:20px;padding:2px 14px;display:flex;flex-direction:column}
@@ -370,8 +373,7 @@ body.in-chat #shell{padding-bottom:0}
 #tTabs{overflow-x:auto;scrollbar-width:none}
 #tTabs::-webkit-scrollbar{display:none}
 #tTabs button{flex:1 0 auto;padding-left:14px;padding-right:14px;white-space:nowrap}
-#tTabs .tabedit{flex:none;width:44px;padding:0;color:var(--sub);display:flex;align-items:center;justify-content:center}
-#tTabs .tabedit .ic{width:18px;height:18px}
+#tEdit{color:var(--sub)}
 .srow{display:flex;align-items:center;gap:10px;padding:12px 16px;width:100%;border:0;background:none;text-align:left;cursor:pointer}
 .srow:active{background:var(--hover)}
 .srow .t{flex:1;min-width:0}
@@ -379,7 +381,8 @@ body.in-chat #shell{padding-bottom:0}
 .srow .t small{display:block;color:var(--sub);font-size:13px}
 .srow .chev{color:var(--sub);display:flex}
 .srow .chev .ic{width:18px;height:18px}
-.qhelp{width:22px;height:22px;border-radius:50%;border:1.5px solid var(--sub);background:none;color:var(--sub);font-size:12px;font-weight:800;line-height:1;padding:0;flex:none;display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;margin-left:4px}
+.qhelp{position:relative;width:16px;height:16px;border-radius:50%;border:1px solid currentColor;background:none;color:var(--sub);opacity:.55;font-size:10px;font-weight:600;line-height:1;padding:0;flex:none;display:inline-flex;align-items:center;justify-content:center;vertical-align:1px;margin-left:5px}
+.qhelp::after{content:"";position:absolute;inset:-10px}
 .sec .tg .t b,.chooser .ct b{display:inline}
 .tg .t small,.chooser .ct small{margin-top:2px}
 .chooser{padding:12px 16px}
@@ -446,6 +449,7 @@ body.in-chat #shell{padding-bottom:0}
     <div class="top-row">
       <button class="ibtn" id="tLeft" type="button"></button>
       <h1 id="tTitle"></h1>
+      <button class="ibtn" id="tEdit" type="button" aria-label="홈 탭 편집" hidden></button>
       <button class="ibtn" id="tRight" type="button" aria-label="새로고침"></button>
     </div>
     <div class="tabs" id="tTabs" hidden></div>
@@ -1441,11 +1445,17 @@ function openCompose({replyTo = null} = {}){
   ta.addEventListener('input', update); cw.addEventListener('input', update);
 
   const vv = window.visualViewport;
-  const fit = () => { ov.style.height = vv.height + 'px'; ov.style.top = vv.offsetTop + 'px'; };
+  const fit = () => {
+    const off = window.innerHeight - vv.height;
+    if (off > 120){ ov.style.height = vv.height + 'px'; ov.style.top = vv.offsetTop + 'px'; }
+    else { ov.style.height = ''; ov.style.top = ''; }
+  };
+  let closed = false;
   const close = () => {
+    if (closed) return; closed = true;
     if (vv){ vv.removeEventListener('resize', fit); vv.removeEventListener('scroll', fit); }
     S.media.forEach(m => URL.revokeObjectURL(m.preview));
-    ov.remove(); document.body.classList.remove('noscroll');
+    ov.remove(); document.body.classList.remove('noscroll'); unlockScroll();
   };
   q('.c-cancel').onclick = () => {
     if (replyTo && ta.value.trim() && ta.value.trim() !== S.prefix.trim() && !confirm('쓰던 답글을 버릴까요?')) return;
@@ -1470,7 +1480,7 @@ function openCompose({replyTo = null} = {}){
     }
   };
 
-  document.body.append(ov); document.body.classList.add('noscroll');
+  document.body.append(ov); document.body.classList.add('noscroll'); lockScroll();
   if (vv){ vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); fit(); }
   paintCw(); applyAcc(true); paintMedia();
   setTimeout(() => { ta.focus(); const L = ta.value.length; ta.setSelectionRange(L, L); }, 60);
@@ -1597,7 +1607,7 @@ function dmListView(){
 function chatView(key){
   const me = cur(), skey = me.acct + '|' + key;
   const root = document.createElement('div'); root.className = 'chat'; root._title = '쪽지';
-  const msgs = document.createElement('div');
+  const msgs = document.createElement('div'); msgs.className = 'msgs';
   msgs.innerHTML = '<div class="sentinel"><div class="spin"></div></div>';
   const bar = h(`<div class="cbar"><div class="in">
     <button class="ibtn cimg" type="button" aria-label="사진 보내기">${ic('image')}</button>
@@ -1707,7 +1717,7 @@ function chatView(key){
     });
     if (!items.length) msgs.append(h('<div class="empty">아직 주고받은 쪽지가 없어요. 첫 쪽지를 보내 보세요!</div>'));
   }
-  const toBottom = () => requestAnimationFrame(() => { if (root.isConnected) window.scrollTo(0, document.documentElement.scrollHeight); });
+  const toBottom = () => requestAnimationFrame(() => { msgs.scrollTop = msgs.scrollHeight; });
   async function load(){
     try{
       const g = await findGroup();
@@ -1792,11 +1802,12 @@ function chatView(key){
   const vv = window.visualViewport;
   if (vv){
     const fit = () => {
-      if (!root.isConnected || document.activeElement !== ta){ bar.style.transform = ''; return; }
+      if (!root.isConnected || document.activeElement !== ta){ root.style.bottom = ''; return; }
       const off = window.innerHeight - vv.height - vv.offsetTop;
-      bar.style.transform = off > 120 ? `translateY(${-off}px)` : '';
+      root.style.bottom = off > 120 ? off + 'px' : '';
     };
-    ta.addEventListener('blur', () => { bar.style.transform = ''; });
+    ta.addEventListener('blur', () => { root.style.bottom = ''; });
+    ta.addEventListener('focus', () => setTimeout(() => { fit(); toBottom(); }, 300));
     vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit);
   }
   root.refresh = () => { convStore.delete(skey); return load(); };
@@ -2159,9 +2170,6 @@ function renderHomeTabs(){
     };
     box.append(b);
   });
-  const ed = h(`<button type="button" class="tabedit" aria-label="홈 탭 편집">${ic('sliders')}</button>`);
-  ed.onclick = () => nav('#/settings/tabs');
-  box.append(ed);
 }
 function homeFilter(s){
   const st = s.reblog || s;
@@ -2587,6 +2595,7 @@ function setHeader(name, el){
   R.innerHTML = ic('refresh'); R.style.visibility = (name === 'me' || name === 'edit' || name === 'settings') ? 'hidden' : 'visible';
   renderHomeTabs();
   $('#tTabs').hidden = !(HOME_NAMES.includes(name) && homeTabs().length > 1);
+  $('#tEdit').hidden = !HOME_NAMES.includes(name);
   $('#nTabs').hidden = !(name === 'notifications' || name === 'mentions');
   document.querySelectorAll('#tTabs button, #nTabs button').forEach(b => b.classList.toggle('on', b.dataset.h === curKey));
   let active = TABS.includes(name) ? name : lastTab.slice(2).split('/')[0];
@@ -2617,6 +2626,7 @@ async function init(){
   });
   $('#tTitle').onclick = () => window.scrollTo({top:0, behavior:'smooth'});
   $('#tRight').onclick = refreshCurrent;
+  const te = $('#tEdit'); te.innerHTML = ic('sliders'); te.onclick = () => nav('#/settings/tabs');
   const fab = $('#fab'); fab.innerHTML = ic('pen'); fab.onclick = () => openCompose();
 
   const qs = new URLSearchParams(location.search);

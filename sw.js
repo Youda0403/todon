@@ -1,5 +1,5 @@
 // 역극툿 서비스 워커: 앱 화면 파일만 캐시하고, 마스토돈 서버 요청은 건드리지 않음
-const CACHE = 'ytt-v4';
+const CACHE = 'ytt-v5';
 const BADGES = ['dm', 'reply', 'mention', 'fav', 'boost', 'status', 'follow', 'quote', 'default'].map(k => `./badge-${k}.png`);
 const SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', ...BADGES];
 
@@ -13,15 +13,34 @@ self.addEventListener('activate', e => {
   self.clients.claim();
 });
 
-// 같은 사이트 파일은 네트워크 우선(업데이트 바로 반영), 오프라인이면 캐시
+// 같은 사이트 파일: 저장해 둔 것을 바로 보여 주고(빠르게 열림), 뒤에서 새 버전을 받아 둠.
+// 앱 화면 파일이 바뀌었으면 열린 앱에 '새 버전이 있어요'를 알림
+async function notifyUpdate() {
+  const cs = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  cs.forEach(c => c.postMessage({ type: 'update' }));
+}
 self.addEventListener('fetch', e => {
   const u = new URL(e.request.url);
   if (e.request.method !== 'GET' || u.origin !== location.origin) return;
-  e.respondWith(
-    fetch(e.request)
-      .then(r => { const cp = r.clone(); caches.open(CACHE).then(c => c.put(e.request, cp)); return r; })
-      .catch(() => caches.match(e.request, { ignoreSearch: true }))
-  );
+  e.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+    const isPage = e.request.mode === 'navigate';
+    const key = isPage ? './' : e.request;
+    const cached = await cache.match(key, { ignoreSearch: true });
+    const before = cached ? cached.clone() : null;
+    const net = fetch(e.request).then(async r => {
+      if (r && r.ok) {
+        await cache.put(key, r.clone());
+        if (isPage && before) {
+          const [oldText, newText] = await Promise.all([before.text(), r.clone().text()]);
+          if (oldText !== newText) await notifyUpdate();
+        }
+      }
+      return r;
+    }).catch(() => null);
+    if (cached) { e.waitUntil(net); return cached; }
+    return (await net) || new Response('인터넷에 연결되어 있지 않아요', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+  })());
 });
 
 // 어느 계정의 알림인지 앱이 알아볼 수 있게, 토큰 대신 토큰의 짧은 지문만 넘김

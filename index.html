@@ -904,6 +904,7 @@ function statusEl(s, o = {}){
    <button class="act fav" type="button" aria-label="좋아요">${ic('heart')}<span></span></button>
    <button class="act bm" type="button" aria-label="북마크">${ic('bookmark')}</button>
    <button class="act share" type="button" aria-label="공유">${ic('share')}</button>
+   <button class="act more" type="button" aria-label="더 보기 (지우기 등)">${ic('more')}</button>
   </div>
  </div>
 </div>`;
@@ -948,7 +949,7 @@ function statusEl(s, o = {}){
     if (SET.cwOpen) btn.textContent = '숨기기';
     btn.onclick = e => { e.stopPropagation(); cb.hidden = !cb.hidden; btn.textContent = cb.hidden ? '내용 보기' : '숨기기'; };
   }
-  const [bR, bB, bF, bM, bS] = el.querySelectorAll('.act');
+  const [bR, bB, bF, bM, bS, bX] = el.querySelectorAll('.act');
   const paint = () => {
     $('span', bR).textContent = st.replies_count || '';
     $('span', bB).textContent = st.reblogs_count || '';
@@ -964,6 +965,7 @@ function statusEl(s, o = {}){
   bF.onclick = e => { e.stopPropagation(); toggleAct(st, 'fav', paint); };
   bM.onclick = e => { e.stopPropagation(); toggleAct(st, 'bm', paint); };
   bS.onclick = e => { e.stopPropagation(); share(st); };
+  bX.onclick = e => { e.stopPropagation(); statusMenu(st); };
   if (!o.focus) el.addEventListener('click', e => {
     if (e.target.closest('a,button,video,audio,.media')) return;
     if (String(getSelection())) return;
@@ -992,6 +994,65 @@ async function toggleAct(st, kind, paint){
     if (kind === 'bm') toast(was ? '북마크에서 뺐어요' : '북마크했어요');
   }catch(e){ apply(was); syncStatus(st); toast(e.message); }
 }
+/* ---------- 툿 메뉴 (⋯): 지우기·지우고 다시 쓰기·프로필 고정 ---------- */
+/* 같은 서버에 로그인해 둔 내 캐릭터 계정의 툿이면 그 계정으로 지우거나 고정할 수 있음 */
+const ownerAcc = st => accounts.find(a => a.instance === cur().instance && String(a.id) === String(st.account.id)) || null;
+function removeStatusEverywhere(id){
+  const roots = new Set([...cache.values()].map(e => e.el)); roots.add($('#main'));
+  const sel = `[data-sid="${CSS.escape(String(id))}"]`;
+  roots.forEach(r => r.querySelectorAll(sel).forEach(a => a.remove()));
+}
+function statusMenu(st){
+  const own = ownerAcc(st);
+  sheet((sh, close) => {
+    const add = (icon, title, sub, fn, danger) => {
+      const b = optBtn(`<span class="oi"${danger ? ' style="color:var(--danger);background:rgba(244,33,46,.1)"' : ''}>${ic(icon)}</span>`, title, sub, false);
+      if (danger) $('b', b).style.color = 'var(--danger)';
+      b.onclick = () => { close(); fn(); };
+      sh.append(b);
+    };
+    if (own){
+      const as = own === cur() ? '' : ` (${own.display_name || own.username} 계정)`;
+      if (st.visibility === 'public' || st.visibility === 'unlisted')
+        add('pin', st.pinned ? '프로필 고정 풀기' : '프로필에 고정', st.pinned ? '프로필 맨 위에서 내려요' : '내 프로필 툿 탭 맨 위에 보여요', () => togglePin(st, own));
+      add('pen', '지우고 다시 쓰기', '내용을 글쓰기 창으로 불러오고 이 툿은 지워요', () => redraftStatus(st, own));
+      add('x', '지우기' + as, '지우면 되돌릴 수 없어요', () => deleteStatus(st, own), true);
+    }
+    add('share', '링크 복사', '이 툿의 주소를 복사해요', () => share(st));
+    if (!own) add('user', `@${st.account.acct} 메뉴`, '뮤트·차단·프로필 링크', () => profileMenu(st.account));
+  });
+}
+async function deleteStatus(st, acc){
+  if (!confirm('이 툿을 지울까요? 지우면 되돌릴 수 없어요.')) return;
+  try{
+    await api('/api/v1/statuses/' + st.id, {method:'DELETE', acc});
+    removeStatusEverywhere(st.id);
+    if (curKey === '#/thread/' + st.id) goBack();
+    toast('지웠어요');
+  }catch(e){ toast(e.message); }
+}
+async function redraftStatus(st, acc){
+  if (!confirm('이 툿을 지우고 글쓰기 창으로 불러올까요?\n좋아요·부스트와, 이 툿에 달린 답글과의 연결은 사라져요.')) return;
+  try{
+    const r = await api('/api/v1/statuses/' + st.id, {method:'DELETE', acc});
+    removeStatusEverywhere(st.id);
+    const rd = {acc, text:(r && r.text != null) ? r.text : plain(st.content), spoiler_text:(r && r.spoiler_text != null) ? r.spoiler_text : (st.spoiler_text || ''),
+      visibility:st.visibility, in_reply_to_id:st.in_reply_to_id || null, media:(r && r.media_attachments) || st.media_attachments || []};
+    if (curKey === '#/thread/' + st.id){ goBack(); setTimeout(() => openCompose({redraft:rd}), 400); }
+    else openCompose({redraft:rd});
+  }catch(e){ toast(e.message); }
+}
+async function togglePin(st, acc){
+  try{
+    const r = await api(`/api/v1/statuses/${st.id}/${st.pinned ? 'unpin' : 'pin'}`, {method:'POST', acc});
+    st.pinned = !!(r && r.pinned);
+    toast(st.pinned ? '프로필에 고정했어요' : '고정을 풀었어요');
+    for (const k of [...cache.keys()]) if (k !== curKey && (k === '#/me' || k.startsWith('#/user/'))) cache.delete(k);
+    const e = cache.get(curKey);
+    if ((curKey === '#/me' || (curKey || '').startsWith('#/user/')) && e && e.el.refresh) e.el.refresh();
+  }catch(e){ toast(e.message); }
+}
+
 /* 같은 글이 여러 화면에 떠 있을 때 숫자·상태를 한꺼번에 맞추기 */
 const SYNC_KEYS = ['favourited','reblogged','bookmarked','favourites_count','reblogs_count','replies_count'];
 function syncStatus(src){
@@ -1550,12 +1611,17 @@ async function resolveId(st, acc){
   if (!r.statuses || !r.statuses.length) throw new Error('고른 계정의 서버에서 이 글을 찾지 못했어요');
   return r.statuses[0].id;
 }
-function openCompose({replyTo = null} = {}){
+function openCompose({replyTo = null, redraft = null} = {}){
   const viewAcc = cur();
-  let acc = viewAcc, accIdx = curIdx;
+  let acc = redraft ? redraft.acc : viewAcc, accIdx = redraft ? Math.max(0, accounts.indexOf(redraft.acc)) : curIdx;
   const rkey = replyTo ? String(replyTo.id) : null;
-  const draft = replyTo ? (LS.get('ytt.rdraft', {})[rkey] || null) : LS.get('ytt.draft', null);
-  const S = {cwOn:!!(draft && draft.cwOn), media:[], vis:'public', visTouched:false, prefix:'', posting:false};
+  const draft = redraft ? {text:redraft.text, cw:redraft.spoiler_text, cwOn:!!redraft.spoiler_text}
+    : replyTo ? (LS.get('ytt.rdraft', {})[rkey] || null) : LS.get('ytt.draft', null);
+  const S = {cwOn:!!(draft && draft.cwOn), media:[], vis:'public', visTouched:false, prefix:'', posting:false, replyId:null};
+  if (redraft){
+    S.vis = VIS[redraft.visibility] ? redraft.visibility : 'public'; S.visTouched = true; S.replyId = redraft.in_reply_to_id;
+    S.media = (redraft.media || []).slice(0, 4).map(m => ({id:m.id, preview:m.preview_url || m.url, type:(m.type === 'video' || m.type === 'gifv') ? 'video' : 'image', uploading:false}));
+  }
   const ov = document.createElement('div'); ov.className = 'cov';
   ov.innerHTML = `<div class="compose" role="dialog" aria-label="글쓰기">
    <div class="c-top"><button class="txtbtn c-cancel" type="button">취소</button><span class="sp"></span><span class="c-draft"></span><button class="pill c-post" type="button" disabled></button></div>
@@ -1584,7 +1650,7 @@ function openCompose({replyTo = null} = {}){
   </div>`;
   const q = s => $(s, ov);
   const ta = q('.c-text'), cw = q('.c-cw'), post = q('.c-post'), cnt = q('.c-count');
-  const postLabel = replyTo ? '답글 올리기' : '올리기';
+  const postLabel = redraft ? '다시 올리기' : replyTo ? '답글 올리기' : '올리기';
   post.textContent = postLabel;
 
   if (replyTo){
@@ -1606,7 +1672,8 @@ function openCompose({replyTo = null} = {}){
     const uploading = S.media.some(m => m.uploading);
     post.disabled = S.posting || uploading || left < 0 || (!ta.value.trim() && !S.media.length);
     ta.style.height = 'auto'; ta.style.height = Math.max(140, ta.scrollHeight) + 'px';
-    if (!replyTo){
+    if (redraft){ /* 지우고 다시 쓰는 중에는 임시저장을 덮어쓰지 않음 */ }
+    else if (!replyTo){
       LS.set('ytt.draft', {text:ta.value, cw:cw.value, cwOn:S.cwOn});
       q('.c-draft').textContent = ta.value.trim() ? '임시저장됨' : '';
     } else {
@@ -1734,6 +1801,11 @@ function openCompose({replyTo = null} = {}){
   };
   const close = () => { if (shut()) overlayClosedByUI(ovId); };
   const leave = () => {
+    if (redraft){
+      /* 이미 지운 툿이라 그냥 닫으면 내용이 사라지므로 새 글 임시저장으로 옮겨 둠 */
+      if (ta.value.trim()){ LS.set('ytt.draft', {text:ta.value, cw:cw.value, cwOn:S.cwOn}); toast('쓰던 내용은 새 글 임시저장에 옮겨 뒀어요'); }
+      return;
+    }
     const saved = replyTo ? hasWriting() : !!ta.value.trim();
     if (saved) toast('쓰던 글은 임시저장했어요');
   };
@@ -1747,8 +1819,10 @@ function openCompose({replyTo = null} = {}){
       if (S.media.length) body.media_ids = S.media.map(m => m.id);
       if (S.cwOn && cw.value.trim()){ body.spoiler_text = cw.value.trim(); body.sensitive = true; }
       if (replyTo) body.in_reply_to_id = acc.instance === viewAcc.instance ? replyTo.id : await resolveId(replyTo, acc);
+      else if (S.replyId && redraft && acc.instance === redraft.acc.instance) body.in_reply_to_id = S.replyId;
       await api('/api/v1/statuses', {method:'POST', body, acc, headers:{'Idempotency-Key':idem}});
-      if (!replyTo) LS.del('ytt.draft');
+      if (redraft){ /* 새 글 임시저장은 그대로 둠 */ }
+      else if (!replyTo) LS.del('ytt.draft');
       else { const m = LS.get('ytt.rdraft', {}); delete m[rkey]; LS.set('ytt.rdraft', m); }
       close();
       toast(acc === cur() ? '올렸어요' : `${acc.display_name || acc.username} 계정으로 올렸어요`);

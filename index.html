@@ -427,6 +427,10 @@ body.in-chat #shell{padding-bottom:0;min-height:0}
 .ptag.k-fav{background:var(--fav)}
 .ptag.k-boost{background:var(--boost)}
 
+/* 프로필 툿·답글 탭, 고정 툿 */
+.ptabs{position:sticky;top:calc(54px + env(safe-area-inset-top));z-index:10;background:var(--glass);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.pre.k-pin{color:var(--sub)}
+
 /* 팔로잉·팔로워 목록 */
 .pst{border:0;background:none;padding:0;color:var(--sub);font-size:14px;cursor:pointer}
 .pst b{color:var(--fg)}
@@ -545,6 +549,7 @@ const P = {
   camera:'<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>',
   corner:'<path d="M9 14L4 9l5-5"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>',
   quote:'<path d="M6 7h4v4c0 3-2 5-4 6"/><path d="M14 7h4v4c0 3-2 5-4 6"/>',
+  pin:'<path d="M12 17v5"/><path d="M9 3h6l-1 7 4 3v2H6v-2l4-3z"/>',
   more:'<circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/>',
   up:'<path d="M18 15l-6-6-6 6"/>',
   down:'<path d="M6 9l6 6 6-6"/>',
@@ -1210,10 +1215,47 @@ function userView(id){
     catch(e){ head.innerHTML = ''; const p = h('<div class="err" style="padding:24px 16px"><p></p></div>'); $('p', p).textContent = e.message; head.append(p); }
   };
   loadHead();
-  const tl = feedView(`/api/v1/accounts/${id}/statuses`, {empty:'아직 쓴 글이 없어요'});
+  const tl = profileFeeds(id);
   root.append(tl);
   root.refresh = () => { loadHead(); tl.refresh(); };
   return root;
+}
+/* 프로필 아래 글 목록: 툿(답글 빼고, 고정 툿 맨 위) / 답글 */
+function profileFeeds(id){
+  const box = document.createElement('div');
+  const tabs = h('<div class="tabs ptabs"><button type="button" data-k="posts" class="on">툿</button><button type="button" data-k="replies">답글</button></div>');
+  const posts = document.createElement('div'), replies = document.createElement('div');
+  const pinned = document.createElement('div');
+  const pf = feedView(`/api/v1/accounts/${id}/statuses`, {params:{exclude_replies:'true'}, empty:'아직 쓴 툿이 없어요'});
+  posts.append(pinned, pf);
+  replies.hidden = true;
+  box.append(tabs, posts, replies);
+  let rf = null;
+  const loadPinned = async () => {
+    try{
+      const list = await api(`/api/v1/accounts/${id}/statuses?pinned=true`);
+      pinned.replaceChildren();
+      list.forEach(st => {
+        const el = statusEl(st);
+        if (el.classList.contains('status')) el.prepend(h(`<div class="pre k-pin">${ic('pin')}<span>고정된 툿</span></div>`));
+        pinned.append(el);
+      });
+    }catch(e){}
+  };
+  loadPinned();
+  const show = k => {
+    tabs.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.k === k));
+    posts.hidden = k !== 'posts'; replies.hidden = k !== 'replies';
+    if (k === 'replies' && !rf){
+      rf = feedView(`/api/v1/accounts/${id}/statuses`, {filter:st => !st.reblog && !!st.in_reply_to_id && String(st.in_reply_to_account_id) !== String(st.account.id), empty:'아직 단 답글이 없어요'});
+      replies.append(rf);
+    }
+  };
+  tabs.querySelectorAll('button').forEach(b => { b.onclick = () => show(b.dataset.k); });
+  box._showTab = show;
+  box._tab = () => tabs.querySelector('.on').dataset.k;
+  box.refresh = () => { loadPinned(); pf.refresh(); if (rf) rf.refresh(); };
+  return box;
 }
 function profileEl(a){
   const el = document.createElement('div');
@@ -1296,7 +1338,7 @@ function meView(){
     catch(e){ head.innerHTML = ''; const p = h('<div class="err" style="padding:24px 16px"><p></p></div>'); $('p', p).textContent = e.message; head.append(p); }
   };
   loadHead();
-  const tl = feedView(`/api/v1/accounts/${me.id}/statuses`, {empty:'아직 쓴 글이 없어요'});
+  const tl = profileFeeds(me.id);
   root.append(tl);
   root.refresh = () => { loadHead(); tl.refresh(); };
   return root;
@@ -2678,6 +2720,13 @@ function swipeTab(dir){
   let list = null;
   if (HOME_NAMES.includes(name)) list = homeTabs().map(tabHash);
   else if (name === 'notifications' || name === 'mentions') list = ['#/notifications', '#/mentions'];
+  else if (name === 'user' || name === 'me'){
+    const pfs = [...$('#main').querySelectorAll('.ptabs')].map(t => t.parentElement).find(b => b._showTab);
+    if (!pfs) return;
+    const ks = ['posts', 'replies'], i = ks.indexOf(pfs._tab()), j = i + dir;
+    if (j >= 0 && j < ks.length) pfs._showTab(ks[j]);
+    return;
+  }
   if (!list) return;
   const i = list.indexOf(curKey), j = i + dir;
   if (i < 0 || j < 0 || j >= list.length) return;

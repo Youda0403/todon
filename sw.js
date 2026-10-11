@@ -1,6 +1,7 @@
 // 역극툿 서비스 워커: 앱 화면 파일만 캐시하고, 마스토돈 서버 요청은 건드리지 않음
-const CACHE = 'ytt-v3';
-const SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE = 'ytt-v4';
+const BADGES = ['dm', 'reply', 'mention', 'fav', 'boost', 'status', 'follow', 'quote', 'default'].map(k => `./badge-${k}.png`);
+const SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', ...BADGES];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)));
@@ -41,22 +42,25 @@ function describe(n, meId) {
   const text = s ? (s.spoiler_text ? '⚠ ' + s.spoiler_text : (plainText(s.content) || (s.media_attachments && s.media_attachments.length ? '사진' : ''))) : '';
   const dm = n.type === 'mention' && s && s.visibility === 'direct';
   const reply = n.type === 'mention' && s && String(s.in_reply_to_account_id) === String(meId);
-  if (dm) return { title: `💌 ${name}님의 쪽지`, body: text, kind: 'dm' };
-  if (reply) return { title: `↩️ ${name}님이 답글을 달았어요`, body: text, kind: 'reply' };
+  if (dm) return { title: `${name} · 쪽지`, body: text, kind: 'dm' };
+  if (reply) return { title: `${name} · 답글`, body: text, kind: 'reply' };
   const t = {
-    mention: [`@ ${name}님이 나를 불렀어요`, text],
-    favourite: [`❤️ ${name}님이 내 글을 좋아해요`, text],
-    reblog: [`🔁 ${name}님이 내 글을 부스트했어요`, text],
-    status: [`🔔 ${name}님의 새 글`, text],
-    follow: [`👤 ${name}님이 나를 팔로우했어요`, ''],
-    follow_request: [`👤 ${name}님이 팔로우를 요청했어요`, ''],
-    quote: [`💬 ${name}님이 내 글을 인용했어요`, text],
-    quoted_update: [`💬 ${name}님이 내가 인용한 글을 수정했어요`, text],
-    poll: ['📊 투표가 끝났어요', text],
-    update: [`✏️ ${name}님이 글을 수정했어요`, text]
+    mention: [`${name} · 멘션`, text],
+    favourite: [`${name}님이 내 글을 좋아해요`, text],
+    reblog: [`${name}님이 내 글을 부스트했어요`, text],
+    status: [`${name} · 새 글`, text],
+    follow: [`${name}님이 나를 팔로우했어요`, ''],
+    follow_request: [`${name}님이 팔로우를 요청했어요`, ''],
+    quote: [`${name}님이 내 글을 인용했어요`, text],
+    quoted_update: [`${name}님이 내가 인용한 글을 수정했어요`, text],
+    poll: ['투표가 끝났어요', text],
+    update: [`${name}님이 글을 수정했어요`, text]
   }[n.type];
   return t ? { title: t[0], body: t[1], kind: n.type } : null;
 }
+// 상단 상태 표시줄에 뜨는 작은 아이콘: 종류마다 다르게
+const BADGE_OF = { dm: 'dm', reply: 'reply', mention: 'mention', favourite: 'fav', reblog: 'boost', status: 'status', follow: 'follow', follow_request: 'follow', quote: 'quote', quoted_update: 'quote' };
+const badgeFor = kind => `badge-${BADGE_OF[kind] || 'default'}.png`;
 async function readAccounts() {
   try { const c = await caches.open('ytt-meta'); const r = await c.match('./ytt-accounts.json'); return r ? await r.json() : []; } catch (_) { return []; }
 }
@@ -81,7 +85,9 @@ self.addEventListener('push', e => {
     await self.registration.showNotification(title, {
       body,
       icon: d.icon || 'icon-192.png',
-      badge: 'icon-192.png',
+      badge: badgeFor(kind),
+      vibrate: [80, 40, 80],
+      timestamp: Date.now(),
       tag: 'ytt-' + (d.notification_id || Date.now()),
       data: { id: d.notification_id || null, hint }
     });

@@ -432,6 +432,27 @@ body.in-chat #shell{padding-bottom:0;min-height:0}
 .ptag.k-fav{background:var(--fav)}
 .ptag.k-boost{background:var(--boost)}
 
+/* 계정 메모 */
+:root{--memo-bg:#fff8e1;--memo-line:#f3dfa0;--memo-ink:#a16207}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--memo-bg:#2a2414;--memo-line:#4d4120;--memo-ink:#e5b84a}}
+:root[data-theme=dark]{--memo-bg:#2a2414;--memo-line:#4d4120;--memo-ink:#e5b84a}
+.memo{margin-top:12px;padding:10px 12px;border:1px solid var(--memo-line);border-radius:12px;background:var(--memo-bg)}
+.memo .mhead{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:var(--memo-ink);min-width:0}
+.memo .mhead .ic{width:15px;height:15px}
+.memo .mhead .mwho{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
+.memo .mhead .mini{background:var(--bg)}
+.memo .mtext{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:6px;font-size:14.5px;line-height:1.55}
+.memo .mempty{margin-top:6px;font-size:13.5px;color:var(--sub)}
+.memo textarea{width:100%;margin-top:8px;min-height:110px;padding:10px 12px;border:1px solid var(--memo-line);border-radius:10px;background:var(--bg);font-size:15px;line-height:1.5;resize:vertical;outline:none;display:block}
+.memo .mbtns{display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:8px}
+.memo .mbtns small{flex:1;color:var(--sub);font-size:12px}
+.c-memos{margin:0 0 12px}
+.c-memos .memo:first-child{margin-top:0}
+.c-memos .memo{margin-top:8px}
+.c-memobtn{position:relative}
+.c-memobtn.on{background:var(--accent-soft)}
+.c-memobtn.has::after{content:"";position:absolute;top:6px;right:4px;width:7px;height:7px;border-radius:50%;background:#f59e0b}
+
 /* 프로필 툿·답글 탭, 고정 툿 */
 .ptabs{position:sticky;top:calc(54px + env(safe-area-inset-top));z-index:10;background:var(--glass);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
 .pre.k-pin{color:var(--sub)}
@@ -555,6 +576,7 @@ const P = {
   corner:'<path d="M9 14L4 9l5-5"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>',
   quote:'<path d="M6 7h4v4c0 3-2 5-4 6"/><path d="M14 7h4v4c0 3-2 5-4 6"/>',
   pin:'<path d="M12 17v5"/><path d="M9 3h6l-1 7 4 3v2H6v-2l4-3z"/>',
+  memo:'<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/>',
   more:'<circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/>',
   up:'<path d="M18 15l-6-6-6 6"/>',
   down:'<path d="M6 9l6 6 6-6"/>',
@@ -1231,6 +1253,48 @@ function userView(id){
   root.refresh = () => { loadHead(); tl.refresh(); };
   return root;
 }
+/* ---------- 계정 메모 (마스토돈 서버의 '개인 메모'에 저장 → 나만 보이고, 다른 기기·웹에서도 같음) ---------- */
+async function fetchNotes(ids, acc = cur()){
+  if (!ids.length) return {};
+  const rels = await api('/api/v1/accounts/relationships?' + qs({'id[]':ids}), {acc});
+  return Object.fromEntries(rels.map(r => [String(r.id), r.note || '']));
+}
+async function saveNote(id, text, acc = cur()){
+  const r = await api(`/api/v1/accounts/${id}/note`, {method:'POST', body:{comment:text}, acc});
+  return (r && r.note) || '';
+}
+function memoCard(a, note, {acc = cur(), showWho = false, onSaved = null} = {}){
+  const box = h(`<div class="memo"><div class="mhead">${ic('memo')}<span>내 메모</span><span class="mwho"></span><button class="mini" type="button"></button></div><div class="mbody"></div></div>`);
+  if (showWho){ $('.mwho', box).append('· ', richName(a)); }
+  const btn = $('.mhead .mini', box), body = $('.mbody', box);
+  let text = note || '';
+  const view = () => {
+    body.replaceChildren();
+    if (text){ const t = document.createElement('div'); t.className = 'mtext'; t.textContent = text; body.append(t); }
+    else body.append(h('<div class="mempty">이 계정에 대해 기억할 것을 적어 두세요. 나만 볼 수 있어요.</div>'));
+    btn.textContent = text ? '고치기' : '쓰기'; btn.hidden = false;
+  };
+  const edit = () => {
+    btn.hidden = true;
+    body.innerHTML = '<textarea maxlength="2000" placeholder="예: 17살, 학생회장. 존댓말 씀. 고양이를 무서워함. 우리 캐릭터와는 소꿉친구"></textarea><div class="mbtns"><small></small><button class="mini" type="button">취소</button><button class="pill" type="button" style="padding:6px 14px;font-size:13.5px">저장</button></div>';
+    const ta = $('textarea', body), cnt = $('small', body), [cancel, save] = body.querySelectorAll('button');
+    ta.value = text;
+    const upd = () => { cnt.textContent = `${[...ta.value].length} / 2000`; };
+    ta.oninput = upd; upd();
+    setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 30);
+    cancel.onclick = e => { e.stopPropagation(); view(); };
+    save.onclick = async e => {
+      e.stopPropagation(); save.disabled = true;
+      try{ text = await saveNote(a.id, ta.value.trim(), acc); toast(text ? '메모를 저장했어요' : '메모를 지웠어요'); if (onSaved) onSaved(text); view(); }
+      catch(err){ toast(err.message); save.disabled = false; }
+    };
+  };
+  btn.onclick = e => { e.stopPropagation(); edit(); };
+  box.addEventListener('click', e => e.stopPropagation());
+  view();
+  return box;
+}
+
 /* 프로필 아래 글 목록: 툿(답글 빼고, 고정 툿 맨 위) / 답글 */
 function profileFeeds(id){
   const box = document.createElement('div');
@@ -1287,6 +1351,10 @@ function profileEl(a){
   }
   $('.pstats', el).innerHTML = `<span><b>${Number(a.statuses_count) || 0}</b> 글</span><button class="pst" type="button" data-k="following"><b>${Number(a.following_count) || 0}</b> 팔로잉</button><button class="pst" type="button" data-k="followers"><b>${Number(a.followers_count) || 0}</b> 팔로워</button>`;
   el.querySelectorAll('.pst').forEach(b => { b.onclick = () => nav(`#/follows/${a.id}/${b.dataset.k}`); });
+  if (!accounts.some(x => x.instance === cur().instance && String(x.id) === String(a.id))){
+    const slot = document.createElement('div'); $('.phead', el).append(slot);
+    fetchNotes([a.id]).then(n => slot.replaceWith(memoCard(a, n[String(a.id)]))).catch(() => slot.remove());
+  }
   const isMe = accounts.some(x => x.instance === cur().instance && x.id === a.id);
   const pb = $('.pbtn', el);
   if (isMe){
@@ -1483,6 +1551,7 @@ function openCompose({replyTo = null} = {}){
    <div class="c-top"><button class="txtbtn c-cancel" type="button">취소</button><span class="sp"></span><span class="c-draft"></span><button class="pill c-post" type="button" disabled></button></div>
    <div class="c-scroll">
     <div class="c-replyto" hidden></div>
+    <div class="c-memos" hidden></div>
     <div class="c-row">
      <button class="c-acc" type="button" aria-label="쓸 계정 바꾸기"><img class="av" alt=""></button>
      <div class="c-main">
@@ -1496,6 +1565,7 @@ function openCompose({replyTo = null} = {}){
    <div class="c-bar">
     <button class="ibtn c-img" type="button" aria-label="이미지 추가">${ic('image')}</button>
     <button class="ibtn tbtn c-cwbtn" type="button" aria-label="내용 경고(CW)">CW</button>
+    <button class="ibtn c-memobtn" type="button" aria-label="계정 메모 보기" hidden>${ic('memo')}</button>
     <button class="vbtn c-vis" type="button"></button>
     <span class="sp"></span>
     <span class="c-count"></span>
@@ -1553,6 +1623,7 @@ function openCompose({replyTo = null} = {}){
     S.prefix = np;
     if (!S.visTouched){ let v = defaultVis(acc); if (replyTo) v = moreRestrictive(v, replyTo.visibility); S.vis = VIS[v] ? v : 'public'; }
     paintAcc(); paintVis(); update();
+    if (replyTo) loadMemos(!first);
   };
   const paintMedia = () => {
     const box = q('.c-media'); box.replaceChildren();
@@ -1585,6 +1656,42 @@ function openCompose({replyTo = null} = {}){
   q('.c-img').onclick = () => { if (S.media.length >= 4){ toast('이미지는 4장까지 붙일 수 있어요'); return; } q('.c-file').click(); };
   q('.c-file').onchange = e => { const files = [...e.target.files].slice(0, 4 - S.media.length); e.target.value = ''; files.forEach(uploadOne); };
   q('.c-cwbtn').onclick = () => { S.cwOn = !S.cwOn; paintCw(); if (S.cwOn) cw.focus(); update(); };
+  /* 답글 상대의 계정 메모: 버튼을 누르면 글 쓰는 창 안에 펼쳐져서 보면서 쓸 수 있음 */
+  let memoSeq = 0;
+  function memoPeople(){
+    const seen = new Set(), out = [];
+    for (const a of [replyTo.account, ...(replyTo.mentions || [])]){
+      const id = String(a.id);
+      if (id === String(acc.id) || seen.has(id)) continue;
+      if (acc.instance === viewAcc.instance && String(viewAcc.id) === id) continue;
+      seen.add(id); out.push(a);
+    }
+    return out;
+  }
+  async function loadMemos(rerender){
+    const box = q('.c-memos'), mb = q('.c-memobtn'), my = ++memoSeq;
+    mb.hidden = false;
+    if (acc.instance !== viewAcc.instance){
+      mb.classList.remove('has');
+      box.replaceChildren(h('<p class="secdesc" style="padding:0">다른 서버 계정으로 쓸 때는 메모를 불러올 수 없어요.</p>'));
+      return;
+    }
+    const people = memoPeople();
+    let notes = {};
+    try{ notes = await fetchNotes(people.map(a => a.id), acc); }catch(e){}
+    if (my !== memoSeq) return;
+    mb.classList.toggle('has', Object.values(notes).some(Boolean));
+    if (!box.hidden || rerender){
+      box.replaceChildren(...people.map(a => memoCard(a, notes[String(a.id)], {acc, showWho:true, onSaved:t => { notes[String(a.id)] = t; mb.classList.toggle('has', Object.values(notes).some(Boolean)); }})));
+      if (!people.length) box.replaceChildren(h('<p class="secdesc" style="padding:0">메모를 볼 사람이 없어요.</p>'));
+    }
+  }
+  q('.c-memobtn').onclick = () => {
+    const box = q('.c-memos');
+    box.hidden = !box.hidden;
+    q('.c-memobtn').classList.toggle('on', !box.hidden);
+    if (!box.hidden){ box.replaceChildren(h('<div class="sentinel" style="min-height:40px;padding:4px"><div class="spin"></div></div>')); loadMemos(true); q('.c-scroll').scrollTop = 0; }
+  };
   q('.c-vis').onclick = () => sheet((sh, close) => {
     sh.append(h('<h3>누가 볼 수 있나요?</h3>'));
     VIS_ORDER.forEach(k => {

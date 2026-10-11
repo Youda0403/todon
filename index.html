@@ -209,6 +209,20 @@ img.emoji{height:1.25em;width:auto;vertical-align:-.25em;margin:0 .05em;object-f
 .c-replyto{margin:0 0 12px;padding:10px 12px;border-radius:12px;background:var(--hover);font-size:14px}
 .crh{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .crb{color:var(--sub);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-line;margin-top:2px;overflow-wrap:anywhere}
+.c-replyto.tap{cursor:pointer}
+.c-replyto .crh{display:flex;align-items:center;gap:6px;min-width:0}
+.crav{width:22px;height:22px;border-radius:50%;object-fit:cover;flex:none;background:var(--line);cursor:pointer}
+.crname{border:0;background:none;padding:0;font:inherit;font-weight:700;color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.crname small{font-weight:500;color:var(--sub);font-size:13px}
+.crto{font-weight:500;color:var(--sub);flex:none;font-size:13px}
+.crchev{margin-left:auto;display:flex;color:var(--sub);flex:none;transition:transform .15s}
+.crchev .ic{width:16px;height:16px}
+.c-replyto.open .crchev{transform:rotate(180deg)}
+.crfull{margin-top:6px;max-height:50vh;overflow-y:auto;overscroll-behavior:contain}
+.crfull .content{font-size:15px;color:var(--fg)}
+.crfull .media{margin-top:8px}
+.crcw{font-weight:700;margin-bottom:6px}
+.crx{color:var(--sub);font-size:12.5px;margin-top:6px}
 .c-row{display:flex;gap:12px}
 .c-acc{border:0;background:none;padding:0;flex:none;align-self:flex-start}
 .c-main{flex:1;min-width:0}
@@ -2012,12 +2026,52 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
   }
 
   if (replyTo){
-    const r = q('.c-replyto'); r.hidden = false;
+    const r = q('.c-replyto'); r.hidden = false; r.classList.add('tap');
+    /* 이름·아이디를 누르면 프로필로 (쓰던 답글은 임시저장된 채로 창을 닫음) */
+    const toProfile = id => { leave(); close(); nav('#/user/' + id); };
     const head = document.createElement('div'); head.className = 'crh';
-    head.append(richName(replyTo.account), ` @${replyTo.account.acct}님에게 답글`);
+    const av = new Image(); av.className = 'crav'; av.src = avOf(replyTo.account); av.alt = '';
+    const who = document.createElement('button'); who.type = 'button'; who.className = 'crname';
+    who.append(richName(replyTo.account), Object.assign(document.createElement('small'), {textContent:' @' + replyTo.account.acct}));
+    who.onclick = e => { e.stopPropagation(); toProfile(replyTo.account.id); };
+    av.onclick = who.onclick;
+    const tail = document.createElement('span'); tail.className = 'crto'; tail.textContent = '님에게 답글';
+    const chev = h(`<span class="crchev">${ic('down')}</span>`);
+    head.append(av, who, tail, chev);
     const body = document.createElement('div'); body.className = 'crb';
     body.textContent = replyTo.spoiler_text ? '⚠ ' + replyTo.spoiler_text : plain(replyTo.content);
-    r.append(head, body);
+    const fullBox = document.createElement('div'); fullBox.className = 'crfull'; fullBox.hidden = true;
+    let built = false;
+    const build = () => {
+      built = true;
+      if (replyTo.spoiler_text){ const w = document.createElement('div'); w.className = 'crcw'; w.textContent = '⚠ ' + replyTo.spoiler_text; emojifyNode(w, replyTo.emojis); fullBox.append(w); }
+      if (replyTo.content){
+        const c = document.createElement('div'); c.className = 'content';
+        c.append(cleanHTML(replyTo.content)); emojifyNode(c, replyTo.emojis);
+        c.addEventListener('click', e => {
+          const a = e.target.closest('a'); if (!a) return;
+          e.stopPropagation();
+          const m = (replyTo.mentions || []).find(m => m.url === a.href);
+          if (m){ e.preventDefault(); toProfile(m.id); return; }
+          if (a.classList.contains('hashtag') || /^#\S+$/.test(a.textContent.trim())){
+            const tag = a.textContent.trim().replace(/^#/, '');
+            if (tag){ e.preventDefault(); leave(); close(); nav('#/htag/' + encodeURIComponent(tag)); }
+          }
+        });
+        fullBox.append(c);
+      }
+      const md = mediaEl(replyTo.media_attachments, replyTo.sensitive && !replyTo.spoiler_text); if (md) fullBox.append(md);
+      if (replyTo.poll) fullBox.append(h('<div class="crx">투표가 있는 글이에요</div>'));
+      if (replyTo.quote) fullBox.append(h('<div class="crx">↳ 다른 글을 인용한 글이에요</div>'));
+      fullBox.append(Object.assign(document.createElement('div'), {className:'crx', textContent:full(replyTo.created_at)}));
+    };
+    r.addEventListener('click', e => {
+      if (e.target.closest('a,button,video,audio,.media')) return;
+      const open = !r.classList.contains('open');
+      if (open && !built) build();
+      r.classList.toggle('open', open); body.hidden = open; fullBox.hidden = !open;
+    });
+    r.append(head, body, fullBox);
   }
   if (draft && draft.cw) cw.value = draft.cw;
   if (replyTo && replyTo.spoiler_text && !draft){ S.cwOn = true; cw.value = replyTo.spoiler_text; }
@@ -3082,7 +3136,7 @@ function homeFilter(s){
   const st = s.reblog || s;
   if (st.visibility === 'direct') return false;
   if (!SET.homeBoosts && s.reblog) return false;
-  if (!SET.homeReplies && st.in_reply_to_id && String(st.in_reply_to_account_id) !== String(st.account.id) && String(st.in_reply_to_account_id) !== String(cur().id)) return false;
+  if (!SET.homeReplies && st.in_reply_to_id && String(st.in_reply_to_account_id) !== String(st.account.id)) return false;
   return true;
 }
 
@@ -3186,7 +3240,7 @@ function mainSettings(root){
   s2.append(toggleRow('내용 경고(CW) 글 항상 펼치기', '‘내용 보기’를 누르지 않아도 본문이 보여요', 'CW는 글을 접어 두고 경고 문구만 보여 주는 기능이에요. 이걸 켜면 접힌 글도 처음부터 펼쳐서 보여 줘요. 스포일러나 수위 있는 묘사를 미리 보고 싶지 않다면 꺼 두세요.', SET.cwOpen, v => { setSet('cwOpen', v); resetViews(); }));
   s2.append(choiceRow('민감한 사진', '', '글쓴이가 ‘민감한 사진’으로 표시한 사진을 어떻게 보여 줄지 골라요. ‘표시된 것만’을 고르면 표시된 사진만 흐리게 가려 두고, 누르면 보여요. ‘전부 가리기’를 고르면 표시가 없는 사진도 모두 가려요.', [['default','표시된 것만'],['show','항상 보이기'],['hide','전부 가리기']], SET.media, v => { setSet('media', v); resetViews(); }));
   s2.append(toggleRow('홈에 부스트 보이기', '다른 사람이 퍼 온 글을 홈에 보여 줘요', '부스트는 트위터의 리트윗처럼 다른 사람 글을 퍼 오는 거예요. 끄면 팔로우한 사람이 직접 쓴 글만 홈에 남아요.', SET.homeBoosts, v => { setSet('homeBoosts', v); resetViews(); }));
-  s2.append(toggleRow('홈에 남들끼리 주고받은 답글 보이기', '나와 상관없는 답글도 홈에 보여 줘요', '끄면 팔로우한 사람들이 서로에게 단 답글이 홈에서 빠져요. 나에게 온 답글과 자기 글에 이어 쓴 글은 그대로 보여요. 역극 답글이 홈을 가득 채울 때 꺼 보세요.', SET.homeReplies, v => { setSet('homeReplies', v); resetViews(); }));
+  s2.append(toggleRow('홈에 답글 보이기', '다른 사람에게 단 답글도 홈에 보여 줘요', '끄면 홈에서 답글이 빠져요. 나에게 온 답글도 홈에서는 빠지지만, 알림 탭에서는 그대로 볼 수 있어요. 자기 글에 이어 쓴 글(타래)은 그대로 보여요. 역극 답글이 홈을 가득 채울 때 꺼 보세요.', SET.homeReplies, v => { setSet('homeReplies', v); resetViews(); }));
   s2.append(toggleRow('부스트하기 전에 한 번 더 묻기', '실수로 부스트하는 걸 막아요', null, SET.confirmBoost, v => setSet('confirmBoost', v)));
   root.append(s2);
   /* 홈 탭 */

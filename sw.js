@@ -1,5 +1,5 @@
 // 역극툿 서비스 워커: 앱 화면 파일만 캐시하고, 마스토돈 서버 요청은 건드리지 않음
-const CACHE = 'ytt-v2';
+const CACHE = 'ytt-v3';
 const SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -8,7 +8,7 @@ self.addEventListener('install', e => {
 });
 
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))));
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE && k !== 'ytt-meta').map(k => caches.delete(k)))));
   self.clients.claim();
 });
 
@@ -30,6 +30,37 @@ async function tokHint(t) {
   return [...new Uint8Array(b)].slice(0, 6).map(x => x.toString(16).padStart(2, '0')).join('');
 }
 
+// 알림 내용을 종류별로 다르게 꾸미기 (쪽지·답글·멘션·좋아요·부스트·새 글·팔로우·인용)
+const plainText = html => String(html || '')
+  .replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>\s*<p>/gi, '\n').replace(/<[^>]+>/g, '')
+  .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
+  .replace(/^(\s*@[\w.-]+(@[\w.-]+)?)+\s*/, '').trim();
+function describe(n, meId) {
+  const name = (n.account && (n.account.display_name || n.account.username)) || '누군가';
+  const s = n.status;
+  const text = s ? (s.spoiler_text ? '⚠ ' + s.spoiler_text : (plainText(s.content) || (s.media_attachments && s.media_attachments.length ? '사진' : ''))) : '';
+  const dm = n.type === 'mention' && s && s.visibility === 'direct';
+  const reply = n.type === 'mention' && s && String(s.in_reply_to_account_id) === String(meId);
+  if (dm) return { title: `💌 ${name}님의 쪽지`, body: text, kind: 'dm' };
+  if (reply) return { title: `↩️ ${name}님이 답글을 달았어요`, body: text, kind: 'reply' };
+  const t = {
+    mention: [`@ ${name}님이 나를 불렀어요`, text],
+    favourite: [`❤️ ${name}님이 내 글을 좋아해요`, text],
+    reblog: [`🔁 ${name}님이 내 글을 부스트했어요`, text],
+    status: [`🔔 ${name}님의 새 글`, text],
+    follow: [`👤 ${name}님이 나를 팔로우했어요`, ''],
+    follow_request: [`👤 ${name}님이 팔로우를 요청했어요`, ''],
+    quote: [`💬 ${name}님이 내 글을 인용했어요`, text],
+    quoted_update: [`💬 ${name}님이 내가 인용한 글을 수정했어요`, text],
+    poll: ['📊 투표가 끝났어요', text],
+    update: [`✏️ ${name}님이 글을 수정했어요`, text]
+  }[n.type];
+  return t ? { title: t[0], body: t[1], kind: n.type } : null;
+}
+async function readAccounts() {
+  try { const c = await caches.open('ytt-meta'); const r = await c.match('./ytt-accounts.json'); return r ? await r.json() : []; } catch (_) { return []; }
+}
+
 // 휴대폰 알림: 앱이 화면에 떠 있으면 앱 안 팝업으로, 아니면 시스템 알림으로
 self.addEventListener('push', e => {
   let d = {};
@@ -39,8 +70,16 @@ self.addEventListener('push', e => {
     const vis = cs.find(c => c.visibilityState === 'visible');
     if (vis) { vis.postMessage({ type: 'push' }); return; }
     const hint = await tokHint(d.access_token);
-    await self.registration.showNotification(d.title || '역극툿', {
-      body: d.body || '',
+    let title = d.title || '역극툿', body = d.body || '', kind = d.notification_type || 'other';
+    const acc = (await readAccounts()).find(a => a.hint && a.hint === hint);
+    if (acc && d.notification_id && d.access_token) {
+      try {
+        const r = await fetch(`https://${acc.instance}/api/v1/notifications/${d.notification_id}`, { headers: { Authorization: 'Bearer ' + d.access_token } });
+        if (r.ok) { const x = describe(await r.json(), acc.id); if (x) { title = x.title; body = x.body; kind = x.kind; } }
+      } catch (_) {}
+    }
+    await self.registration.showNotification(title, {
+      body,
       icon: d.icon || 'icon-192.png',
       badge: 'icon-192.png',
       tag: 'ytt-' + (d.notification_id || Date.now()),

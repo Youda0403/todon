@@ -56,7 +56,7 @@ body.in-login #shell{padding-bottom:0;border:0}
 .bnav button .ic{width:24px;height:24px}
 .bnav button.on{color:var(--fg);font-weight:700}
 .bnav button.on .ic{stroke-width:2.4}
-.badge{position:absolute;top:9px;left:calc(50% + 7px);width:9px;height:9px;border-radius:50%;background:var(--accent);border:2px solid var(--bg)}
+.badge{position:absolute;top:4px;left:calc(50% + 5px);min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#f4212e;color:#fff;font-style:normal;font-size:11px;font-weight:700;line-height:18px;text-align:center;border:2px solid var(--bg)}
 .fab{position:fixed;z-index:21;right:max(16px,calc(50% - 284px));bottom:calc(72px + env(safe-area-inset-bottom));width:56px;height:56px;border-radius:50%;border:0;background:var(--accent);color:#fff;box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center}
 .fab .ic{width:24px;height:24px;stroke-width:2.2}
 
@@ -405,6 +405,46 @@ body.in-chat #shell{padding-bottom:0;min-height:0}
 .fwarn{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);color:var(--sub);font-size:14px}
 .fwarn span{flex:1;min-width:0}
 
+/* 알림 종류별 색 */
+:root{--k-reply:#1d9bf0;--k-status:#f59e0b;--k-quote:#8b5cf6;--k-dm:var(--accent);--k-mention:var(--accent)}
+.pre.k-reply{color:var(--k-reply)}
+.pre.k-mention{color:var(--k-mention)}
+.pre.k-status{color:var(--k-status)}
+.pre.k-quote{color:var(--k-quote)}
+.notif-card{border-left:3px solid transparent}
+.notif-card.k-reply{border-left-color:var(--k-reply)}
+.notif-card.k-mention{border-left-color:var(--k-mention)}
+.notif-card.k-status{border-left-color:var(--k-status)}
+.notif-card.k-quote{border-left-color:var(--k-quote)}
+.pop .pic.k-reply{background:var(--k-reply)}
+.pop .pic.k-status{background:var(--k-status)}
+.pop .pic.k-quote{background:var(--k-quote)}
+.pop .pic.k-dm{background:var(--k-dm)}
+.ptag{display:inline-block;font-size:11px;font-weight:800;border-radius:6px;padding:1px 6px;margin-right:6px;color:#fff;vertical-align:1px;background:var(--accent)}
+.ptag.k-reply{background:var(--k-reply)}
+.ptag.k-status{background:var(--k-status)}
+.ptag.k-quote{background:var(--k-quote)}
+.ptag.k-fav{background:var(--fav)}
+.ptag.k-boost{background:var(--boost)}
+
+/* 팔로잉·팔로워 목록 */
+.pst{border:0;background:none;padding:0;color:var(--sub);font-size:14px;cursor:pointer}
+.pst b{color:var(--fg)}
+.pst:active{opacity:.6}
+.frow{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);cursor:pointer}
+.frow:active{background:var(--hover)}
+.frow .t{flex:1;min-width:0}
+.frow .t b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.frow .t small{display:block;color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.frow .fnote{font-size:13.5px;color:var(--sub);margin-top:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.frow .fyou{font-size:11px;font-weight:700;color:var(--sub);background:var(--hover);border-radius:4px;padding:1px 5px;margin-left:4px}
+
+/* 내 계정(내 프로필) 바로가기 */
+.mechips{display:flex;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
+.mechips::-webkit-scrollbar{display:none}
+.mechips .pill{flex:none;padding:7px 14px;font-size:14px}
+.mechips .pill .ic{width:16px;height:16px}
+
 /* 프로필 편집·설정 */
 .pbtn{display:flex;gap:8px;align-items:center}
 .pbtn .ibtn{border:1px solid var(--line)}
@@ -635,7 +675,16 @@ function richName(a){
 let accounts = LS.get('ytt.accounts', []);
 let curIdx = Math.min(LS.get('ytt.cur', 0), Math.max(0, accounts.length - 1));
 const cur = () => accounts[curIdx] || null;
-function saveAccounts(){ LS.set('ytt.accounts', accounts); LS.set('ytt.cur', curIdx); }
+function saveAccounts(){ LS.set('ytt.accounts', accounts); LS.set('ytt.cur', curIdx); shareAccountsWithSW(); }
+/* 서비스 워커가 휴대폰 알림을 종류별로 꾸밀 수 있게, 토큰 지문과 서버 주소만 넘겨 둠 (토큰은 넘기지 않음) */
+async function shareAccountsWithSW(){
+  try{
+    if (!('caches' in window) || !crypto.subtle) return;
+    const list = await Promise.all(accounts.map(async a => ({hint:await tokHint(a.token), instance:a.instance, id:String(a.id)})));
+    const c = await caches.open('ytt-meta');
+    await c.put('./ytt-accounts.json', new Response(JSON.stringify(list), {headers:{'Content-Type':'application/json'}}));
+  }catch(e){}
+}
 const defaultVis = a => LS.get('ytt.vis', {})[a.acct] || a.privacy || 'public';
 function setDefaultVis(a, v){ const m = LS.get('ytt.vis', {}); m[a.acct] = v; LS.set('ytt.vis', m); }
 
@@ -1038,12 +1087,14 @@ function notifEl(n){
   const a = n.account, s = n.status;
   if (['mention','status','quote','quoted_update'].includes(n.type) && s){
     const el = statusEl(s);
-    const preTxt = {status:'님이 새 글을 올렸어요', quote:'님이 내 글을 인용했어요', quoted_update:'님이 내가 인용한 글을 수정했어요'}[n.type];
-    if (preTxt){
-      const pre = h(`<div class="pre">${ic(n.type === 'status' ? 'bell' : 'quote')}<span></span></div>`);
-      $('span', pre).append(richName(a), preTxt);
-      el.prepend(pre);
-    }
+    const reply = n.type === 'mention' && String(s.in_reply_to_account_id) === String(cur().id);
+    const kind = n.type === 'mention' ? (reply ? 'reply' : 'mention') : n.type === 'status' ? 'status' : 'quote';
+    const preTxt = {reply:'님이 내 글에 답글을 달았어요', mention:'님이 나를 불렀어요', status:'님이 새 글을 올렸어요', quote:n.type === 'quote' ? '님이 내 글을 인용했어요' : '님이 내가 인용한 글을 수정했어요'}[kind];
+    const icon = {reply:'corner', mention:'at', status:'bell', quote:'quote'}[kind];
+    const pre = h(`<div class="pre k-${kind}">${ic(icon)}<span></span></div>`);
+    $('span', pre).append(richName(a), preTxt);
+    if (el.firstElementChild && el.firstElementChild.classList.contains('pre')) el.firstElementChild.replaceWith(pre); else el.prepend(pre);
+    el.classList.add('notif-card', 'k-' + kind);
     return el;
   }
   const cfg = {
@@ -1181,7 +1232,8 @@ function profileEl(a){
       dl.append(row);
     });
   }
-  $('.pstats', el).innerHTML = `<span><b>${Number(a.statuses_count) || 0}</b> 글</span><span><b>${Number(a.following_count) || 0}</b> 팔로잉</span><span><b>${Number(a.followers_count) || 0}</b> 팔로워</span>`;
+  $('.pstats', el).innerHTML = `<span><b>${Number(a.statuses_count) || 0}</b> 글</span><button class="pst" type="button" data-k="following"><b>${Number(a.following_count) || 0}</b> 팔로잉</button><button class="pst" type="button" data-k="followers"><b>${Number(a.followers_count) || 0}</b> 팔로워</button>`;
+  el.querySelectorAll('.pst').forEach(b => { b.onclick = () => nav(`#/follows/${a.id}/${b.dataset.k}`); });
   const isMe = accounts.some(x => x.instance === cur().instance && x.id === a.id);
   const pb = $('.pbtn', el);
   if (isMe){
@@ -1231,15 +1283,28 @@ async function followBtn(slot, a){
   };
 }
 function meView(){
+  const me = cur();
   const root = document.createElement('div');
+  const head = document.createElement('div');
+  const chips = h(`<div class="mechips"><button class="pill ghost" type="button">${ic('settings')}<span>설정</span></button><button class="pill ghost" type="button">${ic('user')}<span>계정 관리</span></button><button class="pill ghost" type="button">${ic('sliders')}<span>홈 탭 편집</span></button></div>`);
+  const [b1, b2, b3] = chips.querySelectorAll('button');
+  b1.onclick = () => nav('#/settings'); b2.onclick = () => nav('#/settings/accounts'); b3.onclick = () => nav('#/settings/tabs');
+  root.append(head, chips);
+  const loadHead = async () => {
+    head.innerHTML = '<div class="sentinel"><div class="spin"></div></div>';
+    try{ head.replaceChildren(profileEl(await api(`/api/v1/accounts/${me.id}`))); }
+    catch(e){ head.innerHTML = ''; const p = h('<div class="err" style="padding:24px 16px"><p></p></div>'); $('p', p).textContent = e.message; head.append(p); }
+  };
+  loadHead();
+  const tl = feedView(`/api/v1/accounts/${me.id}/statuses`, {empty:'아직 쓴 글이 없어요'});
+  root.append(tl);
+  root.refresh = () => { loadHead(); tl.refresh(); };
+  return root;
+}
+function accountsPage(root){
   const draw = () => {
     root.replaceChildren();
     const me = cur();
-    const s0 = h('<section class="sec"><div class="mehead"><img class="av" alt=""><div class="t"><b></b><small></small></div></div><div class="secpad twobtn"><button class="pill ghost" type="button">내 프로필 보기</button><button class="pill" type="button">프로필 편집</button></div></section>');
-    $('img', s0).src = me.avatar; $('.mehead b', s0).append(richName(me)); $('.mehead small', s0).textContent = '@' + me.acct;
-    const [vb, eb] = s0.querySelectorAll('.twobtn button');
-    vb.onclick = () => nav('#/user/' + me.id); eb.onclick = () => nav('#/edit');
-    root.append(s0);
     const s1 = h(`<section class="sec"><h3>로그인한 계정</h3><div class="accs"></div><div class="secpad"><button class="pill ghost wide" type="button">${ic('plus')}<span>계정 추가하기</span></button></div></section>`);
     const box = $('.accs', s1);
     accounts.forEach((a, i) => {
@@ -1258,10 +1323,6 @@ function meView(){
     $('.secpad button', s1).onclick = () => { location.hash = '#/login'; };
     root.append(s1);
 
-    const s2 = h('<section class="sec"></section>');
-    s2.append(linkRow('settings', '설정', '화면, 글쓰기, 알림, 차단 등 마스토돈 설정', () => nav('#/settings')));
-    s2.append(linkRow('sliders', '홈 탭 편집', '홈 위쪽에 보일 탭을 고르고 순서를 바꿔요', () => nav('#/settings/tabs')));
-    root.append(s2);
 
     const s3 = h('<section class="sec"><h3>마스토돈이 처음이라면</h3></section>');
     GLOSSARY.forEach(([q, ans]) => { const d = document.createElement('details'); d.className = 'gl'; d.innerHTML = `<summary>${q}</summary><p>${ans}</p>`; s3.append(d); });
@@ -1269,7 +1330,6 @@ function meView(){
     root.append(h(`<p class="foot">${esc(APP_NAME)} v${VERSION} · 마스토돈 비밀번호는 이 앱에 저장되지 않아요.</p>`));
   };
   draw(); root.refresh = draw;
-  return root;
 }
 async function logout(i, redraw){
   const a = accounts[i];
@@ -1939,9 +1999,9 @@ function newDmSheet(){
 async function checkDm(){
   const acc = cur(); if (!acc) return;
   try{
-    const c = await api('/api/v1/conversations?limit=20');
+    const c = await api('/api/v1/conversations?limit=40');
     if (cur() !== acc) return;
-    setDmBadge(parse().name !== 'dm' && c.some(x => x.unread));
+    setDmBadge(new Set(c.filter(x => x.unread && x.last_status).map(x => partKey(x.accounts))).size);
   }catch(e){}
 }
 
@@ -2132,8 +2192,10 @@ function popup(n, more){
   const txt = dm ? '님이 쪽지를 보냈어요' : reply ? '님이 내 글에 답글을 달았어요' : POP_TXT[n.type];
   if (!txt) return;
   const icn = dm ? 'mail' : reply ? 'corner' : ({favourite:'heart', reblog:'boost', follow:'user', follow_request:'user', status:'bell', quote:'quote', quoted_update:'quote', poll:'check'}[n.type] || 'at');
-  const cls = n.type === 'favourite' ? 'fav' : n.type === 'reblog' ? 'boost' : '';
-  const p = h(`<div class="pop" role="status"><img class="av" alt=""><span class="pic ${cls}">${ic(icn)}</span><div class="t"><div class="pt"><b></b><span class="ptx"></span></div><small></small></div><button class="ibtn" type="button" aria-label="닫기">${ic('x')}</button></div>`);
+  const kind = dm ? 'dm' : reply ? 'reply' : ({favourite:'fav', reblog:'boost', status:'status', quote:'quote', quoted_update:'quote', mention:'mention'}[n.type] || 'other');
+  const cls = n.type === 'favourite' ? 'fav' : n.type === 'reblog' ? 'boost' : 'k-' + kind;
+  const tagTxt = {dm:'쪽지', reply:'답글', fav:'좋아요', boost:'부스트', status:'새 글', quote:'인용', mention:'멘션'}[kind] || '알림';
+  const p = h(`<div class="pop" role="status"><img class="av" alt=""><span class="pic ${cls}">${ic(icn)}</span><div class="t"><div class="pt"><span class="ptag k-${kind}">${tagTxt}</span><b></b><span class="ptx"></span></div><small></small></div><button class="ibtn" type="button" aria-label="닫기">${ic('x')}</button></div>`);
   $('img', p).src = avOf(n.account);
   $('b', p).append(richName(n.account)); $('.ptx', p).textContent = txt;
   let sub = s ? (s.spoiler_text ? '⚠ ' + s.spoiler_text : (stripLead(plain(s.content)) || (s.media_attachments && s.media_attachments.length ? '사진' : ''))) : '@' + n.account.acct;
@@ -2301,8 +2363,9 @@ async function seedReadingPrefs(){
 /* ---------- 설정 화면 ---------- */
 function settingsView(sub){
   const root = document.createElement('div');
-  root._title = {tabs:'홈 탭 편집', filters:'숨길 단어', mutes:'뮤트한 계정', blocks:'차단한 계정', domains:'차단한 서버'}[sub] || '설정';
+  root._title = {tabs:'홈 탭 편집', filters:'숨길 단어', mutes:'뮤트한 계정', blocks:'차단한 계정', domains:'차단한 서버', accounts:'계정 관리'}[sub] || '설정';
   if (sub === 'tabs') tabsEditor(root);
+  else if (sub === 'accounts') accountsPage(root);
   else if (sub === 'filters') filtersPage(root);
   else if (sub === 'mutes' || sub === 'blocks') peoplePage(root, sub);
   else if (sub === 'domains') domainsPage(root);
@@ -2515,6 +2578,113 @@ async function profileMenu(a){
   });
 }
 
+/* ---------- 팔로잉·팔로워 목록 ---------- */
+function followsView(id, kind){
+  const root = document.createElement('div');
+  root._title = kind === 'followers' ? '팔로워' : '팔로잉';
+  const tabs = h('<div class="tabs" style="border-bottom:1px solid var(--line)"><button type="button" data-k="followers">팔로워</button><button type="button" data-k="following">팔로잉</button></div>');
+  tabs.querySelectorAll('button').forEach(b => {
+    b.classList.toggle('on', b.dataset.k === kind);
+    b.onclick = () => { if (b.dataset.k !== kind) location.replace(`#/follows/${id}/${b.dataset.k}`); };
+  });
+  const list = document.createElement('div');
+  const sent = document.createElement('div'); sent.className = 'sentinel';
+  root.append(tabs, list, sent);
+  let nextPath = null, loading = false, done = false, gen = 0;
+  const me = cur();
+  function row(a, rel){
+    const r = h('<div class="frow"><img class="av" alt=""><div class="t"><b></b><small></small><div class="fnote"></div></div></div>');
+    $('img', r).src = avOf(a); $('b', r).append(richName(a));
+    $('small', r).textContent = '@' + a.acct;
+    if (rel && rel.followed_by) $('small', r).append(h('<span class="fyou">나를 팔로우해요</span>'));
+    $('.fnote', r).textContent = plain(a.note);
+    r.onclick = () => nav('#/user/' + a.id);
+    if (String(a.id) !== String(me.id) && rel){
+      const fb = document.createElement('button'); fb.type = 'button';
+      const paint = () => {
+        if (rel.following){ fb.textContent = '팔로잉'; fb.className = 'pill ghost'; }
+        else if (rel.requested){ fb.textContent = '요청함'; fb.className = 'pill ghost'; }
+        else { fb.textContent = rel.followed_by ? '맞팔로우' : '팔로우'; fb.className = 'pill'; }
+        fb.style.cssText = 'padding:6px 14px;font-size:13.5px;flex:none';
+      };
+      paint();
+      fb.onclick = async e => {
+        e.stopPropagation();
+        const undo = rel.following || rel.requested;
+        if (undo && !confirm(rel.following ? '팔로우를 취소할까요?' : '팔로우 요청을 취소할까요?')) return;
+        fb.disabled = true;
+        try{ rel = await api(`/api/v1/accounts/${a.id}/${undo ? 'unfollow' : 'follow'}`, {method:'POST'}); peopleCache = {acct:null, list:null}; }
+        catch(err){ toast(err.message); }
+        fb.disabled = false; paint();
+      };
+      r.append(fb);
+    }
+    return r;
+  }
+  async function load(reset){
+    if (reset){ gen++; nextPath = null; done = false; loading = false; }
+    if (loading || done) return;
+    loading = true; const my = gen;
+    if (!(reset && list.childElementCount)) sent.innerHTML = '<div class="spin"></div>';
+    let ok = false;
+    try{
+      const {data, next} = await api(nextPath && !reset ? nextPath : `/api/v1/accounts/${id}/${kind}?limit=40`, {withLink:true});
+      let rels = [];
+      if (data.length){ try{ rels = await api('/api/v1/accounts/relationships?' + qs({'id[]':data.map(a => a.id)})); }catch(e){} }
+      if (my !== gen) return;
+      if (reset) list.replaceChildren();
+      const rm = new Map(rels.map(r => [String(r.id), r]));
+      data.forEach(a => list.append(row(a, rm.get(String(a.id)))));
+      if (data.length && next){ nextPath = next; sent.innerHTML = ''; ok = true; }
+      else {
+        done = true;
+        sent.innerHTML = list.childElementCount ? '' : `<div class="empty">${kind === 'followers' ? '아직 팔로워가 없어요.' : '아직 팔로우하는 사람이 없어요.'}<br>목록을 숨겨 둔 계정이라면 보이지 않을 수 있어요.</div>`;
+      }
+    }catch(e){
+      if (my !== gen) return;
+      sent.innerHTML = '';
+      const b = h('<div class="err"><p></p><button class="pill ghost" type="button">다시 시도</button></div>');
+      $('p', b).textContent = e.message; $('button', b).onclick = () => load(reset);
+      sent.append(b);
+    }finally{ if (my === gen) loading = false; }
+    if (ok && root.isConnected && sent.getBoundingClientRect().top < innerHeight + 600) load(false);
+  }
+  new IntersectionObserver(es => { if (es[0].isIntersecting) load(false); }, {rootMargin:'600px 0px'}).observe(sent);
+  root.refresh = () => load(true);
+  load(true);
+  return root;
+}
+
+/* ---------- 옆으로 밀어서 탭 넘기기 ---------- */
+let swipeDir = 0;
+function setupSwipe(){
+  const main = $('#main');
+  let sx = 0, sy = 0, t0 = 0, ok = false;
+  main.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1){ ok = false; return; }
+    const t = e.touches[0];
+    ok = t.clientX > 24 && t.clientX < innerWidth - 24 && !e.target.closest('input,textarea,video,audio,.media,.seg,.lb,.ov,.cov');
+    sx = t.clientX; sy = t.clientY; t0 = Date.now();
+  }, {passive:true});
+  main.addEventListener('touchend', e => {
+    if (!ok) return; ok = false;
+    const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.8 || Date.now() - t0 > 700) return;
+    swipeTab(dx < 0 ? 1 : -1);
+  }, {passive:true});
+}
+function swipeTab(dir){
+  const {name} = parse();
+  let list = null;
+  if (HOME_NAMES.includes(name)) list = homeTabs().map(tabHash);
+  else if (name === 'notifications' || name === 'mentions') list = ['#/notifications', '#/mentions'];
+  if (!list) return;
+  const i = list.indexOf(curKey), j = i + dir;
+  if (i < 0 || j < 0 || j >= list.length) return;
+  swipeDir = dir;
+  location.hash = list[j];
+}
+
 /* ---------- 당겨서 새로고침 ---------- */
 function setupPTR(){
   const ind = h(`<div class="ptr">${ic('refresh')}</div>`); document.body.append(ind);
@@ -2538,23 +2708,50 @@ function setupPTR(){
 const seenKey = () => 'ytt.seen.' + cur().acct;
 let pollTop = null, pollAcct = null, notifTop = null;
 const shownIds = new Set();
-function setBadge(on){ $('#bnav [data-n=notifications] .badge').hidden = !on; }
-function setDmBadge(on){ $('#bnav [data-n=dm] .badge').hidden = !on; }
+let notifCount = 0, dmCount = 0, unread = new Map();
+const badgeText = (n, plus) => n > 99 ? '99+' : n + (plus ? '+' : '');
+function paintBadge(sel, n, plus){
+  const b = $(`#bnav [data-n=${sel}] .badge`);
+  b.hidden = !n; b.textContent = n ? badgeText(n, plus) : '';
+}
+function updAppBadge(){
+  const t = notifCount + dmCount;
+  try{ if (navigator.setAppBadge){ if (t) navigator.setAppBadge(t); else navigator.clearAppBadge(); } }catch(e){}
+}
+function setBadge(n, plus){ notifCount = Number(n) || 0; paintBadge('notifications', notifCount, plus); updAppBadge(); }
+function setDmBadge(n){ dmCount = Number(n) || 0; paintBadge('dm', dmCount); updAppBadge(); }
+function markSeen(id){
+  if (LS.get(seenKey(), null) === id) return;
+  LS.set(seenKey(), id);
+  api('/api/v1/markers', {method:'POST', body:{notifications:{last_read_id:id}}}).catch(() => {});
+}
 async function checkNotif(){
   const acc = cur(); if (!acc) return;
-  if (pollAcct !== acc.acct){ pollAcct = acc.acct; pollTop = null; notifTop = null; }
+  if (pollAcct !== acc.acct){ pollAcct = acc.acct; pollTop = null; notifTop = null; unread = new Map(); }
   try{
     const first = pollTop === null;
-    const list = await api('/api/v1/notifications?' + qs(first ? {limit:'30'} : {since_id:pollTop, limit:'30'}));
+    const list = await api('/api/v1/notifications?' + qs(first ? {limit:'80'} : {since_id:pollTop, limit:'40'}));
     if (cur() !== acc) return;
+    if (first){
+      /* 다른 기기·앱에서 읽은 위치도 반영 */
+      try{
+        const mk = await api('/api/v1/markers?' + qs({'timeline[]':['notifications']}));
+        const sid = mk && mk.notifications && mk.notifications.last_read_id;
+        const ls = LS.get(seenKey(), null);
+        if (sid && (!ls || cmpId(sid, ls) > 0)) LS.set(seenKey(), sid);
+      }catch(e){}
+    }
     if (list.length && (first || cmpId(list[0].id, pollTop) > 0)) pollTop = list[0].id;
     const nonDm = list.filter(n => !isDm(n));
     if (nonDm.length && (!notifTop || cmpId(nonDm[0].id, notifTop) > 0)) notifTop = nonDm[0].id;
     const {name} = parse();
     const onNotif = name === 'notifications' || name === 'mentions';
     let seen = LS.get(seenKey(), null);
-    if (notifTop && (!seen || onNotif)){ LS.set(seenKey(), notifTop); seen = notifTop; }
-    setBadge(!onNotif && !!notifTop && !!seen && cmpId(notifTop, seen) > 0);
+    if (notifTop && (!seen || onNotif)){ markSeen(notifTop); seen = notifTop; }
+    nonDm.forEach(n => { if (seen && cmpId(n.id, seen) > 0) unread.set(n.id, true); });
+    for (const id of [...unread.keys()]) if (!seen || cmpId(id, seen) <= 0) unread.delete(id);
+    if (onNotif) unread.clear();
+    setBadge(unread.size, first && list.length >= 80 && unread.size >= nonDm.length);
     if (first) list.forEach(n => shownIds.add(n.id));
     else showNew(list);
   }catch(e){}
@@ -2577,7 +2774,7 @@ function nav(hash){
   location.hash = hash;
 }
 function goBack(){ if (depth > 0){ depth--; history.back(); } else go(lastTab); }
-function buildView(name, arg){
+function buildView(name, arg, arg2){
   switch (name){
     case 'home': return feedView('/api/v1/timelines/home', {hint:'내가 팔로우한 사람들의 글이 올라와요.', empty:'아직 글이 없어요. 커뮤 사람들을 팔로우해 보세요!', filter:homeFilter});
     case 'local': return feedView('/api/v1/timelines/public', {params:{local:'true'}, hint:'같은 서버(커뮤) 사람들이 올린 공개 글이 모두 모여요.', empty:'아직 이 서버에 공개 글이 없어요.'});
@@ -2594,6 +2791,7 @@ function buildView(name, arg){
     case 'edit': return editView();
     case 'thread': return threadView(arg);
     case 'user': return userView(arg);
+    case 'follows': return followsView(arg, arg2 === 'followers' ? 'followers' : 'following');
     default: return meView();
   }
 }
@@ -2608,15 +2806,17 @@ function route(){
   }
   document.body.classList.remove('in-login');
   if (name === 'open'){ openNotif(arg, arg2); return; }
-  if (![...TABS,'thread','user','chat','edit','settings'].includes(name) || (['thread','user','chat','list','tag'].includes(name) && !arg)){ hsh = '#/home'; name = 'home'; }
+  if (![...TABS,'thread','user','chat','edit','settings','follows'].includes(name) || (['thread','user','chat','list','tag','follows'].includes(name) && !arg)){ hsh = '#/home'; name = 'home'; }
   if (curKey && cache.has(curKey)) cache.get(curKey).y = window.scrollY;
   if (name === 'edit' || name === 'settings') cache.delete(hsh);
   const existed = cache.has(hsh);
   let e = cache.get(hsh);
-  if (!e){ e = {el:buildView(name, arg), y:0}; }
+  if (!e){ e = {el:buildView(name, arg, arg2), y:0}; }
   cache.delete(hsh); cache.set(hsh, e);
   while (cache.size > 15){ const k = [...cache.keys()].find(k => !TABS.includes(k.slice(2)) && k !== hsh); if (!k) break; cache.delete(k); }
   main.replaceChildren(e.el);
+  if (swipeDir && e.el.animate) e.el.animate([{transform:`translateX(${swipeDir * 48}px)`, opacity:.3}, {transform:'none', opacity:1}], {duration:200, easing:'ease-out'});
+  swipeDir = 0;
   curKey = hsh;
   if (TABS.includes(name)){ lastTab = hsh; depth = 0; }
   if (HOME_NAMES.includes(name)) lastHome = hsh;
@@ -2640,11 +2840,15 @@ function setHeader(name, el){
   } else {
     L.innerHTML = ic('back'); L.setAttribute('aria-label', '뒤로'); L.onclick = goBack;
   }
-  T.textContent = {notifications:'알림', mentions:'알림', dm:'쪽지', me:'내 계정', thread:'글', user:'프로필', edit:'프로필 편집'}[name] || ((name === 'chat' || name === 'settings') ? (el && el._title) || '쪽지' : APP_NAME);
-  R.innerHTML = ic('refresh'); R.style.visibility = (name === 'me' || name === 'edit' || name === 'settings') ? 'hidden' : 'visible';
+  T.textContent = {notifications:'알림', mentions:'알림', dm:'쪽지', me:'내 계정', thread:'글', user:'프로필', edit:'프로필 편집'}[name] || ((name === 'chat' || name === 'settings' || name === 'follows') ? (el && el._title) || '쪽지' : APP_NAME);
+  R.innerHTML = ic('refresh'); R.style.visibility = (name === 'edit' || name === 'settings') ? 'hidden' : 'visible';
   renderHomeTabs();
   $('#tTabs').hidden = !(HOME_NAMES.includes(name) && homeTabs().length > 1);
-  $('#tEdit').hidden = !HOME_NAMES.includes(name);
+  const te = $('#tEdit');
+  te.hidden = !(HOME_NAMES.includes(name) || name === 'me');
+  if (name === 'me'){ te.innerHTML = ic('settings'); te.setAttribute('aria-label', '설정'); te.onclick = () => nav('#/settings'); }
+  else { te.innerHTML = ic('sliders'); te.setAttribute('aria-label', '홈 탭 편집'); te.onclick = () => nav('#/settings/tabs'); }
+  const onTab = $('#tTabs .on'); if (onTab && !$('#tTabs').hidden) onTab.scrollIntoView({inline:'nearest', block:'nearest'});
   $('#nTabs').hidden = !(name === 'notifications' || name === 'mentions');
   document.querySelectorAll('#tTabs button, #nTabs button').forEach(b => b.classList.toggle('on', b.dataset.h === curKey));
   let active = TABS.includes(name) ? name : lastTab.slice(2).split('/')[0];
@@ -2697,6 +2901,8 @@ async function init(){
   setInterval(() => updateTimes($('#main')), 30000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden){ checkNotif(); updateTimes($('#main')); } });
   setupPTR();
+  setupSwipe();
+  shareAccountsWithSW();
   if ('serviceWorker' in navigator && location.protocol === 'https:'){
     navigator.serviceWorker.register('sw.js').catch(() => {});
     navigator.serviceWorker.addEventListener('message', ev => {

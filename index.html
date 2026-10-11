@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#15181c" media="(prefers-color-scheme: dark)">
 <meta name="mobile-web-app-capable" content="yes">
@@ -179,7 +179,7 @@ img.emoji{height:1.25em;width:auto;vertical-align:-.25em;margin:0 .05em;object-f
 
 /* 시트 */
 .ov{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.4);display:flex;align-items:flex-end;justify-content:center;animation:fi .15s}
-.sheet{width:100%;max-width:480px;background:var(--bg);border-radius:20px 20px 0 0;padding:8px 0 calc(12px + env(safe-area-inset-bottom));max-height:80vh;overflow:auto;animation:su .2s ease-out}
+.sheet{width:100%;max-width:480px;background:var(--bg);border-radius:20px 20px 0 0;padding:8px 0 calc(12px + env(safe-area-inset-bottom));max-height:80vh;overflow:auto;overscroll-behavior:contain;animation:su .2s ease-out}
 @media(min-width:640px){.ov{align-items:center}.sheet{border-radius:20px;padding-bottom:12px}}
 .grab{width:36px;height:4px;border-radius:2px;background:var(--line);margin:4px auto 8px}
 .sheet h3{margin:4px 20px 8px;font-size:17px}
@@ -712,11 +712,24 @@ async function finishLogin(code){
 }
 
 /* ---------- 시트·계정 고르기 ---------- */
+let lockCount = 0, lockY = 0;
+function lockScroll(){
+  if (lockCount++ > 0) return;
+  lockY = window.scrollY;
+  Object.assign(document.body.style, {position:'fixed', top:`-${lockY}px`, left:'0', right:'0', width:'100%'});
+}
+function unlockScroll(){
+  if (lockCount === 0 || --lockCount > 0) return;
+  Object.assign(document.body.style, {position:'', top:'', left:'', right:'', width:''});
+  window.scrollTo(0, lockY);
+}
 function sheet(build){
   const ov = document.createElement('div'); ov.className = 'ov';
   const sh = document.createElement('div'); sh.className = 'sheet'; sh.innerHTML = '<div class="grab"></div>';
   ov.append(sh);
-  const close = () => ov.remove();
+  let closed = false;
+  const close = () => { if (closed) return; closed = true; ov.remove(); unlockScroll(); };
+  lockScroll();
   ov.addEventListener('click', e => { if (e.target === ov) close(); });
   build(sh, close); document.body.append(ov); return close;
 }
@@ -1778,7 +1791,12 @@ function chatView(key){
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !matchMedia('(pointer:coarse)').matches){ e.preventDefault(); send(); } });
   const vv = window.visualViewport;
   if (vv){
-    const fit = () => { if (!root.isConnected){ bar.style.transform = ''; return; } const off = window.innerHeight - vv.height - vv.offsetTop; bar.style.transform = off > 0 ? `translateY(${-off}px)` : ''; };
+    const fit = () => {
+      if (!root.isConnected || document.activeElement !== ta){ bar.style.transform = ''; return; }
+      const off = window.innerHeight - vv.height - vv.offsetTop;
+      bar.style.transform = off > 120 ? `translateY(${-off}px)` : '';
+    };
+    ta.addEventListener('blur', () => { bar.style.transform = ''; });
     vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit);
   }
   root.refresh = () => { convStore.delete(skey); return load(); };

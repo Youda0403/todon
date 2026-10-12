@@ -2084,7 +2084,15 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
     const uploading = S.media.some(m => m.uploading);
     const pollBad = !!S.poll && S.poll.options.some(o => !o.trim());
     post.disabled = S.posting || uploading || left < 0 || pollBad || (!ta.value.trim() && !S.media.length);
+    /* 입력칸 높이를 다시 잴 때 잠깐 줄어들면서 스크롤이 위로 튕기지 않게, 스크롤 위치를 그대로 지킴 */
+    const sc = q('.c-scroll'), keep = sc.scrollTop;
     ta.style.height = 'auto'; ta.style.height = Math.max(140, ta.scrollHeight) + 'px';
+    if (sc.scrollTop !== keep) sc.scrollTop = keep;
+    if (document.activeElement === ta && ta.selectionEnd === ta.value.length){
+      /* 맨 끝에 쓰는 중이면 입력칸 아래쪽이 가려지지 않게만 살짝 내림 */
+      const over = ta.getBoundingClientRect().bottom - sc.getBoundingClientRect().bottom;
+      if (over > 0) sc.scrollTop += over;
+    }
     if (transient){ /* 지우고 다시 쓰기·수정·인용 중에는 임시저장을 덮어쓰지 않음 */ }
     else if (!replyTo){
       LS.set('ytt.draft', {text:ta.value, cw:cw.value, cwOn:S.cwOn});

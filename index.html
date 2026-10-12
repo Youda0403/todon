@@ -2008,6 +2008,9 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
   </div>`;
   const q = s => $(s, ov);
   const ta = q('.c-text'), cw = q('.c-cw'), post = q('.c-post'), cnt = q('.c-count');
+  const mirror = document.createElement('textarea'); mirror.className = 'c-text'; mirror.tabIndex = -1; mirror.setAttribute('aria-hidden', 'true');
+  mirror.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;pointer-events:none;height:0;min-height:0;overflow:hidden';
+  ta.after(mirror);
   const postLabel = edit ? '수정하기' : redraft ? '다시 올리기' : replyTo ? '답글 올리기' : '올리기';
   post.textContent = postLabel;
   if (edit){
@@ -2084,10 +2087,15 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
     const uploading = S.media.some(m => m.uploading);
     const pollBad = !!S.poll && S.poll.options.some(o => !o.trim());
     post.disabled = S.posting || uploading || left < 0 || pollBad || (!ta.value.trim() && !S.media.length);
-    /* 입력칸 높이를 다시 잴 때 잠깐 줄어들면서 스크롤이 위로 튕기지 않게, 스크롤 위치를 그대로 지킴 */
-    const sc = q('.c-scroll'), keep = sc.scrollTop;
-    ta.style.height = 'auto'; ta.style.height = Math.max(140, ta.scrollHeight) + 'px';
-    if (sc.scrollTop !== keep) sc.scrollTop = keep;
+    /* 입력칸 높이: 보이지 않는 복사본으로 재서, 진짜 입력칸은 줄었다 늘었다 하지 않게 함 (화면 덜컹거림 방지) */
+    const sc = q('.c-scroll');
+    if (ta.clientWidth){
+      mirror.style.width = ta.clientWidth + 'px'; mirror.value = ta.value;
+      /* 한 줄 여유를 둬서, 줄이 바뀌는 순간 브라우저가 입력칸 안을 한 줄 올렸다 내리지 않게 함 */
+      const lh = parseFloat(getComputedStyle(ta).lineHeight) || 27;
+      const hNew = Math.max(140, Math.ceil(mirror.scrollHeight + lh)) + 'px';
+      if (ta.style.height !== hNew){ const keep = sc.scrollTop; ta.style.height = hNew; if (sc.scrollTop !== keep) sc.scrollTop = keep; }
+    }
     if (document.activeElement === ta && ta.selectionEnd === ta.value.length){
       /* 맨 끝에 쓰는 중이면 입력칸 아래쪽이 가려지지 않게만 살짝 내림 */
       const over = ta.getBoundingClientRect().bottom - sc.getBoundingClientRect().bottom;

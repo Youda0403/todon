@@ -616,6 +616,30 @@ body.no-counts .fstats b{display:none}
 .taghead .btns{display:flex;gap:8px;align-items:center;width:100%;padding-left:56px}
 
 .reqchip{flex:none}
+
+/* 멘션 답장 관리 */
+.mqbar{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line)}
+.mqseg{display:flex;background:var(--hover);border-radius:999px;padding:3px;flex:1;min-width:0}
+.mqseg button{flex:1;border:0;background:none;border-radius:999px;padding:6px 8px;font-size:13.5px;font-weight:600;color:var(--sub);white-space:nowrap}
+.mqseg button.on{background:var(--bg);color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.mqsort{display:inline-flex;align-items:center;gap:3px;border:1px solid var(--line);background:none;border-radius:999px;padding:6px 10px;font-size:13px;font-weight:700;flex:none}
+.mqsort .ic{width:15px;height:15px}
+.mqsum{padding:0 16px;border-bottom:1px solid var(--line);background:var(--hover);font-size:13px;color:var(--sub)}
+.mqsum:empty{display:none}
+.mqt{padding:9px 0 2px}
+.mqt b{color:var(--fg)}
+.mqsum .linkbtn{padding:2px 0 9px;font-size:13px}
+.mqsum .mqt:only-child{padding-bottom:9px}
+.rq{display:flex;align-items:center;gap:8px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}
+.rqs{display:inline-flex;align-items:center;gap:4px;flex:1;font-size:13px;font-weight:700}
+.rqs .ic{width:15px;height:15px;stroke-width:2.2}
+.mq-todo .rqs{color:#e8590c}
+.mq-replied .rqs{color:var(--boost)}
+.mq-done .rqs{color:var(--sub)}
+.status.mq-replied,.status.mq-done{opacity:.62}
+.status.mq-todo{border-left-color:#e8590c}
+.status.flash{animation:fl 1.2s}
+@keyframes fl{0%,40%{background:var(--accent-soft)}}
 </style>
 </head>
 <body>
@@ -1542,9 +1566,22 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
   const list = document.createElement('div');
   const sent = document.createElement('div'); sent.className = 'sentinel';
   root.append(list, sent);
-  let nextPath = null, loading = false, done = false, gen = 0, topSpin = null;
+  let nextPath = null, loading = false, done = false, gen = 0, topSpin = null, topId = null;
   const seenIds = new Set();   /* 이미 보여 준 글은 다시 붙이지 않음 */
   const firstPath = () => endpoint + '?' + qs({limit:String(limit), ...params});
+  const bump = items => items.forEach(it => { if (!topId || cmpId(it.id, topId) > 0) topId = String(it.id); });
+  /* 글 묶음 → 화면 조각 (연달아 있는 원글→답글은 원글을 위에 두고 선으로 이음) */
+  const build = shown => {
+    const frag = document.createDocumentFragment();
+    if (kind === 'notif') shown.forEach(it => frag.append(notifEl(it)));
+    else for (let i = 0; i < shown.length; ){
+      let j = i;
+      while (j + 1 < shown.length && !shown[j].reblog && !shown[j + 1].reblog && shown[j].in_reply_to_id && String(shown[j].in_reply_to_id) === String(shown[j + 1].id)) j++;
+      for (let k = j; k >= i; k--) frag.append(statusEl(shown[k], {up:k > i, chained:k < j}));
+      i = j + 1;
+    }
+    return frag;
+  };
   async function load(reset){
     if (reset){ gen++; nextPath = null; done = false; loading = false; }
     if (loading || done) return;
@@ -1556,17 +1593,11 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
     try{
       const {data: items, next} = await api(nextPath && !reset ? nextPath : firstPath(), {withLink:true});
       if (my !== gen) return;
-      if (reset){ list.replaceChildren(); seenIds.clear(); }
+      if (reset){ list.replaceChildren(); seenIds.clear(); topId = null; }
+      bump(items);
       const fresh = items.filter(it => !seenIds.has(String(it.id)));
       fresh.forEach(it => seenIds.add(String(it.id)));
-      const shown = filter ? fresh.filter(filter) : fresh;
-      if (kind === 'notif') shown.forEach(it => list.append(notifEl(it)));
-      else for (let i = 0; i < shown.length; ){
-        let j = i;
-        while (j + 1 < shown.length && !shown[j].reblog && !shown[j + 1].reblog && shown[j].in_reply_to_id && String(shown[j].in_reply_to_id) === String(shown[j + 1].id)) j++;
-        for (let k = j; k >= i; k--) list.append(statusEl(shown[k], {up:k > i, chained:k < j}));
-        i = j + 1;
-      }
+      list.append(build(filter ? fresh.filter(filter) : fresh));
       /* 새 글이 하나도 없는 페이지 = 끝. 북마크·좋아요처럼 서버가 알려 준 다음 주소로만 넘길 수 있는 목록은 그 주소가 없으면 끝 */
       const nextGuess = next || (linkOnly ? null : endpoint + '?' + qs({limit:String(limit), ...params, max_id:items.length ? items[items.length - 1].id : ''}));
       if (fresh.length && nextGuess){
@@ -1584,9 +1615,175 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
     }finally{ if (my === gen){ loading = false; if (topSpin) topSpin.remove(); } }
     if (ok && root.isConnected && sent.getBoundingClientRect().top < innerHeight + 600) load(false);
   }
+  /* 빠른 새로고침: 맨 위 글보다 새 글만 받아서 위에 붙이고, 숫자(좋아요 등)는 뒤에서 조용히 맞춤 */
+  async function quick(){
+    if (loading) return;
+    loading = true; const my = gen;
+    topSpin = topSpin || h('<div class="topspin"><div class="spin"></div></div>'); list.before(topSpin);
+    let full = false;
+    try{
+      const {data} = await api(endpoint + '?' + qs({limit:'40', ...params, min_id:topId}), {withLink:true});
+      if (my !== gen) return;
+      const items = (data || []).slice().sort((a, b) => cmpId(b.id, a.id));
+      if (items.length >= 40) full = true;   /* 새 글이 너무 많이 쌓였으면 처음부터 다시 */
+      else {
+        bump(items);
+        const fresh = items.filter(it => !seenIds.has(String(it.id)));
+        fresh.forEach(it => seenIds.add(String(it.id)));
+        const shown = filter ? fresh.filter(filter) : fresh;
+        if (shown.length) list.prepend(build(shown));
+        updateTimes(root);
+      }
+    }catch(e){ if (my === gen) toast(e.message); }
+    finally{ if (my === gen){ loading = false; if (topSpin) topSpin.remove(); } }
+    if (my !== gen) return;
+    if (full){ load(true); return; }
+    api(firstPath()).then(items => {
+      if (my !== gen) return;
+      (items || []).forEach(it => { const st = kind === 'notif' ? it.status : (it.reblog || it); if (st) syncStatus(st); });
+    }).catch(() => {});
+  }
   new IntersectionObserver(es => { if (es[0].isIntersecting) load(false); }, {rootMargin:'600px 0px'}).observe(sent);
-  root.refresh = () => load(true);
+  root.refresh = () => (topId && list.childElementCount && !linkOnly) ? quick() : load(true);
   load(true);
+  return root;
+}
+/* ---------- 멘션 답장 관리: 답한 멘션·안 한 멘션을 한눈에 ---------- */
+const mqKey = acc => 'ytt.mq.' + acc.acct;
+const mqStore = acc => Object.assign({done:[], replied:[]}, LS.get(mqKey(acc), {}));
+function mqSave(acc, m){ m.done = m.done.slice(-1500); m.replied = m.replied.slice(-1500); LS.set(mqKey(acc), m); }
+/* 이 앱에서 답글을 올리면 '답장함'으로 바로 기록 */
+function markReplied(acc, id){
+  const m = mqStore(acc); id = String(id);
+  if (!m.replied.includes(id)){ m.replied.push(id); mqSave(acc, m); }
+  window.dispatchEvent(new CustomEvent('ytt-replied', {detail:{acct:acc.acct, id}}));
+}
+function mentionsView(){
+  const me = cur();
+  const root = document.createElement('div');
+  const pref = Object.assign({only:false, asc:false}, LS.get('ytt.mqpref', {}));
+  const bar = h(`<div class="mqbar"><div class="mqseg"><button type="button" data-v="all">전체</button><button type="button" data-v="todo">안 답한 것만</button></div><button class="mqsort" type="button"></button></div>`);
+  const sum = h('<div class="mqsum"></div>');
+  const list = document.createElement('div');
+  const more = h('<div class="mqmore"></div>');
+  root.append(bar, sum, list, more);
+  let items = [], nextPath = null, end = false, loading = false, gen = 0;
+  let mine = new Set(), myNext = null, myEnd = false, myOldest = null;
+  const stOf = n => {
+    const id = String(n.status.id), m = mqStore(me);
+    if (mine.has(id) || m.replied.includes(id)) return 'replied';
+    if (m.done.includes(id)) return 'done';
+    return 'todo';
+  };
+  const LABEL = {replied:'답장함', done:'답 안 해도 됨', todo:'아직 답 안 함'};
+  const whenOf = n => n.created_at || n.status.created_at;
+  function card(n){
+    const el = notifEl(n);
+    const k = stOf(n);
+    el.classList.add('mq', 'mq-' + k);
+    const row = h(`<div class="rq"><span class="rqs">${ic(k === 'todo' ? 'reply' : 'check')}<span></span></span><button class="mini" type="button"></button></div>`);
+    $('.rqs span', row).textContent = LABEL[k];
+    const b = $('button', row);
+    if (k === 'replied') b.remove();
+    else b.textContent = k === 'todo' ? '답 안 해도 돼요' : '되돌리기';
+    b.onclick = e => {
+      e.stopPropagation();
+      const m = mqStore(me), id = String(n.status.id);
+      if (k === 'todo') m.done.push(id); else m.done = m.done.filter(x => x !== id);
+      mqSave(me, m);
+      repaint(el, n);
+    };
+    row.addEventListener('click', e => e.stopPropagation());
+    const body = $('.body', el); if (body) body.append(row);
+    el._n = n;
+    return el;
+  }
+  function repaint(el, n){
+    if (pref.only && stOf(n) !== 'todo'){ el.remove(); }
+    else el.replaceWith(card(n));
+    paintSum();
+  }
+  function paintSum(){
+    const todo = items.filter(n => stOf(n) === 'todo');
+    const oldest = items.length ? whenOf(items[items.length - 1]) : null;
+    sum.replaceChildren();
+    if (!items.length) return;
+    const t = document.createElement('div'); t.className = 'mqt';
+    t.innerHTML = `<b></b><span></span>`;
+    $('b', t).textContent = todo.length ? `안 답한 멘션 ${todo.length}개` : '불러온 멘션은 다 답했어요';
+    $('span', t).textContent = ` · 불러온 멘션 ${items.length}개 (${oldest ? rel(oldest) + (SET.absTime ? '부터' : ' 전부터') : ''})`;
+    sum.append(t);
+    if (todo.length && !pref.only){
+      const jump = h('<button class="linkbtn" type="button">가장 오래된 안 답한 멘션으로</button>');
+      jump.onclick = () => {
+        const id = String(todo[todo.length - 1].status.id);
+        const el = [...list.children].find(c => c._n && String(c._n.status.id) === id);
+        if (el){ el.scrollIntoView({block:'center'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1200); }
+      };
+      sum.append(jump);
+    }
+  }
+  function paintBar(){
+    bar.querySelectorAll('.mqseg button').forEach(b => b.classList.toggle('on', (b.dataset.v === 'todo') === pref.only));
+    $('.mqsort', bar).innerHTML = ic(pref.asc ? 'up' : 'down') + `<span>${pref.asc ? '오래된 순' : '최신 순'}</span>`;
+  }
+  function draw(){
+    paintBar();
+    let arr = pref.only ? items.filter(n => stOf(n) === 'todo') : items.slice();
+    if (pref.asc) arr.reverse();
+    list.replaceChildren(...arr.map(card));
+    if (!arr.length && items.length) list.append(h(`<div class="empty">${pref.only ? '불러온 멘션 중 안 답한 멘션이 없어요.' : '아직 나를 부른 글이 없어요.'}</div>`));
+    if (pref.asc) list.before(more); else list.after(more);
+    paintMore(); paintSum();
+  }
+  function paintMore(){
+    more.replaceChildren();
+    if (loading){ more.append(h('<div class="sentinel"><div class="spin"></div></div>')); return; }
+    if (!items.length && end){ more.append(h('<div class="empty">아직 나를 부른 글이 없어요.</div>')); return; }
+    if (end){ more.append(h('<div class="end">가장 오래된 멘션까지 다 불러왔어요</div>')); return; }
+    const b = h('<div class="secpad" style="padding-top:12px"><button class="pill ghost wide" type="button">더 오래된 멘션 불러오기</button></div>');
+    $('button', b).onclick = () => loadMore();
+    more.append(b);
+  }
+  /* 내가 쓴 글을 멘션이 있는 시점까지 거슬러 읽어서, 어떤 멘션에 답했는지 알아냄 */
+  async function loadMine(until, my){
+    let pages = 0;
+    while (!myEnd && pages < 10 && (!myOldest || new Date(myOldest) > new Date(until))){
+      const {data, next} = await api(myNext || `/api/v1/accounts/${me.id}/statuses?` + qs({limit:'40', exclude_reblogs:'true'}), {withLink:true, acc:me});
+      if (my !== gen) return;
+      (data || []).forEach(st => { if (st.in_reply_to_id) mine.add(String(st.in_reply_to_id)); myOldest = st.created_at; });
+      myNext = next; if (!data || !data.length || !next) myEnd = true;
+      pages++;
+    }
+  }
+  async function loadMore(reset){
+    if (reset){ gen++; items = []; nextPath = null; end = false; loading = false; mine = new Set(); myNext = null; myEnd = false; myOldest = null; }
+    if (loading || end) return;
+    loading = true; const my = gen; paintMore();
+    try{
+      const {data, next} = await api(nextPath || '/api/v1/notifications?' + qs({'types[]':['mention'], limit:'40'}), {withLink:true, acc:me});
+      if (my !== gen) return;
+      const seen = new Set(items.map(n => String(n.id)));
+      const fresh = (data || []).filter(n => n.status && !isDm(n) && !seen.has(String(n.id)));
+      if (fresh.length) await loadMine(whenOf(fresh[fresh.length - 1]), my);
+      if (my !== gen) return;
+      items = items.concat(fresh);
+      nextPath = next; if (!data || !data.length || !next) end = true;
+    }catch(e){ if (my === gen) toast(e.message); }
+    if (my !== gen) return;
+    loading = false;
+    const y = window.scrollY; draw(); if (!reset) window.scrollTo(0, y);
+  }
+  bar.querySelectorAll('.mqseg button').forEach(b => { b.onclick = () => { pref.only = b.dataset.v === 'todo'; LS.set('ytt.mqpref', pref); draw(); }; });
+  $('.mqsort', bar).onclick = () => { pref.asc = !pref.asc; LS.set('ytt.mqpref', pref); draw(); window.scrollTo(0, 0); };
+  window.addEventListener('ytt-replied', e => {
+    if (!e.detail || e.detail.acct !== me.acct) return;
+    [...list.children].forEach(c => { if (c._n && String(c._n.status.id) === e.detail.id) repaint(c, c._n); });
+    paintSum();
+  });
+  new IntersectionObserver(es => { if (es[0].isIntersecting && !pref.asc && !loading && !end && items.length) loadMore(); }, {rootMargin:'400px 0px'}).observe(more);
+  root.refresh = () => loadMore(true);
+  draw(); loadMore(true);
   return root;
 }
 /* 답글 순서: 대화 갈래마다 끝까지 따라가며 보여 줌. 글쓴이가 이어 쓴 글을 먼저 */
@@ -2439,6 +2636,7 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
       else if (S.replyId && redraft && acc.instance === redraft.acc.instance) body.in_reply_to_id = S.replyId;
       if (quote && !quoteLink) body.quoted_status_id = acc.instance === viewAcc.instance ? quote.id : await resolveId(quote, acc);
       await api('/api/v1/statuses', {method:'POST', body, acc, headers:{'Idempotency-Key':idem}});
+      if (replyTo) markReplied(viewAcc, replyTo.id);
       if (transient){ /* 새 글 임시저장은 그대로 둠 */ }
       else if (!replyTo) LS.del('ytt.draft');
       else { const m = LS.get('ytt.rdraft', {}); delete m[rkey]; LS.set('ytt.rdraft', m); }
@@ -4010,7 +4208,7 @@ function buildView(name, arg, arg2){
     case 'home': return feedView('/api/v1/timelines/home', {hint:'내가 팔로우한 사람들의 글이 올라와요.', empty:'아직 글이 없어요. 커뮤 사람들을 팔로우해 보세요!', filter:homeFilter});
     case 'local': return feedView('/api/v1/timelines/public', {params:{local:'true'}, hint:'같은 서버(커뮤) 사람들이 올린 공개 글이 모두 모여요.', empty:'아직 이 서버에 공개 글이 없어요.'});
     case 'notifications': return feedView('/api/v1/notifications', {kind:'notif', empty:'아직 알림이 없어요.', filter:n => !isDm(n), limit:40});
-    case 'mentions': return feedView('/api/v1/notifications', {kind:'notif', params:{'types[]':['mention']}, empty:'아직 나를 부른 글이 없어요.', filter:n => !isDm(n), limit:40});
+    case 'mentions': return mentionsView();
     case 'fed': return feedView('/api/v1/timelines/public', {hint:'이 서버와 연결된 다른 서버의 공개 글까지 모두 보여요.', empty:'아직 글이 없어요.'});
     case 'list': return feedView(`/api/v1/timelines/list/${encodeURIComponent(arg)}`, {empty:'이 리스트에 아직 글이 없어요.'});
     case 'tag': return feedView(`/api/v1/timelines/tag/${encodeURIComponent(decodeURIComponent(arg))}`, {empty:'이 해시태그가 붙은 글이 아직 없어요.'});

@@ -22,8 +22,8 @@
 :root{--post-fs:15px;--thread:#cfd9de}
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--thread:#425059}}
 :root[data-theme=dark]{--thread:#425059}
-html{background:var(--bg)}
-body{margin:0;background:var(--bg);color:var(--fg);font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,system-ui,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:15px;line-height:1.5;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;word-break:keep-all}
+html{background:var(--bg);overscroll-behavior-y:contain}
+body{margin:0;overscroll-behavior-y:contain;background:var(--bg);color:var(--fg);font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,system-ui,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:15px;line-height:1.5;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;word-break:keep-all}
 body.noscroll{overflow:hidden}
 button{font:inherit;color:inherit;cursor:pointer}
 input,textarea{font:inherit;color:inherit}
@@ -639,7 +639,7 @@ body.no-counts .fstats b{display:none}
 .ptr.spinning .ic{animation:sp .8s linear infinite}
 .act .ic{transition:transform .12s}
 .act:active .ic{transform:scale(.82)}
-.act.pop .ic{animation:popk .42s cubic-bezier(.2,.8,.3,1)}
+.act.tapfx .ic{animation:popk .42s cubic-bezier(.2,.8,.3,1)}
 .pill,.fab,.mini,.mqsort{transition:transform .12s,opacity .12s}
 .pill:active:not(:disabled),.mini:active:not(:disabled),.mqsort:active{transform:scale(.96)}
 .fab:active{transform:scale(.92)}
@@ -1148,7 +1148,7 @@ function statusEl(s, o = {}){
   paint();
   el.dataset.sid = st.id; el._st = st; el._paint = paint;
   bR.onclick = e => { e.stopPropagation(); openCompose({replyTo:st}); };
-  const pop = b => { b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); setTimeout(() => b.classList.remove('pop'), 450); };
+  const pop = b => { b.classList.remove('tapfx'); void b.offsetWidth; b.classList.add('tapfx'); setTimeout(() => b.classList.remove('tapfx'), 450); };
   bB.onclick = e => { e.stopPropagation(); if (SET.confirmBoost && !st.reblogged && !confirm('이 글을 부스트할까요?')) return; toggleAct(st, 'boost', paint); if (st.reblogged) pop(bB); };
   bF.onclick = e => { e.stopPropagation(); toggleAct(st, 'fav', paint); if (st.favourited) pop(bF); };
   bM.onclick = e => { e.stopPropagation(); toggleAct(st, 'bm', paint); };

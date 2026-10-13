@@ -138,6 +138,19 @@ img.emoji{height:1.25em;width:auto;vertical-align:-.25em;margin:0 .05em;object-f
 .act:disabled{opacity:.35;cursor:default}
 .status.focus{cursor:default}
 .status.focus .content{font-size:calc(var(--post-fs) + 2px);margin-top:10px}
+/* 글 상세: 트위터처럼 위에 프로필(사진 + 이름/아이디 두 줄), 아래 본문은 화면 폭 전체 */
+.status.focus .row{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:12px;align-items:center}
+.status.focus .left{grid-column:1;grid-row:1}
+.status.focus .body{display:contents}
+.status.focus .body>*{grid-column:1/-1}
+.status.focus .body>.meta{grid-column:2;grid-row:1;flex-wrap:wrap;row-gap:0;white-space:normal}
+.status.focus .meta .name{order:1;font-size:16px}
+.status.focus .meta .vis{order:2}
+.status.focus .meta .handle{order:3;flex-basis:100%}
+.status.focus .meta .dot,.status.focus .meta .time{display:none}
+.status.focus .replyto{justify-self:start;margin-top:10px}
+.status.focus .cwbox{margin-top:10px}
+.status.focus .actions{max-width:none;margin:6px -6px -4px}
 .fulltime{margin-top:12px;padding-bottom:10px;border-bottom:1px solid var(--line);color:var(--sub);font-size:14px}
 .tail{min-height:55vh}
 .thsec{display:flex;align-items:center;gap:6px;padding:10px 16px;font-size:14px;font-weight:700;color:var(--sub);background:var(--hover);border-bottom:1px solid var(--line)}

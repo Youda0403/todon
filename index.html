@@ -92,10 +92,10 @@ body.in-login #shell{padding-bottom:0;border:0}
 .dot,.time,.vis{color:var(--sub);flex:none}
 .vis{display:inline-flex}
 .vis .ic{width:14px;height:14px}
-.replyto{display:inline-flex;align-items:center;gap:4px;margin:4px 0 2px;padding:2px 10px 2px 7px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-size:12.5px;font-weight:700;max-width:100%;cursor:pointer;line-height:1.6}
-.replyto .ic{width:14px;height:14px;stroke-width:2.2}
+.replyto{display:flex;align-items:center;gap:4px;margin:1px 0 2px;color:var(--sub);font-size:13.5px;font-weight:500;max-width:100%;cursor:pointer;line-height:1.5}
+.replyto .ic{width:14px;height:14px;stroke-width:2;flex:none}
 .replyto span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.replyto.self{background:var(--hover);color:var(--sub)}
+.replyto b{color:var(--accent);font-weight:600}
 .status.focus .replyto,.status.up .replyto{cursor:default}
 .content{margin-top:2px;overflow-wrap:anywhere;word-break:break-word}
 .status .content,.bub .content,.qcontent{font-size:var(--post-fs)}
@@ -252,6 +252,14 @@ img.emoji{height:1.25em;width:auto;vertical-align:-.25em;margin:0 .05em;object-f
 .c-accname{border:0;background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:3px 10px;font-size:13px;font-weight:700;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;display:inline-block}
 .c-cw{width:100%;margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--hover);outline:none;font-size:16px}
 .c-text{width:100%;border:0;outline:none;resize:none;background:none;font-size:18px;line-height:1.5;min-height:140px;margin-top:8px;padding:0;display:block}
+/* @아이디·#태그 파란색: 입력칸 글자는 투명하게, 바로 뒤에 같은 글자를 색 입혀 그림 */
+.c-tw{position:relative;margin-top:8px}
+.c-tw .c-text{margin-top:0;position:relative;color:transparent;caret-color:var(--fg);-webkit-text-fill-color:transparent}
+.c-tw .c-text::placeholder{color:var(--sub);-webkit-text-fill-color:var(--sub);opacity:1}
+.c-tw .c-text::selection{color:transparent;-webkit-text-fill-color:transparent;background:rgba(99,100,255,.25)}
+.c-hl,.c-tw .c-text{font:inherit;font-size:18px;line-height:1.5;letter-spacing:normal;white-space:pre-wrap;overflow-wrap:break-word;word-break:keep-all;tab-size:4}
+.c-hl{position:absolute;top:0;left:0;right:0;pointer-events:none;color:var(--fg);padding:0;margin:0}
+.c-hl .hm{color:var(--accent)}
 .c-media{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:8px}
 .c-media:empty{display:none}
 .cm{position:relative;aspect-ratio:1;border-radius:14px;overflow:hidden;background:var(--line)}
@@ -461,11 +469,6 @@ body.in-chat #shell{padding-bottom:0;min-height:0}
 .pre.k-mention{color:var(--k-mention)}
 .pre.k-status{color:var(--k-status)}
 .pre.k-quote{color:var(--k-quote)}
-.notif-card{border-left:3px solid transparent}
-.notif-card.k-reply{border-left-color:var(--k-reply)}
-.notif-card.k-mention{border-left-color:var(--k-mention)}
-.notif-card.k-status{border-left-color:var(--k-status)}
-.notif-card.k-quote{border-left-color:var(--k-quote)}
 .pop .pic.k-reply{background:var(--k-reply)}
 .pop .pic.k-status{background:var(--k-status)}
 .pop .pic.k-quote{background:var(--k-quote)}
@@ -689,7 +692,6 @@ body.no-counts .fstats b{display:none}
 .mq-replied .rqs{color:var(--boost)}
 .mq-done .rqs{color:var(--sub)}
 .status.mq-replied,.status.mq-done{opacity:.62}
-.status.mq-todo{border-left-color:#e8590c}
 .status.flash{animation:fl 1.2s}
 @keyframes fl{0%,40%{background:var(--accent-soft)}}
 </style>
@@ -1074,7 +1076,7 @@ function statusEl(s, o = {}){
   const by = s.reblog ? s.account : null;
   const st = s.reblog || s;
   const el = document.createElement('article');
-  el.className = 'status' + (o.focus ? ' focus' : '') + (o.up ? ' up' : '') + (o.chained ? ' chained' : '');
+  el.className = 'status' + (o.focus ? ' focus' : '') + (o.up ? ' up' : '') + (o.chained ? ' chained' : '') + (o.inThread ? ' inthread' : '');
   const v = st.visibility !== 'public' && VIS[st.visibility];
   const canBoost = st.visibility === 'public' || st.visibility === 'unlisted';
   el.innerHTML = `${by ? `<div class="pre">${ic('boost')}<span class="bb"></span></div>` : ''}
@@ -1119,15 +1121,17 @@ function statusEl(s, o = {}){
       if (fs.childElementCount) ft.after(fs);
     }
   }
-  if (st.in_reply_to_id && !o.chained){
+  if (st.in_reply_to_id && !o.chained && !o.inThread){
     const r = $('.replyto', el); r.hidden = false;
     const self = st.in_reply_to_account_id === st.account.id;
-    let txt = '이어지는 글';
-    if (!self){
+    r.innerHTML = ic('corner') + '<span></span>';
+    const sp = $('span', r);
+    if (self) sp.textContent = '이어지는 글';
+    else {
       const m = (st.mentions || []).find(m => m.id === st.in_reply_to_account_id);
-      txt = m ? `@${m.username}님에게 보낸 답글` : '답글';
+      if (m){ const b = document.createElement('b'); b.textContent = '@' + m.username; sp.append(b, '님에게 보낸 답글'); }
+      else sp.textContent = '답글';
     }
-    r.innerHTML = ic('corner') + '<span></span>'; $('span', r).textContent = txt;
     r.classList.toggle('self', self);
     if (!o.focus && !o.up) r.onclick = e => { e.stopPropagation(); nav('#/thread/' + st.in_reply_to_id); };
   }
@@ -1246,7 +1250,7 @@ function replaceStatusEverywhere(ns){
   const sel = `[data-sid="${CSS.escape(String(ns.id))}"]`;
   roots.forEach(r => r.querySelectorAll(sel).forEach(old => {
     if (!old.classList.contains('status')) return;
-    const el = statusEl(ns, {focus:old.classList.contains('focus'), up:old.classList.contains('up'), chained:old.classList.contains('chained')});
+    const el = statusEl(ns, {focus:old.classList.contains('focus'), up:old.classList.contains('up'), chained:old.classList.contains('chained'), inThread:old.classList.contains('inthread')});
     if (!el.classList || !el.classList.contains('status')) return;
     const oldPre = old.firstElementChild && old.firstElementChild.classList.contains('pre') ? old.firstElementChild : null;
     if (oldPre){ const np = el.firstElementChild && el.firstElementChild.classList.contains('pre') ? el.firstElementChild : null; if (np) np.replaceWith(oldPre); else el.prepend(oldPre); }
@@ -1867,13 +1871,13 @@ function threadView(id){
     try{
       const [s, ctx] = await Promise.all([api(`/api/v1/statuses/${id}`), api(`/api/v1/statuses/${id}/context`)]);
       root.replaceChildren();
-      ctx.ancestors.forEach((a, i) => root.append(statusEl(a, {up:true, chained:i > 0})));
-      const f = statusEl(s, {focus:true}); root.append(f);
+      ctx.ancestors.forEach((a, i) => root.append(statusEl(a, {up:true, chained:i > 0, inThread:true})));
+      const f = statusEl(s, {focus:true, inThread:true}); root.append(f);
       const order = threadOrder(s, ctx.descendants);
       if (order.length) root.append(h(`<div class="thsec">${ic('reply')}<span>답글 ${order.length}개</span></div>`));
       order.forEach((d, i) => {
         const nx = order[i + 1], pv = order[i - 1];
-        root.append(statusEl(d, {up:!!nx && String(nx.in_reply_to_id) === String(d.id), chained:!!pv && String(d.in_reply_to_id) === String(pv.id)}));
+        root.append(statusEl(d, {up:!!nx && String(nx.in_reply_to_id) === String(d.id), chained:!!pv && String(d.in_reply_to_id) === String(pv.id), inThread:true}));
       });
       root.append(h('<div class="tail"></div>'));
       if (ctx.ancestors.length) requestAnimationFrame(() => { if (root.isConnected) f.scrollIntoView({block:'start'}); });
@@ -2243,7 +2247,7 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
      <div class="c-main">
       <button class="c-accname" type="button"></button>
       <input class="c-cw" type="text" placeholder="내용 경고 문구 (예: 스포일러, 유혈 묘사)" hidden>
-      <textarea class="c-text" placeholder="${replyTo ? '답글을 적어 보세요' : quote ? '인용하면서 할 말을 적어 보세요' : '캐릭터의 대사나 행동을 적어 보세요'}"></textarea>
+      <div class="c-tw"><div class="c-hl" aria-hidden="true"></div><textarea class="c-text" placeholder="${replyTo ? '답글을 적어 보세요' : quote ? '인용하면서 할 말을 적어 보세요' : '캐릭터의 대사나 행동을 적어 보세요'}"></textarea></div>
       <div class="c-media"></div>
       <button class="c-sens" type="button" hidden></button>
       <div class="c-poll" hidden></div>
@@ -2265,7 +2269,13 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
    </div>
   </div>`;
   const q = s => $(s, ov);
-  const ta = q('.c-text'), cw = q('.c-cw'), post = q('.c-post'), cnt = q('.c-count');
+  const ta = q('.c-text'), cw = q('.c-cw'), post = q('.c-post'), cnt = q('.c-count'), hl = q('.c-hl');
+  const paintHL = () => {
+    const t = esc(ta.value)
+      .replace(/(^|[^\w@\/])(@[\w.\-]+(?:@[\w\-]+(?:\.[\w\-]+)+)?)/g, '$1<span class="hm">$2</span>')
+      .replace(/(^|[^\w&#\/])(#[\p{L}\p{N}_]+)/gu, '$1<span class="hm">$2</span>');
+    hl.innerHTML = t + '\n ';
+  };
   const mirror = document.createElement('textarea'); mirror.className = 'c-text'; mirror.tabIndex = -1; mirror.setAttribute('aria-hidden', 'true');
   mirror.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;pointer-events:none;height:0;min-height:0;overflow:hidden';
   ta.after(mirror);
@@ -2343,6 +2353,7 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
   if (replyTo && replyTo.spoiler_text && !draft){ S.cwOn = true; cw.value = replyTo.spoiler_text; }
 
   const update = () => {
+    paintHL();
     const n = countChars(ta.value) + (S.cwOn ? [...cw.value].length : 0);
     const max = acc.max || 500, left = max - n;
     cnt.textContent = `${n} / ${max}`;

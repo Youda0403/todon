@@ -275,8 +275,8 @@ img.emoji{height:1.25em;width:auto;vertical-align:-.25em;margin:0 .05em;object-f
 .c-bar .ibtn{color:var(--accent)}
 .tbtn{font-weight:800;font-size:13px;width:auto;padding:0 10px;border-radius:999px}
 .tbtn.on{background:var(--accent-soft)}
-.vbtn{display:inline-flex;align-items:center;gap:4px;border:0;background:none;color:var(--accent);font-weight:700;font-size:13px;padding:8px 10px;border-radius:999px}
-.vbtn .ic{width:18px;height:18px}
+.vbtn{display:inline-flex;align-items:center;justify-content:center;border:0;background:none;color:var(--accent);width:38px;height:38px;padding:0;border-radius:50%;flex:none}
+.vbtn .ic{width:20px;height:20px}
 .c-count{font-size:13px;color:var(--sub);font-variant-numeric:tabular-nums}
 .c-count.over{color:var(--danger);font-weight:700}
 
@@ -649,16 +649,6 @@ body.no-counts .fstats b{display:none}
 
 .reqchip{flex:none}
 
-/* 프로필 미디어 격자 */
-.mgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:2px}
-.mtile{position:relative;aspect-ratio:1;border:0;padding:0;background:var(--line);overflow:hidden;display:block}
-.mtile img{width:100%;height:100%;object-fit:cover;display:block}
-.mtile.blur img{filter:blur(18px);transform:scale(1.1)}
-.mtv,.mtb{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;pointer-events:none}
-.mtv .ic{width:30px;height:30px;fill:rgba(255,255,255,.9);stroke:rgba(0,0,0,.25);filter:drop-shadow(0 1px 3px rgba(0,0,0,.4))}
-.mtb{background:rgba(0,0,0,.18)}
-.mtb .ic{width:24px;height:24px}
-.mtn{position:absolute;top:6px;right:6px;min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:rgba(0,0,0,.6);color:#fff;font-size:11.5px;font-weight:700;display:flex;align-items:center;justify-content:center}
 /* 프로필 안 툿 검색 */
 .psbar{display:flex;align-items:center;gap:6px;margin:10px 12px 6px;padding:0 4px 0 14px;border-radius:999px;background:var(--hover);border:1px solid transparent}
 .psbar:focus-within{border-color:var(--accent);background:var(--bg)}
@@ -808,7 +798,6 @@ const P = {
   list:'<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
   bellOff:'<path d="M13.7 21a2 2 0 0 1-3.4 0"/><path d="M18.6 13A17.9 17.9 0 0 1 18 8"/><path d="M6.3 6.3A5.9 5.9 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.3-5"/><path d="M1 1l22 22"/>',
   search:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
-  play:'<path d="M7 4v16l13-8z"/>',
   hash:'<path d="M4 9h16"/><path d="M4 15h16"/><path d="M10 3L8 21"/><path d="M16 3l-2 18"/>'
 };
 const ic = n => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[n]}</svg>`;
@@ -2012,7 +2001,7 @@ function profileFeeds(id){
       rf = feedView(`/api/v1/accounts/${id}/statuses`, {filter:st => !st.reblog && !!st.in_reply_to_id && String(st.in_reply_to_account_id) !== String(st.account.id), empty:'아직 단 답글이 없어요'});
       replies.append(rf);
     }
-    if (k === 'media' && !mf){ mf = mediaGrid(id); media.append(mf); }
+    if (k === 'media' && !mf){ mf = feedView(`/api/v1/accounts/${id}/statuses`, {params:{only_media:'true', exclude_reblogs:'true'}, empty:'아직 사진·영상이 들어간 툿이 없어요'}); media.append(mf); }
     if (k === 'search'){ if (!sf){ sf = profileSearch(id); search.append(sf); } setTimeout(() => sf.focus(), 50); }
   };
   tabs.querySelectorAll('button').forEach(b => { b.onclick = () => show(b.dataset.k); });
@@ -2021,62 +2010,6 @@ function profileFeeds(id){
   box._tab = () => tabs.querySelector('.on').dataset.k;
   box.refresh = () => Promise.all([loadPinned(), pf.refresh(), rf && rf.refresh(), mf && mf.refresh(), sf && sf.refresh()]);
   return box;
-}
-/* 프로필 미디어 탭: 사진·영상만 3칸 격자로 */
-function mediaGrid(id){
-  const root = document.createElement('div');
-  const grid = document.createElement('div'); grid.className = 'mgrid';
-  const sent = document.createElement('div'); sent.className = 'sentinel';
-  root.append(grid, sent);
-  let next = null, loading = false, done = false, gen = 0;
-  const seen = new Set();
-  const first = () => `/api/v1/accounts/${id}/statuses?` + qs({only_media:'true', exclude_reblogs:'true', limit:'40'});
-  const tile = (st, m, i) => {
-    const t = document.createElement('button'); t.type = 'button'; t.className = 'mtile';
-    const img = new Image(); img.loading = 'lazy'; img.alt = m.description || ''; img.src = m.preview_url || m.url;
-    t.append(img);
-    if (m.type === 'video' || m.type === 'gifv') t.insertAdjacentHTML('beforeend', `<span class="mtv">${ic('play')}</span>`);
-    if (i === 0 && st.media_attachments.length > 1) t.insertAdjacentHTML('beforeend', `<span class="mtn">${st.media_attachments.length}</span>`);
-    const blur = SET.media === 'show' ? false : SET.media === 'hide' ? true : !!(st.sensitive || st.spoiler_text);
-    if (blur){ t.classList.add('blur'); t.insertAdjacentHTML('beforeend', `<span class="mtb">${ic('eyeOff')}</span>`); }
-    t.onclick = () => {
-      if (t.classList.contains('blur')){ t.classList.remove('blur'); $('.mtb', t).remove(); return; }
-      const imgs = st.media_attachments.filter(x => x.type === 'image');
-      if (m.type === 'image' && imgs.length) lightbox(st.media_attachments, st.media_attachments.indexOf(m));
-      else nav('#/thread/' + st.id);
-    };
-    return t;
-  };
-  async function load(reset){
-    if (reset){ gen++; next = null; done = false; loading = false; }
-    if (loading || done) return;
-    loading = true; const my = gen;
-    if (!(reset && grid.childElementCount)) sent.innerHTML = '<div class="spin"></div>';
-    let ok = false;
-    try{
-      const {data, next:nx} = await api(next && !reset ? next : first(), {withLink:true});
-      if (my !== gen) return;
-      const frag = document.createDocumentFragment();
-      if (reset) seen.clear();
-      const fresh = (data || []).filter(s => !seen.has(String(s.id)));
-      fresh.forEach(s => { seen.add(String(s.id)); const st = s.reblog || s; (st.media_attachments || []).forEach((m, i) => frag.append(tile(st, m, i))); });
-      if (reset) grid.replaceChildren(frag); else grid.append(frag);
-      const guess = nx || (data && data.length ? first() + '&max_id=' + encodeURIComponent(data[data.length - 1].id) : null);
-      if (fresh.length && guess){ next = guess; sent.innerHTML = ''; ok = true; }
-      else { done = true; sent.innerHTML = grid.childElementCount ? '<div class="end">여기까지 다 봤어요</div>' : '<div class="empty">아직 올린 사진·영상이 없어요</div>'; }
-    }catch(e){
-      if (my !== gen) return;
-      sent.innerHTML = '';
-      const b = h('<div class="err"><p></p><button class="pill ghost" type="button">다시 시도</button></div>');
-      $('p', b).textContent = e.message; $('button', b).onclick = () => load(reset);
-      sent.append(b);
-    }finally{ if (my === gen) loading = false; }
-    if (ok && root.isConnected && sent.offsetParent && sent.getBoundingClientRect().top < innerHeight + 600) load(false);
-  }
-  new IntersectionObserver(es => { if (es[0].isIntersecting) load(false); }, {rootMargin:'600px 0px'}).observe(sent);
-  root.refresh = () => load(true);
-  load(true);
-  return root;
 }
 /* 이 계정의 툿 검색: 서버 검색 + (서버 검색이 안 되는 서버를 위해) 글을 직접 훑어서 찾기 */
 function profileSearch(id){
@@ -2588,7 +2521,7 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
     }
   };
   function hasWriting(){ return !!(ta.value.trim() && ta.value.trim() !== S.prefix.trim()); }
-  const paintVis = () => { q('.c-vis').innerHTML = ic(VIS[S.vis].icon) + `<span>${VIS[S.vis].label}</span>`; };
+  const paintVis = () => { const v = q('.c-vis'); v.innerHTML = ic(VIS[S.vis].icon); v.title = '공개 범위: ' + VIS[S.vis].label; v.setAttribute('aria-label', '공개 범위: ' + VIS[S.vis].label); };
   const paintCw = () => { cw.hidden = !S.cwOn; q('.c-cwbtn').classList.toggle('on', S.cwOn); };
   const paintAcc = () => {
     q('.c-acc img').src = acc.avatar;

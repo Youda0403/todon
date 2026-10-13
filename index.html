@@ -1907,7 +1907,22 @@ function threadView(id){
         root.append(statusEl(d, {up:!!nx && String(nx.in_reply_to_id) === String(d.id), chained:!!pv && String(d.in_reply_to_id) === String(pv.id), inThread:true}));
       });
       root.append(h('<div class="tail"></div>'));
-      if (ctx.ancestors.length) requestAnimationFrame(() => { if (root.isConnected) f.scrollIntoView({block:'start'}); });
+      if (ctx.ancestors.length) requestAnimationFrame(() => {
+        if (!root.isConnected) return;
+        f.scrollIntoView({block:'start'});
+        /* 위쪽 이전 글의 사진이 늦게 불러와져 길어져도, 누른 툿이 제자리에 있게 붙잡아 둠 (직접 스크롤하면 멈춤) */
+        const want = f.getBoundingClientRect().top, key = curKey;
+        let off = false;
+        const stop = () => { off = true; ro.disconnect(); removeEventListener('touchstart', stop); removeEventListener('wheel', stop); removeEventListener('keydown', stop); };
+        const ro = new ResizeObserver(() => {
+          if (off || !f.isConnected || curKey !== key) return;
+          const d = f.getBoundingClientRect().top - want;
+          if (Math.abs(d) > 1) window.scrollBy(0, d);
+        });
+        for (const c of root.children){ if (c === f) break; ro.observe(c); }
+        addEventListener('touchstart', stop, {passive:true}); addEventListener('wheel', stop, {passive:true}); addEventListener('keydown', stop);
+        setTimeout(stop, 10000);
+      });
     }catch(e){
       root.replaceChildren();
       const b = h('<div class="err" style="padding:32px 16px"><p></p><button class="pill ghost" type="button">다시 시도</button></div>');

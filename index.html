@@ -77,8 +77,9 @@ body.in-login #shell{padding-bottom:0;border:0}
 .status{padding:12px 16px;border-bottom:1px solid var(--line);cursor:pointer;scroll-margin-top:110px}
 .status:not(.focus):active{background:var(--hover)}
 .pre{display:flex;align-items:center;gap:6px;margin:-2px 0 4px;padding-left:28px;font-size:13px;font-weight:600;color:var(--sub);min-width:0}
-.notif-card>.pre{gap:12px;margin:-2px 0 6px;font-weight:500}
-.notif-card>.pre span>span:first-child{font-weight:700;color:var(--fg)}
+/* 알림 카드 위 안내 줄: 화살표·글씨 모두 회색, 툿 이름이 시작하는 자리부터 */
+.notif-card>.pre{gap:5px;margin:-2px 0 4px;padding-left:56px;font-weight:500;color:var(--sub);line-height:20px}
+.notif-card>.pre .ic{width:15px;height:15px;color:var(--sub)}
 .pre .ic{width:16px;height:16px}
 .pre span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row{display:flex;gap:12px}
@@ -467,10 +468,6 @@ body.in-chat #shell{padding-bottom:0;min-height:0}
 
 /* 알림 종류별 색 */
 :root{--k-reply:#1d9bf0;--k-status:#f59e0b;--k-quote:#8b5cf6;--k-dm:var(--accent);--k-mention:var(--accent)}
-.pre.k-reply .ic{color:var(--k-reply)}
-.pre.k-mention .ic{color:var(--k-mention)}
-.pre.k-status .ic{color:var(--k-status)}
-.pre.k-quote .ic{color:var(--k-quote)}
 .pop .pic.k-reply{background:var(--k-reply)}
 .pop .pic.k-status{background:var(--k-status)}
 .pop .pic.k-quote{background:var(--k-quote)}

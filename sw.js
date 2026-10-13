@@ -43,6 +43,23 @@ self.addEventListener('fetch', e => {
   })());
 });
 
+// 앱이 새로고침할 때 '새 버전 있나?' 확인 부탁 → 화면 파일을 서버에서 새로 받아 비교
+async function checkPage() {
+  try {
+    const cache = await caches.open(CACHE);
+    const before = await cache.match('./', { ignoreSearch: true });
+    const r = await fetch('./', { cache: 'no-store' });
+    if (!r || !r.ok) return;
+    const newText = await r.clone().text();
+    const oldText = before ? await before.text() : null;
+    await cache.put('./', r);
+    if (oldText !== null && oldText !== newText) await notifyUpdate();
+  } catch (_) {}
+}
+self.addEventListener('message', e => {
+  if (e.data && e.data.type === 'check') e.waitUntil(checkPage());
+});
+
 // 어느 계정의 알림인지 앱이 알아볼 수 있게, 토큰 대신 토큰의 짧은 지문만 넘김
 async function tokHint(t) {
   if (!t || !self.crypto || !crypto.subtle) return '';

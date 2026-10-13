@@ -128,9 +128,9 @@ img.emoji{height:1.25em;width:auto;vertical-align:-.25em;margin:0 .05em;object-f
 .po i{position:absolute;top:0;bottom:0;left:0;background:var(--accent-soft)}
 .po span{position:relative}
 .pmeta{font-size:13px;color:var(--sub)}
-.actions{display:flex;justify-content:space-between;max-width:400px;margin:6px 0 -4px -6px}
-.act{display:inline-flex;align-items:center;gap:4px;border:0;background:none;color:var(--sub);padding:6px;border-radius:999px;font-size:13px;min-width:44px}
-.act .ic{width:18px;height:18px}
+.actions{display:flex;justify-content:space-between;max-width:420px;margin:8px 0 -6px -8px}
+.act{display:inline-flex;align-items:center;gap:5px;border:0;background:none;color:var(--sub);padding:7px 8px;border-radius:999px;font-size:13px;line-height:1;min-width:44px}
+.act .ic{width:19px;height:19px}
 .act.on.boost{color:var(--boost)}
 .act.on.fav{color:var(--fav)}
 .act.on.bm{color:var(--accent)}
@@ -139,7 +139,7 @@ img.emoji{height:1.25em;width:auto;vertical-align:-.25em;margin:0 .05em;object-f
 .status.focus{cursor:default}
 .status.focus .content{font-size:calc(var(--post-fs) + 2px);margin-top:10px}
 /* 글 상세: 트위터처럼 위에 프로필(사진 + 이름/아이디 두 줄), 아래 본문은 화면 폭 전체 */
-.status.focus .row{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:12px;align-items:center}
+.status.focus .row{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:12px;row-gap:0;align-items:center}
 .status.focus .left{grid-column:1;grid-row:1}
 .status.focus .body{display:contents}
 .status.focus .body>*{grid-column:1/-1}
@@ -148,9 +148,19 @@ img.emoji{height:1.25em;width:auto;vertical-align:-.25em;margin:0 .05em;object-f
 .status.focus .meta .vis{order:2}
 .status.focus .meta .handle{order:3;flex-basis:100%}
 .status.focus .meta .dot,.status.focus .meta .time{display:none}
-.status.focus .replyto{justify-self:start;margin-top:10px}
-.status.focus .cwbox{margin-top:10px}
-.status.focus .actions{max-width:none;margin:6px -6px -4px}
+.status.focus{padding-bottom:0}
+.status.focus .meta .handle{font-size:14.5px;line-height:1.35}
+.status.focus .replyto{justify-self:start;margin:12px 0 0}
+.status.focus .cwbox{margin-top:12px}
+.status.focus .cwbody{margin-top:12px}
+.status.focus .cwbox:not([hidden])+.cwbody{margin-top:8px}
+.status.focus .content{margin-top:0;line-height:1.55}
+.status.focus .fulltime{margin-top:14px;padding-bottom:12px}
+.status.focus .fstats{padding:12px 0}
+.status.focus .actions{max-width:none;margin:0 -8px;padding:4px 0;justify-content:space-around}
+.status.focus .act{padding:10px;min-width:0}
+.status.focus .act .ic{width:22px;height:22px}
+.status.focus .act span{display:none}
 .fulltime{margin-top:12px;padding-bottom:10px;border-bottom:1px solid var(--line);color:var(--sub);font-size:14px}
 .tail{min-height:55vh}
 .thsec{display:flex;align-items:center;gap:6px;padding:10px 16px;font-size:14px;font-weight:700;color:var(--sub);background:var(--hover);border-bottom:1px solid var(--line)}
@@ -341,6 +351,8 @@ details.gl p{margin:0;padding:0 16px 14px;color:var(--sub);font-size:14px}
 .pop .ibtn{width:32px;height:32px;color:var(--sub)}
 .pop .ibtn .ic{width:16px;height:16px}
 @keyframes pd{from{transform:translate(-50%,-20px);opacity:0}}
+@keyframes pu{to{transform:translate(-50%,-24px);opacity:0}}
+.pop.out{animation:pu .25s ease-in forwards;pointer-events:none}
 
 /* 쪽지 목록 */
 .dmrow{display:flex;align-items:center;gap:12px;padding:12px 16px;cursor:pointer;border-bottom:1px solid var(--line)}
@@ -3315,8 +3327,12 @@ function notifTarget(n){
   return '#/notifications';
 }
 let popTimer = null;
+function popOut(p){
+  if (!p || p._out) return; p._out = true;
+  p.classList.add('out'); setTimeout(() => p.remove(), 260);
+}
 function popup(n, more){
-  document.querySelectorAll('.pop').forEach(x => x.remove()); clearTimeout(popTimer);
+  document.querySelectorAll('.pop:not(.updbar)').forEach(x => x.remove()); clearTimeout(popTimer);
   const me = cur(), s = n.status, dm = isDm(n);
   const reply = n.type === 'mention' && s && String(s.in_reply_to_account_id) === String(me.id);
   const txt = dm ? '님이 쪽지를 보냈어요' : reply ? '님이 내 글에 답글을 달았어요' : POP_TXT[n.type];
@@ -3331,13 +3347,13 @@ function popup(n, more){
   let sub = s ? (s.spoiler_text ? '⚠ ' + s.spoiler_text : (stripLead(plain(s.content)) || (s.media_attachments && s.media_attachments.length ? '사진' : ''))) : '@' + n.account.acct;
   if (more) sub += ` · 새 알림 ${more}개 더`;
   $('small', p).textContent = sub;
-  p.onclick = () => { p.remove(); nav(notifTarget(n)); };
-  $('button', p).onclick = e => { e.stopPropagation(); p.remove(); };
+  p.onclick = () => { popOut(p); nav(notifTarget(n)); };
+  $('button', p).onclick = e => { e.stopPropagation(); popOut(p); };
   let y0 = null;
   p.addEventListener('touchstart', e => { y0 = e.touches[0].clientY; }, {passive:true});
-  p.addEventListener('touchmove', e => { if (y0 != null && e.touches[0].clientY - y0 < -20) p.remove(); }, {passive:true});
+  p.addEventListener('touchmove', e => { if (y0 != null && e.touches[0].clientY - y0 < -20) popOut(p); }, {passive:true});
   document.body.append(p);
-  popTimer = setTimeout(() => p.remove(), 5000);
+  popTimer = setTimeout(() => popOut(p), 5000);
 }
 function showNew(list){
   const fresh = list.filter(n => !shownIds.has(n.id));
@@ -4182,8 +4198,17 @@ function spinEnd(){
     spinHideTimer = setTimeout(() => { if (spinCount) return; ptrInd.classList.remove('spinning'); ptrInd.style.transition = 'none'; ptrInd.style.transform = ''; ptrBusy = false; }, 300);
   }, Math.max(0, 450 - (Date.now() - spinT0)));
 }
+/* 새 버전이 있는지 서비스 워커에게 확인 부탁 (있으면 '새 버전이 있어요'가 뜸) */
+function checkAppUpdate(){
+  try{
+    if (!('serviceWorker' in navigator)) return;
+    const c = navigator.serviceWorker.controller; if (c) c.postMessage({type:'check'});
+    navigator.serviceWorker.getRegistration().then(r => r && r.update()).catch(() => {});
+  }catch(e){}
+}
 /* 지금 화면 새로고침 + 떠 있는 아이콘 (새로고침 버튼·당겨서 새로고침·탭 다시 누르기 모두) */
 function floatRefresh(){
+  checkAppUpdate();
   spinStart();
   Promise.race([Promise.resolve().then(refreshCurrent).catch(() => {}), sleep(10000)]).then(spinEnd);
 }

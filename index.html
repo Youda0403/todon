@@ -254,13 +254,13 @@ img.emoji{height:1.25em;width:auto;vertical-align:-.25em;margin:0 .05em;object-f
 .c-main{flex:1;min-width:0}
 .c-accname{border:0;background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:3px 10px;font-size:13px;font-weight:700;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;display:inline-block}
 .c-cw{width:100%;margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--hover);outline:none;font-size:16px}
-.c-text{width:100%;border:0;outline:none;resize:none;background:none;font-size:18px;line-height:1.5;min-height:140px;margin-top:8px;padding:0;display:block}
+.c-text{width:100%;border:0;outline:none;resize:none;background:none;font-size:max(16px, var(--post-fs));line-height:1.5;min-height:140px;margin-top:8px;padding:0;display:block}
 /* @아이디·#태그 파란색: 입력칸 글자는 투명하게, 바로 뒤에 같은 글자를 색 입혀 그림 */
 .c-tw{position:relative;margin-top:8px}
 .c-tw .c-text{margin-top:0;position:relative;color:transparent;caret-color:var(--fg);-webkit-text-fill-color:transparent}
 .c-tw .c-text::placeholder{color:var(--sub);-webkit-text-fill-color:var(--sub);opacity:1}
 .c-tw .c-text::selection{color:transparent;-webkit-text-fill-color:transparent;background:rgba(99,100,255,.25)}
-.c-hl,.c-tw .c-text{font:inherit;font-size:18px;line-height:1.5;letter-spacing:normal;white-space:pre-wrap;overflow-wrap:break-word;word-break:keep-all;tab-size:4}
+.c-hl,.c-tw .c-text{font:inherit;font-size:max(16px, var(--post-fs));line-height:1.5;letter-spacing:normal;white-space:pre-wrap;overflow-wrap:break-word;word-break:keep-all;tab-size:4}
 .c-hl{position:absolute;top:0;left:0;right:0;pointer-events:none;color:var(--fg);padding:0;margin:0}
 .c-hl .hm{color:var(--accent)}
 .c-media{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:8px}
@@ -551,7 +551,9 @@ body.in-chat #shell{padding-bottom:0;min-height:0}
 .tg input::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .15s}
 .tg input:checked{background:var(--accent)}
 .tg input:checked::after{transform:translateX(18px)}
-.eform .tg{padding:12px 0;margin-top:12px}
+.eform .tg{padding:4px 0;margin-top:16px}
+.eform .tg .t b{font-size:14px;font-weight:700}
+.eform .tg .t small{margin-left:0;margin-top:3px}
 .mehead{display:flex;align-items:center;gap:12px;padding:16px 16px 6px}
 .mehead .av{width:56px;height:56px}
 .mehead .t{min-width:0}
@@ -2559,7 +2561,9 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
       mirror.style.width = ta.clientWidth + 'px'; mirror.value = ta.value;
       /* 한 줄 여유를 둬서, 줄이 바뀌는 순간 브라우저가 입력칸 안을 한 줄 올렸다 내리지 않게 함 */
       const lh = parseFloat(getComputedStyle(ta).lineHeight) || 27;
-      const hNew = Math.max(140, Math.ceil(mirror.scrollHeight + lh)) + 'px';
+      const minH = (S.poll || S.media.length || quote) ? Math.ceil(lh * 2) : 140;
+      if (ta.style.minHeight !== minH + 'px') ta.style.minHeight = minH + 'px';
+      const hNew = Math.max(minH, Math.ceil(mirror.scrollHeight + lh)) + 'px';
       if (ta.style.height !== hNew){ const keep = sc.scrollTop; ta.style.height = hNew; if (sc.scrollTop !== keep) sc.scrollTop = keep; }
     }
     if (document.activeElement === ta && ta.clientWidth){

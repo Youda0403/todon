@@ -501,6 +501,9 @@ body.in-chat #shell{padding-bottom:0;min-height:0}
 .c-memobtn.has::after{content:"";position:absolute;top:6px;right:4px;width:7px;height:7px;border-radius:50%;background:#f59e0b}
 
 /* 프로필 툿·답글 탭, 고정 툿 */
+.ptabs .ptsearch{flex:0 0 52px;display:flex;align-items:center;justify-content:center}
+.ptabs .ptsearch .ic{width:19px;height:19px}
+.ptabs .ptsearch.on::after{width:28px}
 .ptabs{position:sticky;top:calc(54px + env(safe-area-inset-top));z-index:10;background:var(--glass);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
 .pre.k-pin{color:var(--sub)}
 
@@ -644,6 +647,30 @@ body.no-counts .fstats b{display:none}
 
 .reqchip{flex:none}
 
+/* 프로필 미디어 격자 */
+.mgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:2px}
+.mtile{position:relative;aspect-ratio:1;border:0;padding:0;background:var(--line);overflow:hidden;display:block}
+.mtile img{width:100%;height:100%;object-fit:cover;display:block}
+.mtile.blur img{filter:blur(18px);transform:scale(1.1)}
+.mtv,.mtb{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;pointer-events:none}
+.mtv .ic{width:30px;height:30px;fill:rgba(255,255,255,.9);stroke:rgba(0,0,0,.25);filter:drop-shadow(0 1px 3px rgba(0,0,0,.4))}
+.mtb{background:rgba(0,0,0,.18)}
+.mtb .ic{width:24px;height:24px}
+.mtn{position:absolute;top:6px;right:6px;min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:rgba(0,0,0,.6);color:#fff;font-size:11.5px;font-weight:700;display:flex;align-items:center;justify-content:center}
+/* 프로필 안 툿 검색 */
+.psbar{display:flex;align-items:center;gap:6px;margin:10px 12px 6px;padding:0 4px 0 14px;border-radius:999px;background:var(--hover);border:1px solid transparent}
+.psbar:focus-within{border-color:var(--accent);background:var(--bg)}
+.psbar .sic{display:flex;color:var(--sub)}
+.psbar .sic .ic{width:17px;height:17px}
+.psbar input{flex:1;min-width:0;border:0;background:none;outline:none;font-size:16px;padding:10px 0;-webkit-appearance:none;appearance:none}
+.psbar input::-webkit-search-cancel-button{display:none}
+.psbar .ibtn{width:32px;height:32px;color:var(--sub)}
+.psbar .ibtn .ic{width:16px;height:16px}
+.psinfo{padding:2px 16px 10px;font-size:13px;color:var(--sub);border-bottom:1px solid var(--line)}
+.content mark{background:#ffe58a;color:inherit;border-radius:3px;padding:0 1px}
+:root[data-theme=dark] .content mark{background:#6b5a12}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) .content mark{background:#6b5a12}}
+
 /* 부드러운 움직임 */
 @keyframes fo{to{opacity:0}}
 @keyframes sd{to{transform:translateY(48px)}}
@@ -778,6 +805,8 @@ const P = {
   flag:'<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/>',
   list:'<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
   bellOff:'<path d="M13.7 21a2 2 0 0 1-3.4 0"/><path d="M18.6 13A17.9 17.9 0 0 1 18 8"/><path d="M6.3 6.3A5.9 5.9 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.3-5"/><path d="M1 1l22 22"/>',
+  search:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+  play:'<path d="M7 4v16l13-8z"/>',
   hash:'<path d="M4 9h16"/><path d="M4 15h16"/><path d="M10 3L8 21"/><path d="M16 3l-2 18"/>'
 };
 const ic = n => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[n]}</svg>`;
@@ -1902,11 +1931,7 @@ function userView(id){
   const root = document.createElement('div');
   const head = document.createElement('div');
   root.append(head);
-  const loadHead = async () => {
-    head.innerHTML = '<div class="sentinel"><div class="spin"></div></div>';
-    try{ head.replaceChildren(profileEl(await api(`/api/v1/accounts/${id}`))); }
-    catch(e){ head.innerHTML = ''; const p = h('<div class="err" style="padding:24px 16px"><p></p></div>'); $('p', p).textContent = e.message; head.append(p); }
-  };
+  const loadHead = () => swapHead(head, id);
   loadHead();
   const tl = profileFeeds(id);
   root.append(tl);
@@ -1958,14 +1983,14 @@ function memoCard(a, note, {acc = cur(), showWho = false, onSaved = null} = {}){
 /* 프로필 아래 글 목록: 툿(답글 빼고, 고정 툿 맨 위) / 답글 */
 function profileFeeds(id){
   const box = document.createElement('div');
-  const tabs = h('<div class="tabs ptabs"><button type="button" data-k="posts" class="on">툿</button><button type="button" data-k="replies">답글</button></div>');
-  const posts = document.createElement('div'), replies = document.createElement('div');
+  const tabs = h(`<div class="tabs ptabs"><button type="button" data-k="posts" class="on">툿</button><button type="button" data-k="replies">답글</button><button type="button" data-k="media">미디어</button><button type="button" data-k="search" class="ptsearch" aria-label="이 계정의 툿 검색">${ic('search')}</button></div>`);
+  const posts = document.createElement('div'), replies = document.createElement('div'), media = document.createElement('div'), search = document.createElement('div');
   const pinned = document.createElement('div');
   const pf = feedView(`/api/v1/accounts/${id}/statuses`, {params:{exclude_replies:'true'}, empty:'아직 쓴 툿이 없어요'});
   posts.append(pinned, pf);
-  replies.hidden = true;
-  box.append(tabs, posts, replies);
-  let rf = null;
+  replies.hidden = true; media.hidden = true; search.hidden = true;
+  box.append(tabs, posts, replies, media, search);
+  let rf = null, mf = null, sf = null;
   const loadPinned = async () => {
     try{
       const list = await api(`/api/v1/accounts/${id}/statuses?pinned=true`);
@@ -1980,17 +2005,158 @@ function profileFeeds(id){
   loadPinned();
   const show = k => {
     tabs.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.k === k));
-    posts.hidden = k !== 'posts'; replies.hidden = k !== 'replies';
+    posts.hidden = k !== 'posts'; replies.hidden = k !== 'replies'; media.hidden = k !== 'media'; search.hidden = k !== 'search';
     if (k === 'replies' && !rf){
       rf = feedView(`/api/v1/accounts/${id}/statuses`, {filter:st => !st.reblog && !!st.in_reply_to_id && String(st.in_reply_to_account_id) !== String(st.account.id), empty:'아직 단 답글이 없어요'});
       replies.append(rf);
     }
+    if (k === 'media' && !mf){ mf = mediaGrid(id); media.append(mf); }
+    if (k === 'search'){ if (!sf){ sf = profileSearch(id); search.append(sf); } setTimeout(() => sf.focus(), 50); }
   };
   tabs.querySelectorAll('button').forEach(b => { b.onclick = () => show(b.dataset.k); });
   box._showTab = show;
+  box._keys = ['posts', 'replies', 'media'];   /* 옆으로 밀어서 넘기는 탭 (검색은 제외) */
   box._tab = () => tabs.querySelector('.on').dataset.k;
-  box.refresh = () => Promise.all([loadPinned(), pf.refresh(), rf && rf.refresh()]);
+  box.refresh = () => Promise.all([loadPinned(), pf.refresh(), rf && rf.refresh(), mf && mf.refresh(), sf && sf.refresh()]);
   return box;
+}
+/* 프로필 미디어 탭: 사진·영상만 3칸 격자로 */
+function mediaGrid(id){
+  const root = document.createElement('div');
+  const grid = document.createElement('div'); grid.className = 'mgrid';
+  const sent = document.createElement('div'); sent.className = 'sentinel';
+  root.append(grid, sent);
+  let next = null, loading = false, done = false, gen = 0;
+  const seen = new Set();
+  const first = () => `/api/v1/accounts/${id}/statuses?` + qs({only_media:'true', exclude_reblogs:'true', limit:'40'});
+  const tile = (st, m, i) => {
+    const t = document.createElement('button'); t.type = 'button'; t.className = 'mtile';
+    const img = new Image(); img.loading = 'lazy'; img.alt = m.description || ''; img.src = m.preview_url || m.url;
+    t.append(img);
+    if (m.type === 'video' || m.type === 'gifv') t.insertAdjacentHTML('beforeend', `<span class="mtv">${ic('play')}</span>`);
+    if (i === 0 && st.media_attachments.length > 1) t.insertAdjacentHTML('beforeend', `<span class="mtn">${st.media_attachments.length}</span>`);
+    const blur = SET.media === 'show' ? false : SET.media === 'hide' ? true : !!(st.sensitive || st.spoiler_text);
+    if (blur){ t.classList.add('blur'); t.insertAdjacentHTML('beforeend', `<span class="mtb">${ic('eyeOff')}</span>`); }
+    t.onclick = () => {
+      if (t.classList.contains('blur')){ t.classList.remove('blur'); $('.mtb', t).remove(); return; }
+      const imgs = st.media_attachments.filter(x => x.type === 'image');
+      if (m.type === 'image' && imgs.length) lightbox(st.media_attachments, st.media_attachments.indexOf(m));
+      else nav('#/thread/' + st.id);
+    };
+    return t;
+  };
+  async function load(reset){
+    if (reset){ gen++; next = null; done = false; loading = false; }
+    if (loading || done) return;
+    loading = true; const my = gen;
+    if (!(reset && grid.childElementCount)) sent.innerHTML = '<div class="spin"></div>';
+    let ok = false;
+    try{
+      const {data, next:nx} = await api(next && !reset ? next : first(), {withLink:true});
+      if (my !== gen) return;
+      const frag = document.createDocumentFragment();
+      if (reset) seen.clear();
+      const fresh = (data || []).filter(s => !seen.has(String(s.id)));
+      fresh.forEach(s => { seen.add(String(s.id)); const st = s.reblog || s; (st.media_attachments || []).forEach((m, i) => frag.append(tile(st, m, i))); });
+      if (reset) grid.replaceChildren(frag); else grid.append(frag);
+      const guess = nx || (data && data.length ? first() + '&max_id=' + encodeURIComponent(data[data.length - 1].id) : null);
+      if (fresh.length && guess){ next = guess; sent.innerHTML = ''; ok = true; }
+      else { done = true; sent.innerHTML = grid.childElementCount ? '<div class="end">여기까지 다 봤어요</div>' : '<div class="empty">아직 올린 사진·영상이 없어요</div>'; }
+    }catch(e){
+      if (my !== gen) return;
+      sent.innerHTML = '';
+      const b = h('<div class="err"><p></p><button class="pill ghost" type="button">다시 시도</button></div>');
+      $('p', b).textContent = e.message; $('button', b).onclick = () => load(reset);
+      sent.append(b);
+    }finally{ if (my === gen) loading = false; }
+    if (ok && root.isConnected && sent.offsetParent && sent.getBoundingClientRect().top < innerHeight + 600) load(false);
+  }
+  new IntersectionObserver(es => { if (es[0].isIntersecting) load(false); }, {rootMargin:'600px 0px'}).observe(sent);
+  root.refresh = () => load(true);
+  load(true);
+  return root;
+}
+/* 이 계정의 툿 검색: 서버 검색 + (서버 검색이 안 되는 서버를 위해) 글을 직접 훑어서 찾기 */
+function profileSearch(id){
+  const root = document.createElement('div');
+  const bar = h(`<form class="psbar" role="search"><span class="sic">${ic('search')}</span><input type="search" enterkeyhint="search" placeholder="이 계정의 툿에서 찾기" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="찾을 말"><button class="ibtn" type="button" aria-label="지우기" hidden>${ic('x')}</button></form>`);
+  const inp = $('input', bar), clr = $('button', bar);
+  const info = h('<div class="psinfo"></div>');
+  const list = document.createElement('div');
+  const more = document.createElement('div');
+  root.append(bar, info, list, more);
+  let gen = 0, word = '', found = new Map(), scanNext = null, scanned = 0, scanEnd = false, busy = false, oldest = null;
+  const norm = t => String(t || '').toLowerCase().replace(/\s+/g, ' ');
+  const textOf = st => norm((st.spoiler_text || '') + ' ' + plain(st.content) + ' ' + (st.media_attachments || []).map(m => m.description || '').join(' '));
+  /* 찾은 말에 형광펜 */
+  const mark = (el, w) => {
+    const c = $('.content', el); if (!c || !w) return;
+    const walker = document.createTreeWalker(c, NodeFilter.SHOW_TEXT), nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    const lw = w.toLowerCase();
+    for (const t of nodes){
+      const v = t.nodeValue, i = v.toLowerCase().indexOf(lw);
+      if (i < 0) continue;
+      const m = document.createElement('mark'); m.textContent = v.slice(i, i + w.length);
+      const after = t.splitText(i); after.nodeValue = after.nodeValue.slice(w.length);
+      after.before(m);
+    }
+  };
+  const draw = () => {
+    const arr = [...found.values()].sort((a, b) => cmpId(b.st.id, a.st.id));
+    list.replaceChildren(...arr.map(x => x.el));
+    more.replaceChildren();
+    if (!word){ info.textContent = '이 계정이 쓴 툿·답글에서 말을 찾아요. CW 문구와 사진 설명도 같이 찾아요.'; return; }
+    info.textContent = `‘${word}’ ${found.size ? found.size + '개 찾았어요' : '아직 못 찾았어요'} · 최근 글 ${scanned}개를 살펴봤어요${oldest ? ` (${rel(oldest)}${SET.absTime ? '까지' : ' 전까지'})` : ''}`;
+    if (busy) more.append(h('<div class="sentinel"><div class="spin"></div></div>'));
+    else if (!scanEnd){
+      const b = h(`<button class="mqload" type="button">${ic('down')}<span>더 오래된 글에서 계속 찾기</span></button>`);
+      b.onclick = () => scan(gen);
+      more.append(b);
+    } else more.append(h('<div class="mqend">이 계정의 글을 처음 것까지 다 살펴봤어요</div>'));
+  };
+  const add = (st, my) => {
+    if (my !== gen || found.has(String(st.id))) return;
+    if (!textOf(st).includes(norm(word))) return;
+    const el = statusEl(st); mark(el, word);
+    found.set(String(st.id), {st, el});
+  };
+  async function scan(my){
+    if (busy || scanEnd || my !== gen) return;
+    busy = true; draw();
+    try{
+      for (let pages = 0; pages < 8 && !scanEnd; pages++){
+        const {data, next} = await api(scanNext || `/api/v1/accounts/${id}/statuses?` + qs({limit:'40', exclude_reblogs:'true'}), {withLink:true});
+        if (my !== gen) return;
+        (data || []).forEach(st => { add(st, my); oldest = st.created_at; });
+        scanned += (data || []).length;
+        scanNext = next; if (!data || !data.length || !next) scanEnd = true;
+        draw();
+      }
+    }catch(e){ if (my === gen) toast(e.message); }
+    if (my !== gen) return;
+    busy = false; draw();
+  }
+  function run(){
+    const w = inp.value.trim();
+    clr.hidden = !inp.value;
+    if (w === word) return;
+    word = w; const my = ++gen;
+    found = new Map(); scanNext = null; scanned = 0; scanEnd = false; busy = false; oldest = null;
+    draw();
+    if (!w) return;
+    api('/api/v2/search?' + qs({q:w, type:'statuses', account_id:id, limit:'40', resolve:'false'}))
+      .then(r => { (r && r.statuses || []).forEach(st => add(st, my)); if (my === gen) draw(); }).catch(() => {});
+    scan(my);
+  }
+  let timer = 0;
+  inp.addEventListener('input', () => { clr.hidden = !inp.value; clearTimeout(timer); timer = setTimeout(run, 450); });
+  bar.onsubmit = e => { e.preventDefault(); clearTimeout(timer); run(); inp.blur(); };
+  clr.onclick = () => { inp.value = ''; run(); inp.focus(); };
+  root.focus = () => { if (!inp.value) inp.focus(); };
+  root.refresh = () => { const w = word; word = null; inp.value = w || ''; run(); };
+  draw();
+  return root;
 }
 function profileEl(a){
   const el = document.createElement('div');
@@ -2011,9 +2177,10 @@ function profileEl(a){
   }
   $('.pstats', el).innerHTML = `<span><b>${Number(a.statuses_count) || 0}</b> 글</span><button class="pst" type="button" data-k="following"><b>${Number(a.following_count) || 0}</b> 팔로잉</button><button class="pst" type="button" data-k="followers"><b>${Number(a.followers_count) || 0}</b> 팔로워</button>`;
   el.querySelectorAll('.pst').forEach(b => { b.onclick = () => nav(`#/follows/${a.id}/${b.dataset.k}`); });
+  const ready = [];
   if (!accounts.some(x => x.instance === cur().instance && String(x.id) === String(a.id))){
     const slot = document.createElement('div'); $('.phead', el).append(slot);
-    fetchNotes([a.id]).then(n => slot.replaceWith(memoCard(a, n[String(a.id)]))).catch(() => slot.remove());
+    ready.push(fetchNotes([a.id]).then(n => slot.replaceWith(memoCard(a, n[String(a.id)]))).catch(() => slot.remove()));
   }
   const isMe = accounts.some(x => x.instance === cur().instance && x.id === a.id);
   const pb = $('.pbtn', el);
@@ -2024,9 +2191,26 @@ function profileEl(a){
     more.onclick = () => profileMenu(a); pb.append(more);
     const dm = h(`<button class="ibtn" type="button" aria-label="쪽지 보내기">${ic('mail')}</button>`);
     dm.onclick = () => startChat([a]); pb.append(dm);
-    followBtn(pb, a);
+    ready.push(followBtn(pb, a));
   }
+  el._ready = Promise.all(ready).catch(() => {});   /* 메모·팔로우 버튼까지 준비되면 끝 */
   return el;
+}
+/* 프로필 머리 부분 그리기: 처음엔 로딩 표시, 새로고침 땐 있던 걸 그대로 두고 준비되면 바꿔 끼움 */
+async function swapHead(head, acc){
+  const first = !head.querySelector('.phead');
+  if (first) head.innerHTML = '<div class="sentinel"><div class="spin"></div></div>';
+  try{
+    const a = await api(`/api/v1/accounts/${acc}`);
+    const el = profileEl(a);
+    if (!first) await Promise.race([el._ready, sleep(2500)]);
+    head.replaceChildren(el);
+    return a;
+  }catch(e){
+    if (first){ head.innerHTML = ''; const p = h('<div class="err" style="padding:24px 16px"><p></p></div>'); $('p', p).textContent = e.message; head.append(p); }
+    else toast(e.message);
+    return null;
+  }
 }
 async function followBtn(slot, a){
   const b = document.createElement('button'); b.type = 'button'; b.className = 'pill'; b.textContent = '…'; b.disabled = true;
@@ -2072,14 +2256,15 @@ function meView(){
   b1.onclick = () => nav('#/settings'); b2.onclick = () => nav('#/settings/accounts'); b3.onclick = () => nav('#/settings/tabs');
   root.append(head, chips);
   const loadHead = async () => {
-    head.innerHTML = '<div class="sentinel"><div class="spin"></div></div>';
     try{
-      const a = await api(`/api/v1/accounts/${me.id}`);
-      head.replaceChildren(profileEl(a));
+      const a = await swapHead(head, me.id);
+      if (!a) return;
       /* 팔로우 승인제 계정이면 기다리는 팔로우 요청 수를 보여 줌 */
-      chips.querySelectorAll('.reqchip').forEach(x => x.remove());
-      if (a.locked){
+      const dropReq = () => chips.querySelectorAll('.reqchip').forEach(x => x.remove());
+      if (!a.locked) dropReq();
+      else {
         api('/api/v1/follow_requests?limit=40').then(rq => {
+          dropReq();
           if (!rq || !rq.length) return;
           const c = h(`<button class="pill reqchip" type="button">${ic('user')}<span></span></button>`);
           $('span', c).textContent = `팔로우 요청 ${rq.length >= 40 ? '40+' : rq.length}`;
@@ -4125,7 +4310,8 @@ function startDrag(g, ctx){
     if (g.i < 0) return false;
     g.cur = $('#main').firstElementChild;
   } else {
-    g.ks = ['posts', 'replies']; g.ki = g.ks.indexOf(ctx.box._tab());
+    g.ks = ctx.box._keys || ['posts', 'replies']; g.ki = g.ks.indexOf(ctx.box._tab());
+    if (g.ki < 0) return false;
     g.cur = [...ctx.box.children].find(c => !c.hidden && !c.classList.contains('ptabs'));
   }
   if (!g.cur) return false;

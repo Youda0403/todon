@@ -77,6 +77,8 @@ body.in-login #shell{padding-bottom:0;border:0}
 .status{padding:12px 16px;border-bottom:1px solid var(--line);cursor:pointer;scroll-margin-top:110px}
 .status:not(.focus):active{background:var(--hover)}
 .pre{display:flex;align-items:center;gap:6px;margin:-2px 0 4px;padding-left:28px;font-size:13px;font-weight:600;color:var(--sub);min-width:0}
+.notif-card>.pre{gap:12px;margin:-2px 0 6px;font-weight:500}
+.notif-card>.pre span>span:first-child{font-weight:700;color:var(--fg)}
 .pre .ic{width:16px;height:16px}
 .pre span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row{display:flex;gap:12px}
@@ -465,10 +467,10 @@ body.in-chat #shell{padding-bottom:0;min-height:0}
 
 /* 알림 종류별 색 */
 :root{--k-reply:#1d9bf0;--k-status:#f59e0b;--k-quote:#8b5cf6;--k-dm:var(--accent);--k-mention:var(--accent)}
-.pre.k-reply{color:var(--k-reply)}
-.pre.k-mention{color:var(--k-mention)}
-.pre.k-status{color:var(--k-status)}
-.pre.k-quote{color:var(--k-quote)}
+.pre.k-reply .ic{color:var(--k-reply)}
+.pre.k-mention .ic{color:var(--k-mention)}
+.pre.k-status .ic{color:var(--k-status)}
+.pre.k-quote .ic{color:var(--k-quote)}
 .pop .pic.k-reply{background:var(--k-reply)}
 .pop .pic.k-status{background:var(--k-status)}
 .pop .pic.k-quote{background:var(--k-quote)}
@@ -693,6 +695,12 @@ body.no-counts .fstats b{display:none}
 .mq-done .rqs{color:var(--sub)}
 .status.mq-replied,.status.mq-done{opacity:.62}
 .status.flash{animation:fl 1.2s}
+.mqload{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;border:0;border-bottom:1px solid var(--line);background:none;padding:13px 16px;color:var(--accent);font-size:14px;font-weight:700}
+.mqload .ic{width:16px;height:16px;stroke-width:2.2}
+.mqload:active{background:var(--hover)}
+.mqmore:not(.top) .mqload{border-bottom:0}
+.mqend{padding:11px 16px;text-align:center;color:var(--sub);font-size:13px;border-bottom:1px solid var(--line)}
+.mqmore:not(.top) .mqend{border-bottom:0}
 @keyframes fl{0%,40%{background:var(--accent-soft)}}
 </style>
 </head>
@@ -1575,6 +1583,7 @@ function notifEl(n){
     $('span', pre).append(richName(a), preTxt);
     if (el.firstElementChild && el.firstElementChild.classList.contains('pre')) el.firstElementChild.replaceWith(pre); else el.prepend(pre);
     el.classList.add('notif-card', 'k-' + kind);
+    if (kind === 'reply'){ const rt = $('.replyto', el); if (rt) rt.hidden = true; }
     return el;
   }
   const cfg = {
@@ -1805,9 +1814,10 @@ function mentionsView(){
     more.replaceChildren();
     if (loading){ more.append(h('<div class="sentinel"><div class="spin"></div></div>')); return; }
     if (!items.length && end){ more.append(h('<div class="empty">아직 나를 부른 글이 없어요.</div>')); return; }
-    if (end){ more.append(h('<div class="end">가장 오래된 멘션까지 다 불러왔어요</div>')); return; }
-    const b = h('<div class="secpad" style="padding-top:12px"><button class="pill ghost wide" type="button">더 오래된 멘션 불러오기</button></div>');
-    $('button', b).onclick = () => loadMore();
+    more.classList.toggle('top', pref.asc);
+    if (end){ more.append(h('<div class="mqend">가장 오래된 멘션까지 다 불러왔어요</div>')); return; }
+    const b = h(`<button class="mqload" type="button">${ic(pref.asc ? 'up' : 'down')}<span>더 오래된 멘션 불러오기</span></button>`);
+    b.onclick = () => loadMore();
     more.append(b);
   }
   /* 내가 쓴 글을 멘션이 있는 시점까지 거슬러 읽어서, 어떤 멘션에 답했는지 알아냄 */

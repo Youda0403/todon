@@ -1924,24 +1924,32 @@ function threadView(id){
         const nx = order[i + 1], pv = order[i - 1];
         root.append(statusEl(d, {up:!!nx && String(nx.in_reply_to_id) === String(d.id), chained:!!pv && String(d.in_reply_to_id) === String(pv.id), inThread:true}));
       });
-      root.append(h('<div class="tail"></div>'));
-      if (ctx.ancestors.length) requestAnimationFrame(() => {
-        if (!root.isConnected) return;
-        /* 부드러운 스크롤로 처리되면(삼성 인터넷 등) 아래 붙잡기와 엇갈려 맨 위로 튕김 → 즉시 이동 */
-        f.scrollIntoView({block:'start', behavior:'instant'});
-        /* 위쪽 이전 글의 사진이 늦게 불러와져 길어져도, 누른 툿이 제자리에 있게 붙잡아 둠 (직접 스크롤하면 멈춤) */
-        const want = f.getBoundingClientRect().top, key = curKey;
+      const tail = h('<div class="tail"></div>');
+      root.append(tail);
+      if (ctx.ancestors.length){
+        /* 누른 툿을 화면 위쪽 정해진 자리(scroll-margin-top)에 ‘몇 번이고’ 맞춰 둠.
+           한 번만 옮기면 삼성 인터넷처럼 글꼴·사진·화면 그리기가 늦게 끝나는 경우 위치가 틀어지거나 맨 위에 남음.
+           직접 화면을 만지면(또는 10초 뒤) 멈춤 */
+        const key = curKey;
         let off = false;
-        const stop = () => { off = true; ro.disconnect(); removeEventListener('touchstart', stop); removeEventListener('wheel', stop); removeEventListener('keydown', stop); };
-        const ro = new ResizeObserver(() => {
+        const fit = () => {
           if (off || !f.isConnected || curKey !== key) return;
+          const want = parseFloat(getComputedStyle(f).scrollMarginTop) || 0;
+          const need = window.scrollY + f.getBoundingClientRect().top - want;
+          /* 아래 글이 짧아서 그 자리까지 못 올라가면 빈칸을 늘려 줌 */
+          const short = need - (document.documentElement.scrollHeight - window.innerHeight);
+          if (short > 0) tail.style.minHeight = Math.ceil(tail.offsetHeight + short) + 'px';
           const d = f.getBoundingClientRect().top - want;
           if (Math.abs(d) > 1) window.scrollTo({top:window.scrollY + d, behavior:'instant'});
-        });
-        for (const c of root.children){ if (c === f) break; ro.observe(c); }
+        };
+        const timers = [0, 50, 150, 300, 600, 1000, 1500, 2500, 4000, 6000].map(ms => setTimeout(() => requestAnimationFrame(fit), ms));
+        const ro = new ResizeObserver(fit);
+        const stop = () => { off = true; ro.disconnect(); timers.forEach(clearTimeout); removeEventListener('touchstart', stop); removeEventListener('wheel', stop); removeEventListener('keydown', stop); };
+        for (const c of root.children){ ro.observe(c); if (c === f) break; }
+        ro.observe(root);
         addEventListener('touchstart', stop, {passive:true}); addEventListener('wheel', stop, {passive:true}); addEventListener('keydown', stop);
         setTimeout(stop, 10000);
-      });
+      }
     }catch(e){
       root.replaceChildren();
       const b = h('<div class="err" style="padding:32px 16px"><p></p><button class="pill ghost" type="button">다시 시도</button></div>');

@@ -1927,7 +1927,8 @@ function threadView(id){
       root.append(h('<div class="tail"></div>'));
       if (ctx.ancestors.length) requestAnimationFrame(() => {
         if (!root.isConnected) return;
-        f.scrollIntoView({block:'start'});
+        /* 부드러운 스크롤로 처리되면(삼성 인터넷 등) 아래 붙잡기와 엇갈려 맨 위로 튕김 → 즉시 이동 */
+        f.scrollIntoView({block:'start', behavior:'instant'});
         /* 위쪽 이전 글의 사진이 늦게 불러와져 길어져도, 누른 툿이 제자리에 있게 붙잡아 둠 (직접 스크롤하면 멈춤) */
         const want = f.getBoundingClientRect().top, key = curKey;
         let off = false;
@@ -1935,7 +1936,7 @@ function threadView(id){
         const ro = new ResizeObserver(() => {
           if (off || !f.isConnected || curKey !== key) return;
           const d = f.getBoundingClientRect().top - want;
-          if (Math.abs(d) > 1) window.scrollBy(0, d);
+          if (Math.abs(d) > 1) window.scrollTo({top:window.scrollY + d, behavior:'instant'});
         });
         for (const c of root.children){ if (c === f) break; ro.observe(c); }
         addEventListener('touchstart', stop, {passive:true}); addEventListener('wheel', stop, {passive:true}); addEventListener('keydown', stop);

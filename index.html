@@ -3162,6 +3162,10 @@ function chatView(key){
   const media = []; let sending = false;
   let idem = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
   const prefix = () => parts.map(a => dmHandle(a, me)).join(' ');
+  /* 쓰다 만 쪽지는 이 기기에 저장해 둠 (나갔다 들어오거나 앱을 껐다 켜도 그대로) */
+  const DRAFT_KEY = 'ytt.dmdraft';
+  const saveDraft = () => { const d = LS.get(DRAFT_KEY, {}); if (ta.value.trim()) d[skey] = ta.value; else delete d[skey]; LS.set(DRAFT_KEY, d); };
+  ta.value = LS.get(DRAFT_KEY, {})[skey] || '';
   /* 입력칸 높이는 보이지 않는 복사본으로 잼 (진짜 입력칸이 줄었다 늘었다 하며 대화창이 덜컹거리지 않게) */
   const mir = document.createElement('textarea'); mir.tabIndex = -1; mir.setAttribute('aria-hidden', 'true'); mir.rows = 1;
   mir.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;pointer-events:none;height:0;min-height:0;max-height:none;overflow:hidden';
@@ -3214,7 +3218,7 @@ function chatView(key){
     try{
       const st = await api('/api/v1/statuses', {method:'POST', body, headers:{'Idempotency-Key':idem}});
       idem = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
-      ta.value = ''; media.forEach(m => URL.revokeObjectURL(m.preview)); media.length = 0; paintThumbs();
+      ta.value = ''; saveDraft(); media.forEach(m => URL.revokeObjectURL(m.preview)); media.length = 0; paintThumbs();
       items.push(st); draw(); toBottom();
       convStore.delete(skey);
     }catch(e){ toast(e.message); }
@@ -3222,6 +3226,7 @@ function chatView(key){
   }
   sendB.onclick = send;
   ta.addEventListener('input', upd);
+  ta.addEventListener('input', saveDraft);
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !matchMedia('(pointer:coarse)').matches){ e.preventDefault(); send(); } });
   const vv = window.visualViewport;
   if (vv){

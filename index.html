@@ -1273,7 +1273,6 @@ function statusMenu(st){
       if (st.visibility === 'public' || st.visibility === 'unlisted')
         add('pin', st.pinned ? '프로필 고정 풀기' : '프로필에 고정', st.pinned ? '프로필 맨 위에서 내려요' : '내 프로필 툿 탭 맨 위에 보여요', () => togglePin(st, own));
       add('pen', '지우고 다시 쓰기', '내용을 글쓰기 창으로 불러오고 이 툿은 지워요', () => redraftStatus(st, own));
-      add('x', '지우기' + as, '지우면 되돌릴 수 없어요', () => deleteStatus(st, own), true);
     }
     if (st.visibility !== 'direct') add('quote', '인용하기', '이 툿을 내 글 안에 넣어서 올려요', () => quoteStatus(st));
     add('camera', '역극 이미지로 저장', '이 대화를 한 장의 그림으로 저장해요 (상대 정보 가리기 가능)', () => nav('#/shot/' + st.id));
@@ -1285,6 +1284,7 @@ function statusMenu(st){
       add('user', `@${st.account.acct} 메뉴`, '뮤트·차단·리스트·프로필 링크', () => profileMenu(st.account));
       add('flag', '신고하기', '서버 관리자에게 이 툿을 알려요', () => reportSheet(st.account, [st]), true);
     }
+    if (own) add('x', '지우기' + (own === cur() ? '' : ` (${own.display_name || own.username} 계정)`), '지우면 되돌릴 수 없어요', () => deleteStatus(st, own), true);
   });
 }
 /* 같은 툿이 떠 있는 모든 화면에서 새 내용으로 바꾸기 (수정한 뒤) */
@@ -4245,9 +4245,15 @@ const shotImgCache = new Map();
 function shotImg(url){
   if (!url) return Promise.resolve(null);
   if (shotImgCache.has(url)) return shotImgCache.get(url);
-  const p = fetch(url, {mode:'cors', credentials:'omit'}).then(r => r.ok ? r.blob() : null).then(b => b ? new Promise(res => {
+  /* 앱 화면에 이미 떠 있던 그림은 브라우저에 ‘허락 표시 없이’ 저장돼 있어서 그대로 쓰면 막힘 → 저장본을 건너뛰고 새로 받음 */
+  const viaImg = () => new Promise(res => {
+    const im = new Image(); im.crossOrigin = 'anonymous';
+    im.onload = () => res(im); im.onerror = () => res(null);
+    im.src = url.startsWith('data:') ? url : url + (url.includes('?') ? '&' : '?') + '_ytt=' + Date.now();
+  });
+  const p = fetch(url, {mode:'cors', credentials:'omit', cache:'reload'}).then(r => r.ok ? r.blob() : null).then(b => b ? new Promise(res => {
     const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = URL.createObjectURL(b);
-  }) : null).catch(() => null);
+  }) : null).catch(() => null).then(im => im || viaImg());
   shotImgCache.set(url, p);
   return p;
 }
@@ -4356,7 +4362,8 @@ async function renderShot(posts, opt, meIds){
       const ax = PAD, ay = y + 12;
       c.save(); c.beginPath(); c.arc(ax + AV / 2, ay + AV / 2, AV / 2, 0, Math.PI * 2); c.closePath(); c.clip();
       const av = (partner && opt.hideAv) ? null : imgs.get(a.avatar_static || a.avatar);
-      if (av) c.drawImage(av, ax, ay, AV, AV);
+      if (partner && opt.hideAv){ /* 가린 프사는 배경색 그대로 둠 */ }
+      else if (av) c.drawImage(av, ax, ay, AV, AV);
       else {
         c.fillStyle = C.mask; c.fillRect(ax, ay, AV, AV);
         c.fillStyle = dark ? '#5b636b' : '#a8b5bd';
@@ -4366,7 +4373,7 @@ async function renderShot(posts, opt, meIds){
       c.restore();
       /* 이름 · 아이디 · 시간 */
       let x = TX, by = y + 12 + 17;
-      const bar = (w) => { c.fillStyle = C.mask; c.beginPath(); c.roundRect ? c.roundRect(x, by - 13, w, 16, 4) : c.rect(x, by - 13, w, 16); c.fill(); x += w + 6; };
+      const bar = (w) => { c.fillStyle = C.bg; c.fillRect(x, by - 13, w, 16); x += w + 6; };
       if (partner && opt.hideName) bar(64);
       else {
         c.font = font(700, FS); c.fillStyle = C.fg;
@@ -4388,7 +4395,7 @@ async function renderShot(posts, opt, meIds){
           for (const p of ln){
             if (p.t === 'space'){ lx += p.w; continue; }
             if (p.t === 'emoji'){ c.drawImage(p.img, lx, cy - FS - 1, FS * 1.2, FS * 1.2); lx += p.w; continue; }
-            if (p.masked){ c.fillStyle = C.mask; c.beginPath(); c.roundRect ? c.roundRect(lx, cy - 19, p.w, 18, 4) : c.rect(lx, cy - 19, p.w, 18); c.fill(); lx += p.w; continue; }
+            if (p.masked){ c.fillStyle = C.bg; c.fillRect(lx, cy - 19, p.w, 18); lx += p.w; continue; }
             c.font = font(400, FS); c.fillStyle = (p.t === 'mention' || p.t === 'tag' || p.t === 'link') ? C.acc : color;
             c.fillText(p.s, lx, cy - 5); lx += p.w;
           }
@@ -4431,9 +4438,9 @@ function shotView(id){
     try{ [s, ctx] = await Promise.all([api(`/api/v1/statuses/${id}`), api(`/api/v1/statuses/${id}/context`)]); }
     catch(e){ root.innerHTML = ''; const p = h('<div class="err" style="padding:32px 16px"><p></p></div>'); $('p', p).textContent = e.message; root.append(p); return; }
     const all = [...ctx.ancestors, s, ...threadOrder(s, ctx.descendants)];
-    const picked = new Set([...ctx.ancestors, s].map(x => String(x.id)));
+    const picked = new Set();
     root.replaceChildren();
-    const s1 = secEl('가리기', '나 말고 다른 사람(상대)의 정보를 회색으로 가려요. 로그인해 둔 내 캐릭터 계정은 ‘나’로 쳐요.');
+    const s1 = secEl('가리기', '나 말고 다른 사람(상대)의 정보를 배경색으로 가려요. 로그인해 둔 내 캐릭터 계정은 ‘나’로 쳐요.');
     const s2 = secEl('보이기');
     const tg = (sec, key, title, sub) => { const r = toggleRow(title, sub, null, opt[key], v => { opt[key] = v; LS.set(SHOT_SET_KEY, opt); redraw(); }); if (!sub) $('small', r).remove(); sec.append(r); };
     tg(s1, 'hideAv', '상대 프로필 사진 가리기', '');
@@ -4442,7 +4449,7 @@ function shotView(id){
     tg(s2, 'media', '사진 넣기', '툿에 붙은 사진도 같이 그려요');
     tg(s2, 'time', '시간 넣기', '');
     tg(s2, 'dark', '어두운 배경', '');
-    const s3 = secEl('넣을 글', '대화에서 그림에 넣을 글을 골라요. 처음엔 누른 툿까지의 대화가 골라져 있어요.');
+    const s3 = secEl('넣을 글', '대화에서 그림에 넣을 글을 골라요.');
     const pickBox = document.createElement('div'); pickBox.className = 'shotpick';
     all.forEach(st => {
       const r = h('<label class="shotrow"><input type="checkbox"><img class="av" alt=""><span class="t"><b></b><small></small></span></label>');
@@ -4469,7 +4476,7 @@ function shotView(id){
         const my = ++seq;
         const list = all.filter(st => picked.has(String(st.id)));
         saveB.disabled = !list.length;
-        if (!list.length){ pv.replaceChildren(h('<p class="secdesc" style="padding:12px 0">넣을 글을 하나 이상 골라 주세요.</p>')); canv = []; return; }
+        if (!list.length){ pv.replaceChildren(h('<p class="secdesc" style="padding:12px 0">아래 ‘넣을 글’에서 저장할 툿을 골라 주세요.</p>')); canv = []; return; }
         pv.classList.add('busy');
         let cs;
         try{ cs = await renderShot(list, opt, meIds); }catch(e){ if (my === seq){ pv.classList.remove('busy'); toast('그림을 만들지 못했어요: ' + e.message); } return; }

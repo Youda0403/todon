@@ -1926,7 +1926,8 @@ function threadView(id){
       });
       const tail = h('<div class="tail"></div>');
       root.append(tail);
-      if (ctx.ancestors.length){
+      root.anchor = () => {
+        if (!ctx.ancestors.length) return;
         /* 누른 툿을 화면 위쪽 정해진 자리(scroll-margin-top)에 ‘몇 번이고’ 맞춰 둠.
            한 번만 옮기면 삼성 인터넷처럼 글꼴·사진·화면 그리기가 늦게 끝나는 경우 위치가 틀어지거나 맨 위에 남음.
            직접 화면을 만지면(또는 10초 뒤) 멈춤 */
@@ -1949,7 +1950,8 @@ function threadView(id){
         ro.observe(root);
         addEventListener('touchstart', stop, {passive:true}); addEventListener('wheel', stop, {passive:true}); addEventListener('keydown', stop);
         setTimeout(stop, 10000);
-      }
+      };
+      root.anchor();
     }catch(e){
       root.replaceChildren();
       const b = h('<div class="err" style="padding:32px 16px"><p></p><button class="pill ghost" type="button">다시 시도</button></div>');
@@ -3576,7 +3578,7 @@ async function openNotif(id, hint){
   const d = depthOf();
   if (d === 0 && !isHomeHash(target)){ history.replaceState({d:0}, '', homeTarget()); history.pushState({d:1}, '', target); }
   else history.replaceState({d}, '', target);
-  route();
+  freshNav = true; route();
 }
 
 /* ---------- 홈 탭 ---------- */
@@ -4969,11 +4971,12 @@ function goTop(hash){
   else if (d > 0){ navAfterPop = finish; history.go(-d); }
   else finish();
 }
+var freshNav = false;
 function nav(hash){
   if (location.hash === hash) return;
   if (isTop(hash)){ goTop(hash); return; }
   history.pushState({d:depthOf() + 1}, '', hash);
-  route();
+  freshNav = true; route();
 }
 function goBack(){ if (depthOf() > 0) history.back(); else goTop(homeTarget()); }
 function buildView(name, arg, arg2){
@@ -5002,6 +5005,7 @@ function buildView(name, arg, arg2){
   }
 }
 function route(){
+  const fresh = freshNav; freshNav = false;
   const main = $('#main');
   let {hsh, name, arg, arg2} = parse();
   if (!cur() || name === 'login'){
@@ -5032,6 +5036,8 @@ function route(){
   if (name === 'notifications' || name === 'mentions'){ setBadge(false); checkNotif(); }
   if (existed && (name === 'dm' || name === 'chat') && e.el.refresh) e.el.refresh();
   const y = e.y; window.scrollTo(0, y); requestAnimationFrame(() => window.scrollTo(0, y));
+  /* 전에 열어 둔 타래를 (뒤로가기가 아니라) 툿을 눌러서 다시 열면, 마지막 스크롤 자리 대신 누른 툿을 보여 줌 */
+  if (fresh && existed && name === 'thread' && e.el.anchor) requestAnimationFrame(() => requestAnimationFrame(() => e.el.anchor()));
 }
 function refreshCurrent(){
   const e = cache.get(curKey); if (!e || !e.el.refresh) return;

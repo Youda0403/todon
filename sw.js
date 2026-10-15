@@ -130,15 +130,30 @@ self.addEventListener('push', e => {
   })());
 });
 
+// 알림을 누르면: 열려 있는 앱 창을 앞으로 가져와 그 알림 화면으로 이동.
+// 뒤에 오래 있던 창은 멈춰 있어서 이동 요청을 못 받을 수 있음 → 1.5초 안에 '받았어요' 답이 없으면 그 창을 알림 주소로 새로 엶
+function askOpen(c, hash) {
+  return new Promise(res => {
+    const ch = new MessageChannel();
+    const done = ok => { clearTimeout(t); ch.port1.close(); res(ok); };
+    const t = setTimeout(() => done(false), 1500);
+    ch.port1.onmessage = () => done(true);
+    try { c.postMessage({ type: 'open', hash }, [ch.port2]); } catch (_) { done(false); }
+  });
+}
 self.addEventListener('notificationclick', e => {
   e.notification.close();
   const { id, hint } = e.notification.data || {};
   const hash = id ? `#/open/${id}/${hint || ''}` : '#/notifications';
+  const url = new URL('./' + hash, self.registration.scope).href;
   e.waitUntil((async () => {
     const cs = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    for (const c of cs) {
-      if ('focus' in c) { await c.focus(); c.postMessage({ type: 'open', hash }); return; }
-    }
-    await self.clients.openWindow('./' + hash);
+    // 지금 보고 있는 창 → 화면에 떠 있는 창 → 가장 최근에 쓴 창 순서로 고름
+    const c = cs.find(x => x.focused) || cs.find(x => x.visibilityState === 'visible') || cs[0];
+    if (!c) { await self.clients.openWindow(url); return; }
+    try { await c.focus(); } catch (_) {}
+    if (await askOpen(c, hash)) return;
+    try { if (await c.navigate(url)) return; } catch (_) {}
+    await self.clients.openWindow(url);
   })());
 });

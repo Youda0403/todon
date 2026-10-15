@@ -3586,17 +3586,30 @@ async function tokHint(t){
   const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t));
   return [...new Uint8Array(b)].slice(0, 6).map(x => x.toString(16).padStart(2, '0')).join('');
 }
+/* 서비스 워커가 보내는 말: 알림을 눌렀으면(open) '받았어요'라고 답하고 그 화면으로 이동 */
+function onSwMessage(ev){
+  const m = ev.data || {};
+  if (m.type === 'push') checkNotif();
+  if (m.type === 'open' && m.hash){
+    if (ev.ports && ev.ports[0]) ev.ports[0].postMessage('ok');
+    nav(m.hash);
+  }
+  if (m.type === 'update') showUpdate();
+}
 async function openNotif(id, hint){
+  let found = !hint;
   if (hint){
     for (let i = 0; i < accounts.length; i++){
       if (await tokHint(accounts[i].token) === hint){
+        found = true;
         if (i !== curIdx){ curIdx = i; saveAccounts(); cache.clear(); curKey = null; }
         break;
       }
     }
   }
   let target = '#/notifications';
-  try{ if (id) target = notifTarget(await api('/api/v1/notifications/' + encodeURIComponent(id))); }catch(e){}
+  /* 알림의 계정을 못 찾았으면, 지금 계정으로 같은 번호의 다른 알림을 열지 않도록 알림 탭으로 */
+  try{ if (id && found) target = notifTarget(await api('/api/v1/notifications/' + encodeURIComponent(id))); }catch(e){}
   const d = depthOf();
   if (d === 0 && !isHomeHash(target)){ history.replaceState({d:0}, '', homeTarget()); history.pushState({d:1}, '', target); }
   else history.replaceState({d}, '', target);
@@ -5151,12 +5164,7 @@ async function init(){
   shareAccountsWithSW();
   if ('serviceWorker' in navigator && location.protocol === 'https:'){
     navigator.serviceWorker.register('sw.js').catch(() => {});
-    navigator.serviceWorker.addEventListener('message', ev => {
-      const m = ev.data || {};
-      if (m.type === 'push') checkNotif();
-      if (m.type === 'open' && m.hash) nav(m.hash);
-      if (m.type === 'update') showUpdate();
-    });
+    navigator.serviceWorker.addEventListener('message', onSwMessage);
   }
 }
 init();

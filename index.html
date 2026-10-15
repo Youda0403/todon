@@ -5035,6 +5035,8 @@ function route(){
   updateTimes(e.el);
   if (name === 'notifications' || name === 'mentions'){ setBadge(false); checkNotif(); }
   if (existed && (name === 'dm' || name === 'chat') && e.el.refresh) e.el.refresh();
+  /* 전에 열어 둔 화면이라도 (뒤로가기가 아니라) 눌러서 새로 들어오면 맨 위부터 */
+  if (fresh && existed && !TABS.includes(name)) e.y = 0;
   const y = e.y; window.scrollTo(0, y); requestAnimationFrame(() => window.scrollTo(0, y));
   /* 전에 열어 둔 타래를 (뒤로가기가 아니라) 툿을 눌러서 다시 열면, 마지막 스크롤 자리 대신 누른 툿을 보여 줌 */
   if (fresh && existed && name === 'thread' && e.el.anchor) requestAnimationFrame(() => requestAnimationFrame(() => e.el.anchor()));
@@ -5106,6 +5108,8 @@ async function init(){
       catch(e){ toast(e.message); }
     } else toast('로그인을 취소했어요');
   }
+  /* 뒤로가기 때 브라우저가 스크롤을 제멋대로 되돌리면, 앱이 화면마다 기억하는 위치가 다른 화면 값으로 덮여 버림 → 스크롤 위치는 앱이 직접 관리 */
+  try{ history.scrollRestoration = 'manual'; }catch(e){}
   window.addEventListener('hashchange', () => { if (location.hash !== curKey) route(); });
   /* 처음 열 때: 맨 아래 칸이 홈이 되도록 정리 (알림을 눌러 바로 세부 화면이 열린 경우 포함) */
   const h0 = location.hash;

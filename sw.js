@@ -77,7 +77,8 @@ function describe(n, meId) {
   const s = n.status;
   const text = s ? (s.spoiler_text ? '⚠ ' + s.spoiler_text : (plainText(s.content) || (s.media_attachments && s.media_attachments.length ? '사진' : ''))) : '';
   const dm = n.type === 'mention' && s && s.visibility === 'direct';
-  const reply = n.type === 'mention' && s && String(s.in_reply_to_account_id) === String(meId);
+  // 답글: 내 글에 단 답글 + 대화 속 답글(상대가 자기 글에 이어 쓰면서 나를 부른 경우 등)
+  const reply = n.type === 'mention' && s && !!s.in_reply_to_id;
   if (dm) return { title: `${name} · 쪽지`, body: text, kind: 'dm' };
   if (reply) return { title: `${name} · 답글`, body: text, kind: 'reply' };
   const t = {

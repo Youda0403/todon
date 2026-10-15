@@ -3545,8 +3545,10 @@ function popOut(p){
 function popup(n, more){
   document.querySelectorAll('.pop:not(.updbar)').forEach(x => x.remove()); clearTimeout(popTimer);
   const me = cur(), s = n.status, dm = isDm(n);
-  const reply = n.type === 'mention' && s && String(s.in_reply_to_account_id) === String(me.id);
-  const txt = dm ? '님이 쪽지를 보냈어요' : reply ? '님이 내 글에 답글을 달았어요' : POP_TXT[n.type];
+  /* 답글: 내 글에 단 답글뿐 아니라, 상대가 자기 글에 이어 쓰면서 나를 부른 경우처럼 대화 속 답글도 포함 */
+  const reply = n.type === 'mention' && s && !!s.in_reply_to_id;
+  const toMe = reply && String(s.in_reply_to_account_id) === String(me.id);
+  const txt = dm ? '님이 쪽지를 보냈어요' : reply ? (toMe ? '님이 내 글에 답글을 달았어요' : '님이 답글을 달았어요') : POP_TXT[n.type];
   if (!txt) return;
   const icn = dm ? 'mail' : reply ? 'corner' : ({favourite:'heart', reblog:'boost', follow:'user', follow_request:'user', status:'bell', quote:'quote', quoted_update:'quote', poll:'check'}[n.type] || 'at');
   const kind = dm ? 'dm' : reply ? 'reply' : ({favourite:'fav', reblog:'boost', status:'status', quote:'quote', quoted_update:'quote', mention:'mention'}[n.type] || 'other');

@@ -1926,32 +1926,24 @@ function threadView(id){
       });
       const tail = h('<div class="tail"></div>');
       root.append(tail);
-      root.anchor = () => {
-        if (!ctx.ancestors.length) return;
-        /* 누른 툿을 화면 위쪽 정해진 자리(scroll-margin-top)에 ‘몇 번이고’ 맞춰 둠.
-           한 번만 옮기면 삼성 인터넷처럼 글꼴·사진·화면 그리기가 늦게 끝나는 경우 위치가 틀어지거나 맨 위에 남음.
-           직접 화면을 만지면(또는 10초 뒤) 멈춤 */
-        const key = curKey;
-        let off = false;
+      /* 이전 글이 있으면 누른 툿을 화면 위쪽(scroll-margin-top 자리)에 놓음.
+         그 뒤 위쪽 이전 글이 사진 등으로 길어질 때만 다시 맞춤 (직접 화면을 만지거나 10초 지나면 멈춤) */
+      if (ctx.ancestors.length && root.isConnected){
         const fit = () => {
-          if (off || !f.isConnected || curKey !== key) return;
           const want = parseFloat(getComputedStyle(f).scrollMarginTop) || 0;
-          const need = window.scrollY + f.getBoundingClientRect().top - want;
-          /* 아래 글이 짧아서 그 자리까지 못 올라가면 빈칸을 늘려 줌 */
-          const short = need - (document.documentElement.scrollHeight - window.innerHeight);
+          /* 아래 글이 짧아서 그 자리까지 못 올라가면 아래 빈칸을 늘림 */
+          const short = window.scrollY + f.getBoundingClientRect().top - want - (document.documentElement.scrollHeight - window.innerHeight);
           if (short > 0) tail.style.minHeight = Math.ceil(tail.offsetHeight + short) + 'px';
           const d = f.getBoundingClientRect().top - want;
           if (Math.abs(d) > 1) window.scrollTo({top:window.scrollY + d, behavior:'instant'});
         };
-        const timers = [0, 50, 150, 300, 600, 1000, 1500, 2500, 4000, 6000].map(ms => setTimeout(() => requestAnimationFrame(fit), ms));
-        const ro = new ResizeObserver(fit);
-        const stop = () => { off = true; ro.disconnect(); timers.forEach(clearTimeout); removeEventListener('touchstart', stop); removeEventListener('wheel', stop); removeEventListener('keydown', stop); };
-        for (const c of root.children){ ro.observe(c); if (c === f) break; }
-        ro.observe(root);
+        fit();
+        const ro = new ResizeObserver(() => { if (f.isConnected) fit(); else stop(); });
+        const stop = () => { ro.disconnect(); removeEventListener('touchstart', stop); removeEventListener('wheel', stop); removeEventListener('keydown', stop); };
+        for (const c of root.children){ if (c === f) break; ro.observe(c); }
         addEventListener('touchstart', stop, {passive:true}); addEventListener('wheel', stop, {passive:true}); addEventListener('keydown', stop);
         setTimeout(stop, 10000);
-      };
-      root.anchor();
+      }
     }catch(e){
       root.replaceChildren();
       const b = h('<div class="err" style="padding:32px 16px"><p></p><button class="pill ghost" type="button">다시 시도</button></div>');
@@ -5019,6 +5011,8 @@ function route(){
   if (![...TABS,'thread','user','chat','edit','settings','follows','htag','who','shot','backup'].includes(name) || (['thread','user','chat','list','tag','follows','htag','who','shot'].includes(name) && !arg)){ hsh = '#/home'; name = 'home'; }
   if (curKey && cache.has(curKey)) cache.get(curKey).y = window.scrollY;
   if (name === 'edit' || name === 'settings') cache.delete(hsh);
+  /* 뒤로가기가 아니라 눌러서 새로 들어온 세부 화면(글·프로필 등)은 예전에 만들어 둔 것을 쓰지 않고 새로 만듦 */
+  if (fresh && !TABS.includes(name)) cache.delete(hsh);
   const existed = cache.has(hsh);
   let e = cache.get(hsh);
   if (!e){ e = {el:buildView(name, arg, arg2), y:0}; }
@@ -5035,11 +5029,7 @@ function route(){
   updateTimes(e.el);
   if (name === 'notifications' || name === 'mentions'){ setBadge(false); checkNotif(); }
   if (existed && (name === 'dm' || name === 'chat') && e.el.refresh) e.el.refresh();
-  /* 전에 열어 둔 화면이라도 (뒤로가기가 아니라) 눌러서 새로 들어오면 맨 위부터 */
-  if (fresh && existed && !TABS.includes(name)) e.y = 0;
   const y = e.y; window.scrollTo(0, y); requestAnimationFrame(() => window.scrollTo(0, y));
-  /* 전에 열어 둔 타래를 (뒤로가기가 아니라) 툿을 눌러서 다시 열면, 마지막 스크롤 자리 대신 누른 툿을 보여 줌 */
-  if (fresh && existed && name === 'thread' && e.el.anchor) requestAnimationFrame(() => requestAnimationFrame(() => e.el.anchor()));
 }
 function refreshCurrent(){
   const e = cache.get(curKey); if (!e || !e.el.refresh) return;

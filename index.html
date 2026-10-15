@@ -254,15 +254,18 @@ img.emoji{height:1.25em;width:auto;vertical-align:-.25em;margin:0 .05em;object-f
 .c-main{flex:1;min-width:0}
 .c-accname{border:0;background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:3px 10px;font-size:13px;font-weight:700;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;display:inline-block}
 .c-cw{width:100%;margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--hover);outline:none;font-size:16px}
-.c-text{width:100%;border:0;outline:none;resize:none;background:none;font-size:max(16px, var(--post-fs));line-height:1.5;min-height:140px;margin-top:8px;padding:0;display:block}
+.c-text{width:100%;border:0;outline:none;resize:none;background:none;font-size:max(17px, var(--post-fs));line-height:1.5;min-height:140px;margin-top:8px;padding:0;display:block}
 /* @아이디·#태그 파란색: 입력칸 글자는 투명하게, 바로 뒤에 같은 글자를 색 입혀 그림 */
 .c-tw{position:relative;margin-top:8px}
 .c-tw .c-text{margin-top:0;position:relative;color:transparent;caret-color:var(--fg);-webkit-text-fill-color:transparent}
 .c-tw .c-text::placeholder{color:var(--sub);-webkit-text-fill-color:var(--sub);opacity:1}
 .c-tw .c-text::selection{color:transparent;-webkit-text-fill-color:transparent;background:rgba(99,100,255,.25)}
-.c-hl,.c-tw .c-text{font:inherit;font-size:max(16px, var(--post-fs));line-height:1.5;letter-spacing:normal;white-space:pre-wrap;overflow-wrap:break-word;word-break:keep-all;tab-size:4}
+.c-hl,.c-tw .c-text{font:inherit;font-size:max(17px, var(--post-fs));line-height:1.5;letter-spacing:normal;white-space:pre-wrap;overflow-wrap:break-word;word-break:keep-all;tab-size:4}
 .c-hl{position:absolute;top:0;left:0;right:0;pointer-events:none;color:var(--fg);padding:0;margin:0}
 .c-hl .hm{color:var(--accent)}
+/* 글자수를 넘긴 부분: 빨간 배경 */
+.c-hl .over{background:rgba(244,33,46,.18);color:var(--danger);border-radius:2px}
+.c-hl .over .hm{color:var(--danger)}
 .c-media{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:8px}
 .c-media:empty{display:none}
 .cm{position:relative;aspect-ratio:1;border-radius:14px;overflow:hidden;background:var(--line)}
@@ -277,7 +280,7 @@ img.emoji{height:1.25em;width:auto;vertical-align:-.25em;margin:0 .05em;object-f
 .tbtn.on{background:var(--accent-soft)}
 .vbtn{display:inline-flex;align-items:center;justify-content:center;border:0;background:none;color:var(--accent);width:38px;height:38px;padding:0;border-radius:50%;flex:none}
 .vbtn .ic{width:20px;height:20px}
-.c-count{font-size:13px;color:var(--sub);font-variant-numeric:tabular-nums}
+.c-count{font-size:13px;color:var(--sub);font-variant-numeric:tabular-nums;white-space:nowrap}
 .c-count.over{color:var(--danger);font-weight:700}
 
 /* 로그인 */
@@ -2360,6 +2363,31 @@ function mentionPrefix(st, viewDomain, acc){
   }
   return out.map(hd => { const [u, d] = hd.split('@'); return d.toLowerCase() === (acc.domain || acc.instance) ? '@' + u : '@' + hd; }).join(' ') + (out.length ? ' ' : '');
 }
+/* 본문에서 글자수(allow)를 넘기기 시작하는 위치. countChars와 같은 규칙: 링크는 23자, @아이디@서버는 @아이디만 셈 */
+function overAt(t, allow){
+  if (allow <= 0) return 0;
+  const re = /https?:\/\/\S+|(^|[^/\w])(@\w+)@[\w.-]*\w/g;
+  let used = 0, pos = 0, m;
+  /* pos부터 to까지 한 글자씩 세다가 넘으면 그 위치를 돌려줌 */
+  const run = to => {
+    while (pos < to){
+      if (used + 1 > allow) return pos;
+      used++; pos += t.codePointAt(pos) > 0xffff ? 2 : 1;
+    }
+    return -1;
+  };
+  while ((m = re.exec(t))){
+    if (m[0][0] === 'h'){
+      const r = run(m.index); if (r >= 0) return r;
+      if (used + 23 > allow) return m.index;
+      used += 23;
+    } else {
+      const r = run(m.index + m[1].length + m[2].length); if (r >= 0) return r;
+    }
+    pos = Math.max(pos, re.lastIndex);
+  }
+  return run(t.length);
+}
 function countChars(t){
   t = t.replace(/https?:\/\/\S+/g, 'x'.repeat(23)).replace(/(^|[^/\w])@(\w+)@[\w.-]*\w/g, '$1@$2');
   return [...t].length;
@@ -2433,11 +2461,13 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
   </div>`;
   const q = s => $(s, ov);
   const ta = q('.c-text'), cw = q('.c-cw'), post = q('.c-post'), cnt = q('.c-count'), hl = q('.c-hl');
-  const paintHL = () => {
-    const t = esc(ta.value)
+  const paintPart = v => esc(v)
       .replace(/(^|[^\w@\/])(@[\w.\-]+(?:@[\w\-]+(?:\.[\w\-]+)+)?)/g, '$1<span class="hm">$2</span>')
       .replace(/(^|[^\w&#\/])(#[\p{L}\p{N}_]+)/gu, '$1<span class="hm">$2</span>');
-    hl.innerHTML = t + '\n ';
+  /* over: 글자수를 넘기기 시작하는 위치 (넘지 않으면 -1) → 그 뒤를 빨갛게 */
+  const paintHL = (over = -1) => {
+    const v = ta.value;
+    hl.innerHTML = (over < 0 ? paintPart(v) : paintPart(v.slice(0, over)) + '<span class="over">' + paintPart(v.slice(over)) + '</span>') + '\n ';
   };
   const mirror = document.createElement('textarea'); mirror.className = 'c-text'; mirror.tabIndex = -1; mirror.setAttribute('aria-hidden', 'true');
   mirror.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;pointer-events:none;height:0;min-height:0;overflow:hidden';
@@ -2516,10 +2546,10 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
   if (replyTo && replyTo.spoiler_text && !draft){ S.cwOn = true; cw.value = replyTo.spoiler_text; }
 
   const update = () => {
-    paintHL();
     const n = countChars(ta.value) + (S.cwOn ? [...cw.value].length : 0);
     const max = acc.max || 500, left = max - n;
-    cnt.textContent = `${n} / ${max}`;
+    paintHL(left < 0 ? overAt(ta.value, max - (S.cwOn ? [...cw.value].length : 0)) : -1);
+    cnt.textContent = left < 0 ? `${n} / ${max} · ${-left}자 초과` : `${n} / ${max}`;
     cnt.classList.toggle('over', left < 0);
     const uploading = S.media.some(m => m.uploading);
     const pollBad = !!S.poll && S.poll.options.some(o => !o.trim());
@@ -2901,7 +2931,7 @@ function afterPost(acc, isReply){
   const {name} = parse(), e = cache.get(curKey);
   if (!e || !e.el.refresh) return;
   if (name === 'thread') e.el.refresh();
-  else if (!isReply && acc === cur() && (name === 'home' || name === 'local')){ window.scrollTo(0, 0); e.el.refresh(); }
+  else if (!isReply && acc === cur() && (name === 'home' || name === 'homeposts' || name === 'local')){ window.scrollTo(0, 0); e.el.refresh(); }
 }
 
 /* ---------- 쪽지(DM) ---------- */
@@ -3587,6 +3617,7 @@ function tabHash(tab){
 }
 const TAB_INFO = {
   home:['팔로잉', '내가 팔로우한 사람들의 글'],
+  homeposts:['팔로잉 (툿만)', '팔로우한 사람들의 글 중 답글은 빼고 툿만'],
   local:['우리 서버', '같은 서버 사람들의 공개 글 전부'],
   fed:['모든 서버', '연결된 다른 서버의 공개 글까지 전부'],
   bookmarks:['북마크', '내가 북마크한 글'],
@@ -3801,7 +3832,7 @@ function tabsEditor(root){
       list.append(r);
     });
     avail.replaceChildren();
-    const cands = ['home','local','fed','bookmarks','favs'].map(t => ({t})).concat(lists.map(l => ({t:'list', id:l.id, title:l.title})));
+    const cands = ['home','homeposts','local','fed','bookmarks','favs'].map(t => ({t})).concat(lists.map(l => ({t:'list', id:l.id, title:l.title})));
     cands.filter(c => !tabs.some(t => same(t, c))).forEach(c => {
       const sub = c.t === 'list' ? '내가 만든 리스트' : TAB_INFO[c.t][1];
       const b = linkRow('plus', tabLabel(c), sub, () => { tabs.push(c); save(); });
@@ -4934,7 +4965,7 @@ async function checkNotif(){
 }
 
 /* ---------- 라우터 ---------- */
-const HOME_NAMES = ['home','local','fed','list','tag','bookmarks','favs'];
+const HOME_NAMES = ['home','homeposts','local','fed','list','tag','bookmarks','favs'];
 const TABS = [...HOME_NAMES, 'notifications','mentions','dm','me'];
 const cache = new Map();
 let curKey = null, lastTab = '#/home', lastNotifTab = '#/notifications', lastHome = null;
@@ -4974,6 +5005,8 @@ function goBack(){ if (depthOf() > 0) history.back(); else goTop(homeTarget()); 
 function buildView(name, arg, arg2){
   switch (name){
     case 'home': return feedView('/api/v1/timelines/home', {hint:'내가 팔로우한 사람들의 글이 올라와요.', empty:'아직 글이 없어요. 커뮤 사람들을 팔로우해 보세요!', filter:homeFilter});
+    /* 답글은 빼고 툿만 (자기 글에 이어 쓴 타래는 보임) — ‘홈에 답글 보이기’ 설정과 상관없이 */
+    case 'homeposts': return feedView('/api/v1/timelines/home', {hint:'팔로우한 사람들의 글 중 답글은 빼고 툿만 보여요.', empty:'아직 글이 없어요.', filter:s => { const st = s.reblog || s; return homeFilter(s) && !(st.in_reply_to_id && String(st.in_reply_to_account_id) !== String(st.account.id)); }});
     case 'local': return feedView('/api/v1/timelines/public', {params:{local:'true'}, hint:'같은 서버(커뮤) 사람들이 올린 공개 글이 모두 모여요.', empty:'아직 이 서버에 공개 글이 없어요.'});
     case 'notifications': return feedView('/api/v1/notifications', {kind:'notif', empty:'아직 알림이 없어요.', filter:n => !isDm(n), limit:40});
     case 'mentions': return mentionsView();

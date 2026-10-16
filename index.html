@@ -231,7 +231,7 @@ img.emoji{height:1.25em;width:auto;vertical-align:-.25em;margin:0 .05em;object-f
 @media(min-width:640px){.cov{padding-top:5vh}.compose{height:auto;max-height:90%;border-radius:20px;overflow:hidden}}
 .c-top{display:flex;align-items:center;padding:8px 12px;gap:8px}
 .c-draft{font-size:12px;color:var(--sub)}
-.c-scroll{flex:1;overflow:auto;overscroll-behavior:contain;padding:4px 16px 12px;-webkit-overflow-scrolling:touch}
+.c-scroll{flex:1;overflow:auto;overflow-anchor:none;overscroll-behavior:contain;padding:4px 16px 12px;-webkit-overflow-scrolling:touch}
 .c-replyto{margin:0 0 12px;padding:10px 12px;border-radius:12px;background:var(--hover);font-size:14px}
 .crh{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .crb{color:var(--sub);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-line;margin-top:2px;overflow-wrap:anywhere}
@@ -2538,16 +2538,29 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
       if (replyTo.quote) fullBox.append(h('<div class="crx">↳ 다른 글을 인용한 글이에요</div>'));
       fullBox.append(Object.assign(document.createElement('div'), {className:'crx', textContent:full(replyTo.created_at)}));
     };
-    /* 입력 중에 상자를 눌러도 입력칸에서 포커스가 빠지지 않게 (키보드 유지) */
-    let typing = false;
-    r.addEventListener('pointerdown', () => { typing = document.activeElement === ta; });
-    r.addEventListener('mousedown', e => { if (typing || document.activeElement === ta) e.preventDefault(); });
+    /* 터치 단계부터 입력칸 포커스를 유지해 키보드를 다시 열며 커서로 이동하지 않게 함 */
+    const replyAction = 'a,button,video,audio,.media,.crav';
+    let typing = false, replyFrame = 0;
+    r.addEventListener('pointerdown', e => {
+      typing = document.activeElement === ta;
+      if (typing && !e.target.closest(replyAction)) e.preventDefault();
+    });
+    r.addEventListener('mousedown', e => {
+      if ((typing || document.activeElement === ta) && !e.target.closest(replyAction)) e.preventDefault();
+    });
     r.addEventListener('click', e => {
-      if (typing && document.activeElement !== ta && !e.target.closest('a,button,video,audio,.media')) ta.focus({preventScroll:true});
-      if (e.target.closest('a,button,video,audio,.media')) return;
+      if (e.target.closest(replyAction)) return;
+      const sc = q('.c-scroll'), keep = sc.scrollTop;
+      const keepFocus = typing || document.activeElement === ta;
+      typing = false;
       const open = !r.classList.contains('open');
       if (open && !built) build();
       r.classList.toggle('open', open); body.hidden = open; fullBox.hidden = !open;
+      if (keepFocus && document.activeElement !== ta) ta.focus({preventScroll:true});
+      /* 박스 높이만 변경: 입력칸을 따라가는 브라우저 보정은 막고, 다음 화면 갱신까지만 위치 유지 */
+      sc.scrollTop = keep;
+      cancelAnimationFrame(replyFrame);
+      replyFrame = requestAnimationFrame(() => { if (ov.isConnected) sc.scrollTop = keep; });
     });
     r.append(head, body, fullBox);
   }

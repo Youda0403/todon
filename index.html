@@ -959,15 +959,18 @@ function setDefaultVis(a, v){ const m = LS.get('ytt.vis', {}); m[a.acct] = v; LS
 
 /* ---------- API ---------- */
 function qs(obj){ const u = new URLSearchParams(); for (const [k, v] of Object.entries(obj)) (Array.isArray(v) ? v : [v]).forEach(x => u.append(k, x)); return u.toString(); }
-async function api(path, {method='GET', body=null, form=null, acc=cur(), headers={}, withLink=false} = {}){
-  const opt = {method, headers:{Authorization:'Bearer ' + acc.token, ...headers}};
+async function api(path, {method='GET', body=null, form=null, acc=cur(), headers={}, withLink=false, signal} = {}){
+  const opt = {method, headers:{Authorization:'Bearer ' + acc.token, ...headers}, signal};
   if (form) opt.body = form;
   else if (body){ opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
   let r;
   try{ r = await fetch(`https://${acc.instance}${path}`, opt); }
   catch(e){ throw new Error('서버에 연결하지 못했어요. 인터넷 연결을 확인해 주세요.'); }
-  if (r.status === 401) throw new Error('로그인이 만료되었어요. 내 계정에서 이 계정을 다시 추가해 주세요.');
-  if (!r.ok){ let msg = ''; try{ msg = (await r.json()).error; }catch(e){} throw new Error(msg || `요청이 실패했어요 (${r.status})`); }
+  if (!r.ok){
+    let msg = ''; try{ msg = (await r.json()).error; }catch(e){}
+    const err = new Error(r.status === 401 ? '로그인이 만료되었어요. 내 계정에서 이 계정을 다시 추가해 주세요.' : msg || `요청이 실패했어요 (${r.status})`);
+    err.status = r.status; throw err;
+  }
   const txt = await r.text(); const data = txt ? JSON.parse(txt) : null;
   if (!withLink) return data;
   let next = null;
@@ -3451,11 +3454,111 @@ function pushAlerts(){
 const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const pushState = () => LS.get('ytt.push', {});
+/* ytt.push는 사용자가 켜 둔 계정. 실제 연결 상태는 별도로 확인한다.
+   서버가 등록을 지우거나 브라우저가 연결을 갱신해도 사용자 설정은 잃지 않는다. */
+const PUSH_REASON = {
+  ok:'서버의 알림 등록을 확인했어요.',
+  manual:'알림 연결을 새로 등록했어요.',
+  browser_missing:'휴대폰의 알림 연결이 없어 다시 연결했어요.',
+  browser_expired:'휴대폰의 알림 연결이 만료되어 다시 연결했어요.',
+  browser_changed:'휴대폰의 알림 연결이 바뀌어 다시 연결했어요.',
+  server_missing:'서버에서 알림 등록이 없어 다시 연결했어요.',
+  key_changed:'서버의 알림 연결 정보가 바뀌어 다시 연결했어요.',
+  settings:'알림 종류 설정을 서버에 다시 적용했어요.',
+  permission:'휴대폰이나 브라우저 설정에서 알림을 허용해 주세요.',
+  login:'이 계정은 다시 로그인한 뒤 알림을 연결해 주세요.',
+  network:'연결을 확인하지 못했어요. 인터넷이 연결되면 다시 확인해요.',
+  retry:'알림을 자동으로 연결하지 못했어요. 아래에서 다시 연결해 주세요.'
+};
+let pushQueue = Promise.resolve(), pushCheckedAt = 0;
+function pushTask(fn){
+  const run = () => navigator.locks ? navigator.locks.request('ytt-push', fn) : fn();
+  const next = pushQueue.then(run, run); pushQueue = next.catch(() => {}); return next;
+}
+function pushWanted(a){
+  return !!pushState()[a.acct] && accounts.some(x => x.acct === a.acct && x.token === a.token)
+    && LS.get('ytt.accounts', accounts).some(x => x.acct === a.acct && x.token === a.token);
+}
+function paintPushStatus(){ document.querySelectorAll('.pushbox').forEach(b => { if (b._paintPush) b._paintPush(); }); }
+function reportPush(a, state, reason, status = 0){
+  if (!pushWanted(a)) return;
+  const item = {at:Date.now(), acct:a.acct, state, reason, status};
+  const health = LS.get('ytt.push.health', {}); health[a.acct] = item; LS.set('ytt.push.health', health);
+  if (reason !== 'ok' && state !== 'checking'){
+    const log = LS.get('ytt.push.log', []), last = log[log.length - 1];
+    if (!last || last.acct !== a.acct || last.reason !== reason || last.state !== state || item.at - last.at > 300000)
+      LS.set('ytt.push.log', [...log, item].slice(-20));
+  }
+  paintPushStatus();
+}
+function pushFailure(e){ return e.status === 401 || e.status === 403 ? 'login' : e.name === 'NotAllowedError' ? 'retry' : 'network'; }
+async function pushRequest(a, options = {}, path = '/api/v1/push/subscription'){
+  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 10000);
+  try{ return await api(path, {...options, acc:a, signal:ac.signal}); }
+  finally{ clearTimeout(timer); }
+}
+async function pushRegistration(){
+  let timer;
+  try{ return await Promise.race([navigator.serviceWorker.ready, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('알림 연결을 준비하지 못했어요. 앱을 다시 열어 주세요.')), 10000); })]); }
+  finally{ clearTimeout(timer); }
+}
+function checkPush({force = false, reconnect = false} = {}){
+  return pushTask(async () => {
+    const enabled = accounts.filter(pushWanted);
+    if (!enabled.length || location.protocol !== 'https:' || !('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return;
+    if (!force && (document.hidden || Date.now() - pushCheckedAt < 60000)) return;
+    pushCheckedAt = Date.now();
+    if (Notification.permission !== 'granted'){
+      enabled.forEach(a => reportPush(a, 'error', 'permission')); return;
+    }
+    if (navigator.onLine === false){ enabled.forEach(a => reportPush(a, 'error', 'network')); return; }
+    const group = enabled.filter(a => a.instance === enabled[0].instance);
+    group.forEach(a => reportPush(a, 'checking', 'ok'));
+    try{
+      const reg = await pushRegistration();
+      let sub = await reg.pushManager.getSubscription();
+      /* 한 브라우저의 연결은 한 서버 키를 쓴다. 다른 서버를 계정 전환만으로 활성화하지 않는다. */
+      const remote = new Map(), failures = new Set();
+      for (const a of group){
+        if (!pushWanted(a)) continue;
+        try{ remote.set(a, await pushRequest(a)); }
+        catch(e){ if (e.status === 404) remote.set(a, null); else { failures.add(a); reportPush(a, 'error', pushFailure(e), e.status || 0); } }
+      }
+      if (!group.some(a => pushWanted(a) && !failures.has(a))) return;
+      let reason = reconnect ? 'manual' : !sub ? 'browser_missing' : sub.expirationTime && sub.expirationTime <= Date.now() ? 'browser_expired' : null;
+      const oldKey = sub && sub.options && sub.options.applicationServerKey;
+      const server = [...remote.values()].find(x => x && x.server_key);
+      if (!reason && oldKey && server && b64u(oldKey) !== normKey(server.server_key)) reason = 'key_changed';
+      /* 모두 404면 브라우저에도 죽은 주소가 남았을 수 있으므로 새 연결을 만든다. */
+      if (!reason && remote.size && [...remote.values()].every(x => !x)) reason = 'server_missing';
+      if (reason){
+        const key = server ? server.server_key : await vapidOf(group[0]);
+        if (!group.some(pushWanted)) return;
+        if (sub) await sub.unsubscribe();
+        sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:unb64u(normKey(key))});
+      }
+      const j = sub.toJSON(), desired = pushAlerts();
+      for (const a of group){
+        if (!pushWanted(a) || failures.has(a)) continue;
+        const prev = remote.get(a);
+        const why = reason || (!prev ? 'server_missing' : prev.endpoint !== j.endpoint ? 'browser_changed' : null);
+        try{
+          if (why){
+            await pushRequest(a, {method:'POST', body:{subscription:{endpoint:j.endpoint, keys:j.keys, standard:true}, data:{alerts:desired, policy:'all'}}});
+          } else if (Object.keys(prev.alerts || {}).some(k => k in desired && prev.alerts[k] !== desired[k])){
+            await pushRequest(a, {method:'PUT', body:{data:{alerts:desired, policy:'all'}}});
+          }
+          reportPush(a, 'ok', why || (Object.keys(prev.alerts || {}).some(k => k in desired && prev.alerts[k] !== desired[k]) ? 'settings' : 'ok'));
+        }catch(e){ reportPush(a, 'error', pushFailure(e), e.status || 0); }
+      }
+    }catch(e){ group.forEach(a => reportPush(a, 'error', pushFailure(e), e.status || 0)); }
+  });
+}
 const normKey = k => String(k).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const b64u = buf => normKey(btoa(String.fromCharCode(...new Uint8Array(buf))));
 function unb64u(str){ let t = str.replace(/-/g, '+').replace(/_/g, '/'); t += '='.repeat((4 - t.length % 4) % 4); return Uint8Array.from(atob(t), c => c.charCodeAt(0)); }
 async function vapidOf(acc){
-  try{ const j = await api('/api/v2/instance', {acc}); const k = j.configuration && j.configuration.vapid && j.configuration.vapid.public_key; if (k) return k; }catch(e){}
+  try{ const j = await pushRequest(acc, {}, '/api/v2/instance'); const k = j.configuration && j.configuration.vapid && j.configuration.vapid.public_key; if (k) return k; }catch(e){}
   const app = LS.get('ytt.app.' + acc.instance, null);
   if (app && app.vapid_key) return app.vapid_key;
   throw new Error('이 서버는 휴대폰 알림을 지원하지 않아요');
@@ -3463,35 +3566,30 @@ async function vapidOf(acc){
 async function enablePush(){
   if (location.protocol !== 'https:' || !('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window))
     throw new Error(isIOS && !isStandalone ? '아이폰은 공유 버튼 → ‘홈 화면에 추가’로 설치한 앱에서만 알림을 켤 수 있어요' : '이 브라우저에서는 휴대폰 알림을 쓸 수 없어요');
+  const intent = Date.now() + ':' + Math.random(); LS.set('ytt.push.intent', intent);
   const perm = await Notification.requestPermission();
   if (perm !== 'granted') throw new Error('알림 권한이 꺼져 있어요. 브라우저나 휴대폰 설정에서 이 앱의 알림을 허용해 주세요.');
-  const reg = await navigator.serviceWorker.ready;
-  const acc = cur(), key = await vapidOf(acc);
-  let sub = await reg.pushManager.getSubscription();
-  if (sub){ const k = sub.options && sub.options.applicationServerKey; if (k && b64u(k) !== normKey(key)){ await sub.unsubscribe(); sub = null; } }
-  if (!sub) sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:unb64u(normKey(key))});
-  const j = sub.toJSON();
-  const st = {}, failed = [];
-  for (const a of accounts.filter(x => x.instance === acc.instance)){
-    try{
-      await api('/api/v1/push/subscription', {method:'POST', acc:a, body:{subscription:{endpoint:j.endpoint, keys:{p256dh:j.keys.p256dh, auth:j.keys.auth}, standard:true}, data:{alerts:pushAlerts(), policy:'all'}}});
-      st[a.acct] = true;
-    }catch(e){ failed.push(a); }
-  }
-  LS.set('ytt.push', st);
-  if (!st[acc.acct]) throw new Error('이 계정은 다시 로그인해야 휴대폰 알림을 켤 수 있어요. 계정 추가하기로 같은 계정에 한 번 더 로그인해 주세요.');
+  if (LS.get('ytt.push.intent', null) !== intent) return {cancelled:true, failed:[]};
+  const acc = cur(), group = accounts.filter(x => x.instance === acc.instance);
+  LS.set('ytt.push', Object.fromEntries(group.map(a => [a.acct, true])));
+  await checkPush({force:true, reconnect:true});
+  if (LS.get('ytt.push.intent', null) !== intent) return {cancelled:true, failed:[]};
+  const health = LS.get('ytt.push.health', {});
+  const failed = group.filter(a => !health[a.acct] || health[a.acct].state !== 'ok');
+  if (failed.includes(acc)) throw new Error(PUSH_REASON[health[acc.acct]?.reason] || PUSH_REASON.retry);
   return {failed};
 }
-async function disablePush(){
-  const st = pushState();
-  for (const a of accounts) if (st[a.acct]){ try{ await api('/api/v1/push/subscription', {method:'DELETE', acc:a}); }catch(e){} }
-  LS.set('ytt.push', {});
-  try{ const reg = await navigator.serviceWorker.ready; const sb = await reg.pushManager.getSubscription(); if (sb) await sb.unsubscribe(); }catch(e){}
+function disablePush(){
+  const st = pushState(), group = accounts.filter(a => st[a.acct]);
+  /* 복구 중에 꺼도 되살아나지 않도록 사용자의 의사를 먼저 저장하고, 진행 중 요청 뒤에 정리한다. */
+  LS.set('ytt.push.intent', Date.now() + ':' + Math.random()); LS.set('ytt.push', {});
+  paintPushStatus();
+  return pushTask(async () => {
+    for (const a of group){ try{ await pushRequest(a, {method:'DELETE'}); }catch(e){} }
+    try{ const reg = await pushRegistration(); const sb = await reg.pushManager.getSubscription(); if (sb) await sb.unsubscribe(); }catch(e){}
+  });
 }
-async function updatePushAlerts(){
-  const st = pushState();
-  for (const a of accounts) if (st[a.acct]){ try{ await api('/api/v1/push/subscription', {method:'PUT', acc:a, body:{data:{alerts:pushAlerts(), policy:'all'}}}); }catch(e){} }
-}
+async function updatePushAlerts(){ await checkPush({force:true}); }
 function notifSettingsEl(){
   const sec = h('<section class="sec"><h3>알림 설정</h3><p class="secdesc">켜 둔 알림만 화면 위쪽 팝업과 휴대폰 알림으로 알려 드려요.</p><div class="tgs"></div><div class="secpad pushbox"></div></section>');
   const box = $('.tgs', sec), pref = alertPrefs();
@@ -3504,13 +3602,24 @@ function notifSettingsEl(){
   });
   const pb = $('.pushbox', sec);
   const draw = () => {
-    const on = !!pushState()[cur().acct];
-    pb.innerHTML = '<p class="pushst"></p><button class="pill wide" type="button"></button>';
+    if (!cur()) return;
+    const on = !!pushState()[cur().acct], health = LS.get('ytt.push.health', {})[cur().acct];
+    pb.innerHTML = '<p class="pushst" role="status"></p><button class="pill wide" type="button"></button>';
     const p = $('p', pb), b = $('button', pb);
     if (on){
-      p.innerHTML = '<b>휴대폰 알림이 켜져 있어요.</b> 앱을 닫아 두어도 알림이 와요.';
+      p.textContent = !health || health.state === 'checking' ? '알림 연결을 확인하고 있어요…' : health.state === 'ok' ? PUSH_REASON[health.reason] : PUSH_REASON[health.reason] || PUSH_REASON.retry;
+      p.append(h('<br>'), '앱을 열거나 돌아올 때 연결을 자동으로 점검해요.');
       if (accounts.some(a => a.instance !== cur().instance)) p.innerHTML += '<br>다른 서버 계정은 휴대폰 알림을 함께 받을 수 없어요.';
       b.textContent = '휴대폰 알림 끄기'; b.className = 'pill ghost wide';
+      const retry = h('<button class="pill ghost wide" type="button" style="margin-top:8px">알림 다시 연결하기</button>');
+      retry.disabled = !!health && health.state === 'checking';
+      retry.onclick = async () => {
+        retry.disabled = true;
+        try{ const r = await enablePush(); if (!r.cancelled) toast(r.failed.length ? '일부 계정의 연결을 확인해 주세요' : '휴대폰 알림을 다시 연결했어요'); }
+        catch(e){ toast(e.message); }
+        draw();
+      };
+      pb.append(retry);
     } else {
       p.innerHTML = '휴대폰 알림을 켜면 앱을 닫아 두어도 알림이 와요.' + (isIOS && !isStandalone ? '<br><b>아이폰은 공유 버튼 → ‘홈 화면에 추가’로 설치한 뒤에 켤 수 있어요.</b>' : '');
       b.textContent = '휴대폰 알림 켜기';
@@ -3521,13 +3630,21 @@ function notifSettingsEl(){
         if (on){ await disablePush(); toast('휴대폰 알림을 껐어요'); }
         else {
           const r = await enablePush();
-          toast(r.failed.length ? `휴대폰 알림을 켰어요. ${r.failed.map(a => '@' + a.username).join(', ')} 계정은 다시 로그인해야 해요` : '휴대폰 알림을 켰어요');
+          if (!r.cancelled) toast(r.failed.length ? `휴대폰 알림을 켰어요. ${r.failed.map(a => '@' + a.username).join(', ')} 계정의 연결을 확인해 주세요` : '휴대폰 알림을 켰어요');
         }
       }catch(e){ toast(e.message); }
       draw();
     };
+    const logs = LS.get('ytt.push.log', []).filter(x => x.acct === cur().acct).slice(-5).reverse();
+    if (logs.length){
+      const detail = h('<details class="gl"><summary>최근 알림 연결 기록</summary></details>');
+      logs.forEach(x => { const line = document.createElement('p'); line.textContent = new Date(x.at).toLocaleString('ko-KR') + ' · ' + (x.state === 'ok' ? PUSH_REASON[x.reason] : '연결 확인 필요: ' + (PUSH_REASON[x.reason] || PUSH_REASON.retry)); detail.append(line); });
+      pb.append(detail);
+    }
   };
+  pb._paintPush = draw;
   draw();
+  checkPush({force:true});
   return sec;
 }
 const POP_TXT = {mention:'님이 나를 불렀어요', favourite:'님이 내 글을 좋아해요', reblog:'님이 내 글을 부스트했어요', follow:'님이 나를 팔로우했어요', follow_request:'님이 팔로우를 요청했어요', status:'님이 새 글을 올렸어요', quote:'님이 내 글을 인용했어요', quoted_update:'님이 내가 인용한 글을 수정했어요', poll:'님의 투표가 끝났어요'};
@@ -3592,6 +3709,7 @@ async function tokHint(t){
 function onSwMessage(ev){
   const m = ev.data || {};
   if (m.type === 'push') checkNotif();
+  if (m.type === 'push-repair') checkPush({force:true});
   if (m.type === 'open' && m.hash){
     if (ev.ports && ev.ports[0]) ev.ports[0].postMessage('ok');
     nav(m.hash);
@@ -5157,15 +5275,17 @@ async function init(){
   }
   route();
   /* 타임라인을 먼저 불러오고, 알림·설정 확인은 조금 뒤에 */
-  setTimeout(() => { seedReadingPrefs(); checkNotif(); }, 1200);
+  setTimeout(() => { seedReadingPrefs(); checkNotif(); checkPush(); }, 1200);
   setInterval(checkNotif, 30000);
+  setInterval(() => checkPush(), 300000);
   setInterval(() => updateTimes($('#main')), 30000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden){ checkNotif(); updateTimes($('#main')); } });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden){ checkNotif(); checkPush(); updateTimes($('#main')); } });
+  window.addEventListener('online', () => checkPush({force:true}));
   setupPTR();
   setupSwipe();
   shareAccountsWithSW();
   if ('serviceWorker' in navigator && location.protocol === 'https:'){
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register('sw.js').then(() => checkPush()).catch(() => {});
     navigator.serviceWorker.addEventListener('message', onSwMessage);
   }
 }
@@ -5173,3 +5293,4 @@ init();
 </script>
 </body>
 </html>
+

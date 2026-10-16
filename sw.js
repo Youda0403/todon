@@ -60,6 +60,15 @@ self.addEventListener('message', e => {
   if (e.data && e.data.type === 'check') e.waitUntil(checkPage());
 });
 
+// 브라우저가 푸시 연결을 바꿨다면 열린 앱에 재등록을 부탁한다.
+// 인증 토큰은 서비스 워커에 따로 저장하지 않는다. 앱이 닫혀 있으면 다음 실행 때 실제 등록을 점검한다.
+self.addEventListener('pushsubscriptionchange', e => {
+  e.waitUntil((async () => {
+    const cs = await self.clients.matchAll({type:'window', includeUncontrolled:true});
+    cs.forEach(c => c.postMessage({type:'push-repair'}));
+  })());
+});
+
 // 어느 계정의 알림인지 앱이 알아볼 수 있게, 토큰 대신 토큰의 짧은 지문만 넘김
 async function tokHint(t) {
   if (!t || !self.crypto || !crypto.subtle) return '';
@@ -158,3 +167,4 @@ self.addEventListener('notificationclick', e => {
     await self.clients.openWindow(url);
   })());
 });
+

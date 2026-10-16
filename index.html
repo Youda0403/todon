@@ -3522,10 +3522,13 @@ async function pushRegistration(){
   finally{ clearTimeout(timer); }
 }
 function checkPush({force = false, reconnect = false} = {}){
+  /* 건너뛸 자동 점검은 계정 저장소를 다시 읽거나 브라우저 잠금을 잡기 전에 끝냄 */
+  if (!force && (document.hidden || Date.now() - pushCheckedAt < 60000)) return Promise.resolve();
   return pushTask(async () => {
+    /* 대기 중 앞선 점검이 끝났을 수 있으므로 잠금 안에서도 확인 */
+    if (!force && (document.hidden || Date.now() - pushCheckedAt < 60000)) return;
     const enabled = accounts.filter(pushWanted);
     if (!enabled.length || location.protocol !== 'https:' || !('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return;
-    if (!force && (document.hidden || Date.now() - pushCheckedAt < 60000)) return;
     pushCheckedAt = Date.now();
     if (Notification.permission !== 'granted'){
       enabled.forEach(a => reportPush(a, 'error', 'permission')); return;
@@ -3663,7 +3666,7 @@ function notifSettingsEl(){
   };
   pb._paintPush = draw;
   draw();
-  checkPush({force:true});
+  checkPush();
   return sec;
 }
 const POP_TXT = {mention:'님이 나를 불렀어요', favourite:'님이 내 글을 좋아해요', reblog:'님이 내 글을 부스트했어요', follow:'님이 나를 팔로우했어요', follow_request:'님이 팔로우를 요청했어요', status:'님이 새 글을 올렸어요', quote:'님이 내 글을 인용했어요', quoted_update:'님이 내가 인용한 글을 수정했어요', poll:'님의 투표가 끝났어요'};

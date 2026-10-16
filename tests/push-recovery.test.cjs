@@ -135,6 +135,27 @@ test('multiple automatic triggers share a queue and do not retry immediately', a
   const f=fixture(); await f.run('Promise.all([checkPush(),checkPush(),checkPush()])');
   assert.equal(f.calls.length,2); assert.equal(f.subscribed,0);
 });
+test('cooldown skips automatic checks before reading storage or requesting locks', async () => {
+  const f=fixture(); let locks=0;
+  f.context.navigator.locks={request:async(name,fn)=>{ locks++; return fn(); }};
+  await f.run('checkPush()');
+  let reads=0; const get=f.context.LS.get;
+  f.context.LS.get=(...args)=>{ reads++; return get(...args); };
+  await f.run('Promise.all([checkPush(),checkPush(),checkPush()])');
+  assert.equal(reads,0); assert.equal(locks,1); assert.equal(f.calls.length,2);
+  await f.run('checkPush({force:true})');
+  assert.equal(locks,2); assert.equal(f.calls.length,4);
+});
+test('hidden automatic checks skip storage and locks without blocking explicit repairs', async () => {
+  const f=fixture(); let reads=0,locks=0; const get=f.context.LS.get;
+  f.context.document.hidden=true;
+  f.context.LS.get=(...args)=>{ reads++; return get(...args); };
+  f.context.navigator.locks={request:async(name,fn)=>{ locks++; return fn(); }};
+  await f.run('checkPush()');
+  assert.equal(reads,0); assert.equal(locks,0); assert.equal(f.calls.length,0);
+  await f.run('checkPush({force:true})');
+  assert.equal(locks,1); assert.equal(f.calls.length,2);
+});
 test('notification preference changes update server without rotating browser', async () => {
   const f=fixture(); f.rows.forEach(r=>r.alerts.mention=false);
   await f.run('updatePushAlerts()'); assert.equal(f.calls.filter(c=>c.method==='PUT').length,2);

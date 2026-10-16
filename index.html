@@ -1148,7 +1148,9 @@ function statusEl(s, o = {}){
 </div>`;
   if (by) $('.bb', el).append(richName(by), '님이 부스트함');
   const av = $('.av', el); av.src = avOf(st.account);
-  av.onclick = e => { e.stopPropagation(); nav('#/user/' + st.account.id); };
+  const openProfile = e => { e.stopPropagation(); nav('#/user/' + st.account.id); };
+  av.onclick = openProfile;
+  $('.name', el).onclick = $('.handle', el).onclick = openProfile;
   $('.name', el).append(richName(st.account));
   $('.handle', el).textContent = '@' + st.account.acct;
   const tm = $('.time', el); tm.textContent = rel(st.created_at); tm.dateTime = st.created_at; tm.title = full(st.created_at);
@@ -1177,11 +1179,15 @@ function statusEl(s, o = {}){
     if (self) sp.textContent = '이어지는 글';
     else {
       const m = (st.mentions || []).find(m => m.id === st.in_reply_to_account_id);
-      if (m){ const b = document.createElement('b'); b.textContent = '@' + m.username; sp.append(b, '님에게 보낸 답글'); }
+      if (m){
+        const b = document.createElement('b'); b.textContent = '@' + m.username;
+        b.onclick = e => { e.stopPropagation(); nav('#/user/' + m.id); };
+        sp.append(b, '님에게 보낸 답글');
+      }
       else sp.textContent = '답글';
     }
     r.classList.toggle('self', self);
-    if (!o.focus && !o.up) r.onclick = e => { e.stopPropagation(); nav('#/thread/' + st.in_reply_to_id); };
+    /* 안내 문구·화살표도 카드 클릭으로 처리해 지금 툿을 연다. 아이디만 프로필로 이동한다. */
   }
   const c = $('.content', el), cb = $('.cwbody', el);
   if (st.content){

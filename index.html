@@ -958,25 +958,38 @@ const defaultVis = a => LS.get('ytt.vis', {})[a.acct] || a.privacy || 'public';
 function setDefaultVis(a, v){ const m = LS.get('ytt.vis', {}); m[a.acct] = v; LS.set('ytt.vis', m); }
 
 /* ---------- API ---------- */
+/* 문제 확인용 최근 기록: 메모리에만 보관하고 본문·주소·계정·토큰은 넣지 않음 */
+const diagEvents = [];
+function recordDiag(kind, data){
+  diagEvents.push({at:new Date().toISOString(), kind, ...data});
+  if (diagEvents.length > 80) diagEvents.shift();
+}
 function qs(obj){ const u = new URLSearchParams(); for (const [k, v] of Object.entries(obj)) (Array.isArray(v) ? v : [v]).forEach(x => u.append(k, x)); return u.toString(); }
 async function api(path, {method='GET', body=null, form=null, acc=cur(), headers={}, withLink=false, signal} = {}){
-  const opt = {method, headers:{Authorization:'Bearer ' + acc.token, ...headers}, signal};
-  if (form) opt.body = form;
-  else if (body){ opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
-  let r;
-  try{ r = await fetch(`https://${acc.instance}${path}`, opt); }
-  catch(e){ throw new Error('서버에 연결하지 못했어요. 인터넷 연결을 확인해 주세요.'); }
-  if (!r.ok){
-    let msg = ''; try{ msg = (await r.json()).error; }catch(e){}
-    const err = new Error(r.status === 401 ? '로그인이 만료되었어요. 내 계정에서 이 계정을 다시 추가해 주세요.' : msg || `요청이 실패했어요 (${r.status})`);
-    err.status = r.status; throw err;
+  const started = Date.now(); let status = 0;
+  try{
+    const opt = {method, headers:{Authorization:'Bearer ' + acc.token, ...headers}, signal};
+    if (form) opt.body = form;
+    else if (body){ opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
+    let r;
+    try{ r = await fetch(`https://${acc.instance}${path}`, opt); }
+    catch(e){ throw new Error('서버에 연결하지 못했어요. 인터넷 연결을 확인해 주세요.'); }
+    status = r.status;
+    if (!r.ok){
+      let msg = ''; try{ msg = (await r.json()).error; }catch(e){}
+      const err = new Error(r.status === 401 ? '로그인이 만료되었어요. 내 계정에서 이 계정을 다시 추가해 주세요.' : msg || `요청이 실패했어요 (${r.status})`);
+      err.status = r.status; throw err;
+    }
+    const txt = await r.text(); const data = txt ? JSON.parse(txt) : null;
+    if (!withLink) return data;
+    let next = null;
+    const m = /<([^>]+)>\s*;\s*rel="next"/.exec(r.headers.get('Link') || '');
+    if (m){ try{ const u = new URL(m[1]); next = u.pathname + u.search; }catch(e){} }
+    return {data, next};
+  }finally{
+    const group = /^\/api\/v\d+\/(statuses|timelines|notifications|markers|conversations|push|accounts|media)\b/.exec(path);
+    recordDiag('request', {method, api:(group ? group[1] : 'other') + (/\/context(?:\?|$)/.test(path) ? '/context' : ''), ms:Date.now() - started, status});
   }
-  const txt = await r.text(); const data = txt ? JSON.parse(txt) : null;
-  if (!withLink) return data;
-  let next = null;
-  const m = /<([^>]+)>\s*;\s*rel="next"/.exec(r.headers.get('Link') || '');
-  if (m){ try{ const u = new URL(m[1]); next = u.pathname + u.search; }catch(e){} }
-  return {data, next};
 }
 
 /* ---------- 로그인 (OAuth) ---------- */
@@ -1268,7 +1281,10 @@ const ownerAcc = st => accounts.find(a => a.instance === cur().instance && Strin
 function removeStatusEverywhere(id){
   const roots = new Set([...cache.values()].map(e => e.el)); roots.add($('#main'));
   const sel = `[data-sid="${CSS.escape(String(id))}"]`;
-  roots.forEach(r => r.querySelectorAll(sel).forEach(a => a.remove()));
+  roots.forEach(r => {
+    if (r.forgetStatus) r.forgetStatus(id);
+    r.querySelectorAll(sel).forEach(a => a.remove());
+  });
 }
 function statusMenu(st){
   const own = ownerAcc(st);
@@ -1302,6 +1318,7 @@ function statusMenu(st){
 /* 같은 툿이 떠 있는 모든 화면에서 새 내용으로 바꾸기 (수정한 뒤) */
 function replaceStatusEverywhere(ns){
   const roots = new Set([...cache.values()].map(e => e.el)); roots.add($('#main'));
+  roots.forEach(r => { if (r.updateStatus) r.updateStatus(ns); });
   const sel = `[data-sid="${CSS.escape(String(ns.id))}"]`;
   roots.forEach(r => r.querySelectorAll(sel).forEach(old => {
     if (!old.classList.contains('status')) return;
@@ -1681,6 +1698,7 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
   root.append(list, sent);
   let nextPath = null, loading = false, done = false, gen = 0, topSpin = null, topId = null;
   const seenIds = new Set();   /* 이미 보여 준 글은 다시 붙이지 않음 */
+  const postedItems = new Map();   /* 서버 목록에서 확인될 때까지 방금 올린 글을 보존 */
   const firstPath = () => endpoint + '?' + qs({limit:String(limit), ...params});
   /* 위쪽 '불러오는 중' 표시 (당겨서 새로고침 중이면 그 아이콘이 대신함) */
   const showSpin = () => { if (topSpin) return; topSpin = true; spinStart(); };
@@ -1711,8 +1729,11 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
       if (my !== gen) return;
       if (reset){ list.replaceChildren(); seenIds.clear(); topId = null; }
       bump(items);
-      const fresh = items.filter(it => !seenIds.has(String(it.id)));
+      const local = reset && kind === 'status' ? [...postedItems.values()].filter(st => !items.some(it => String(it.id) === String(st.id))) : [];
+      const page = local.length ? [...items, ...local].sort((a,b) => cmpId(b.id,a.id)) : items;
+      const fresh = page.filter(it => !seenIds.has(String(it.id)));
       fresh.forEach(it => seenIds.add(String(it.id)));
+      items.forEach(it => postedItems.delete(String(it.id)));
       list.append(build(filter ? fresh.filter(filter) : fresh));
       /* 새 글이 하나도 없는 페이지 = 끝. 북마크·좋아요처럼 서버가 알려 준 다음 주소로만 넘길 수 있는 목록은 그 주소가 없으면 끝 */
       const nextGuess = next || (linkOnly ? null : endpoint + '?' + qs({limit:String(limit), ...params, max_id:items.length ? items[items.length - 1].id : ''}));
@@ -1734,7 +1755,7 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
   }
   /* 빠른 새로고침: 맨 위 글보다 새 글만 받아서 위에 붙이고, 숫자(좋아요 등)는 뒤에서 조용히 맞춤 */
   async function quick(){
-    if (loading) return load(true);
+    if (loading) return;
     loading = true; const my = gen;
     showSpin();
     let full = false;
@@ -1749,23 +1770,43 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
         fresh.forEach(it => seenIds.add(String(it.id)));
         const shown = filter ? fresh.filter(filter) : fresh;
         if (shown.length){
-          const frag = build(shown), nodes = [...frag.children];
+          const local = [...postedItems.values()];
+          for (const node of [...list.children]) if (node._st && postedItems.has(String(node._st.id))) node.remove();
+          const merged = local.length ? [...shown, ...local].sort((a,b) => cmpId(b.id,a.id)) : shown;
+          const frag = build(merged), nodes = [...frag.children];
           list.prepend(frag);
           nodes.forEach((n, i) => n.animate && n.animate([{opacity:0, transform:'translateY(-12px)'}, {opacity:1, transform:'none'}], {duration:320, delay:i * 30, easing:'cubic-bezier(.2,.8,.3,1)', fill:'backwards'}));
         }
+        items.forEach(it => postedItems.delete(String(it.id)));
         updateTimes(root);
       }
     }catch(e){ if (my === gen) toast(e.message); }
     finally{ if (my === gen){ loading = false; hideSpin(); } }
     if (my !== gen) return;
-    if (full){ load(true); return; }
+    if (full) return load(true);
     api(firstPath()).then(items => {
       if (my !== gen) return;
       (items || []).forEach(it => { const st = kind === 'notif' ? it.status : (it.reblog || it); if (st) syncStatus(st); });
     }).catch(() => {});
   }
   new IntersectionObserver(es => { if (es[0].isIntersecting) load(false); }, {rootMargin:'600px 0px'}).observe(sent);
-  root.refresh = () => (topId && list.childElementCount && !linkOnly) ? quick() : load(true);
+  let refreshTask = null;
+  root.refresh = () => {
+    if (refreshTask) return refreshTask;
+    if (loading) return;
+    refreshTask = ((topId && list.childElementCount && !linkOnly) ? quick() : load(true)).finally(() => { refreshTask = null; });
+    return refreshTask;
+  };
+  root.onPosted = st => {
+    if (kind !== 'status' || !list.childElementCount) return false;
+    if ((!filter || filter(st)) && !seenIds.has(String(st.id))){
+      /* 조회 기준 topId는 서버 응답으로만 갱신해 그 사이 올라온 남의 글을 건너뛰지 않음 */
+      seenIds.add(String(st.id)); postedItems.set(String(st.id), st); list.prepend(build([st]));
+    }
+    return true;
+  };
+  root.forgetStatus = id => postedItems.delete(String(id));
+  root.updateStatus = st => { if (postedItems.has(String(st.id))) postedItems.set(String(st.id), st); };
   load(true);
   return root;
 }
@@ -1923,44 +1964,92 @@ function threadOrder(focus, desc){
 }
 function threadView(id){
   const root = document.createElement('div');
-  const load = async () => {
-    root.innerHTML = '<div class="sentinel"><div class="spin"></div></div>';
-    try{
-      const [s, ctx] = await Promise.all([api(`/api/v1/statuses/${id}`), api(`/api/v1/statuses/${id}/context`)]);
-      root.replaceChildren();
-      ctx.ancestors.forEach((a, i) => root.append(statusEl(a, {up:true, chained:i > 0, inThread:true})));
-      const f = statusEl(s, {focus:true, inThread:true}); root.append(f);
-      const order = threadOrder(s, ctx.descendants);
-      if (order.length) root.append(h(`<div class="thsec">${ic('reply')}<span>답글 ${order.length}개</span></div>`));
-      order.forEach((d, i) => {
-        const nx = order[i + 1], pv = order[i - 1];
-        root.append(statusEl(d, {up:!!nx && String(nx.in_reply_to_id) === String(d.id), chained:!!pv && String(d.in_reply_to_id) === String(pv.id), inThread:true}));
-      });
-      const tail = h('<div class="tail"></div>');
-      root.append(tail);
-      /* 이전 글이 있으면 누른 툿을 화면 위쪽(scroll-margin-top 자리)에 놓음.
-         그 뒤 위쪽 이전 글이 사진 등으로 길어질 때만 다시 맞춤 (직접 화면을 만지거나 10초 지나면 멈춤) */
-      if (ctx.ancestors.length && root.isConnected){
-        const fit = () => {
-          const want = parseFloat(getComputedStyle(f).scrollMarginTop) || 0;
-          /* 아래 글이 짧아서 그 자리까지 못 올라가면 아래 빈칸을 늘림 */
-          const short = window.scrollY + f.getBoundingClientRect().top - want - (document.documentElement.scrollHeight - window.innerHeight);
-          if (short > 0) tail.style.minHeight = Math.ceil(tail.offsetHeight + short) + 'px';
-          const d = f.getBoundingClientRect().top - want;
-          if (Math.abs(d) > 1) window.scrollTo({top:window.scrollY + d, behavior:'instant'});
-        };
-        fit();
-        const ro = new ResizeObserver(() => { if (f.isConnected) fit(); else stop(); });
-        const stop = () => { ro.disconnect(); removeEventListener('touchstart', stop); removeEventListener('wheel', stop); removeEventListener('keydown', stop); };
-        for (const c of root.children){ if (c === f) break; ro.observe(c); }
-        addEventListener('touchstart', stop, {passive:true}); addEventListener('wheel', stop, {passive:true}); addEventListener('keydown', stop);
-        setTimeout(stop, 10000);
-      }
-    }catch(e){
-      root.replaceChildren();
-      const b = h('<div class="err" style="padding:32px 16px"><p></p><button class="pill ghost" type="button">다시 시도</button></div>');
-      $('p', b).textContent = e.message; $('button', b).onclick = load;
-      root.append(b);
+  let state = null, pending = null, stopFit = () => {};
+  const localPosts = new Map();
+  const addPosted = (s, ctx, st) => {
+    if (!st.in_reply_to_id || ![s, ...ctx.descendants].some(p => String(p.id) === String(st.in_reply_to_id))) return false;
+    if (!ctx.descendants.some(p => String(p.id) === String(st.id))) ctx.descendants.push(st);
+    return true;
+  };
+  const render = (s, ctx, align) => {
+    stopFit();
+    const oldTail = root.querySelector('.tail');
+    const keepTail = oldTail && oldTail.style.minHeight;
+    root.replaceChildren();
+    ctx.ancestors.forEach((a, i) => root.append(statusEl(a, {up:true, chained:i > 0, inThread:true})));
+    const f = statusEl(s, {focus:true, inThread:true}); root.append(f);
+    const order = threadOrder(s, ctx.descendants);
+    if (order.length) root.append(h(`<div class="thsec">${ic('reply')}<span>답글 ${order.length}개</span></div>`));
+    order.forEach((d, i) => {
+      const nx = order[i + 1], pv = order[i - 1];
+      root.append(statusEl(d, {up:!!nx && String(nx.in_reply_to_id) === String(d.id), chained:!!pv && String(d.in_reply_to_id) === String(pv.id), inThread:true}));
+    });
+    const tail = h('<div class="tail"></div>');
+    if (!align && keepTail) tail.style.minHeight = keepTail;
+    root.append(tail);
+    /* 이전 글이 있으면 누른 툿을 화면 위쪽(scroll-margin-top 자리)에 놓음.
+       그 뒤 위쪽 이전 글이 사진 등으로 길어질 때만 다시 맞춤 (직접 화면을 만지거나 10초 지나면 멈춤) */
+    if (align && ctx.ancestors.length && root.isConnected){
+      const fit = () => {
+        const want = parseFloat(getComputedStyle(f).scrollMarginTop) || 0;
+        /* 아래 글이 짧아서 그 자리까지 못 올라가면 아래 빈칸을 늘림 */
+        const short = window.scrollY + f.getBoundingClientRect().top - want - (document.documentElement.scrollHeight - window.innerHeight);
+        if (short > 0) tail.style.minHeight = Math.ceil(tail.offsetHeight + short) + 'px';
+        const d = f.getBoundingClientRect().top - want;
+        if (Math.abs(d) > 1) window.scrollTo({top:window.scrollY + d, behavior:'instant'});
+      };
+      fit();
+      const ro = new ResizeObserver(() => { if (f.isConnected) fit(); else stop(); });
+      const stop = () => { ro.disconnect(); removeEventListener('touchstart', stop); removeEventListener('wheel', stop); removeEventListener('keydown', stop); };
+      stopFit = stop;
+      for (const c of root.children){ if (c === f) break; ro.observe(c); }
+      addEventListener('touchstart', stop, {passive:true}); addEventListener('wheel', stop, {passive:true}); addEventListener('keydown', stop);
+      setTimeout(stop, 10000);
+    }
+  };
+  const load = () => {
+    if (pending) return pending;
+    if (!state) root.innerHTML = '<div class="sentinel"><div class="spin"></div></div>';
+    pending = (async () => {
+      try{
+        const [s, ctx] = await Promise.all([api(`/api/v1/statuses/${id}`), api(`/api/v1/statuses/${id}/context`)]);
+        for (const [key, item] of localPosts){
+          const confirmed = ctx.descendants.some(p => String(p.id) === key);
+          if (confirmed || Date.now() - item.at > 30000) localPosts.delete(key);
+          else addPosted(s, ctx, item.st);
+        }
+        state = {s, ctx}; render(s, ctx, true);
+      }catch(e){
+        if (state){ toast(e.message); return; }
+        root.replaceChildren();
+        const b = h('<div class="err" style="padding:32px 16px"><p></p><button class="pill ghost" type="button">다시 시도</button></div>');
+        $('p', b).textContent = e.message; $('button', b).onclick = load;
+        root.append(b);
+      }finally{ pending = null; }
+    })();
+    return pending;
+  };
+  root.onPosted = st => {
+    if (!state) return false;
+    if (addPosted(state.s, state.ctx, st)){
+      localPosts.set(String(st.id), {st, at:Date.now()});
+      const y = window.scrollY; render(state.s, state.ctx, false); window.scrollTo(0, y);
+    }
+    return true;
+  };
+  root.forgetStatus = id => {
+    localPosts.delete(String(id));
+    if (!state) return;
+    if (String(state.s.id) === String(id)){ state = null; return; }
+    state.ctx.ancestors = state.ctx.ancestors.filter(st => String(st.id) !== String(id));
+    state.ctx.descendants = state.ctx.descendants.filter(st => String(st.id) !== String(id));
+  };
+  root.updateStatus = st => {
+    if (localPosts.has(String(st.id))) localPosts.get(String(st.id)).st = st;
+    if (!state) return;
+    if (String(state.s.id) === String(st.id)) state.s = st;
+    for (const list of [state.ctx.ancestors, state.ctx.descendants]){
+      const i = list.findIndex(p => String(p.id) === String(st.id)); if (i >= 0) list[i] = st;
     }
   };
   load(); root.refresh = load;
@@ -2470,6 +2559,21 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
   </div>`;
   const q = s => $(s, ov);
   const ta = q('.c-text'), cw = q('.c-cw'), post = q('.c-post'), cnt = q('.c-count'), hl = q('.c-hl');
+  let replyToggleAt = 0, replyPin = null;
+  const releaseReplyPin = () => { replyPin = null; };
+  /* 박스를 읽는 동안의 자동 이동만 막음. 다음 터치·스크롤·실제 입력에서 바로 해제 */
+  ov.addEventListener('pointerdown', releaseReplyPin, {capture:true});
+  ov.addEventListener('touchmove', releaseReplyPin, {passive:true});
+  ov.addEventListener('wheel', releaseReplyPin, {passive:true});
+  ov.addEventListener('keydown', releaseReplyPin);
+  q('.c-scroll').addEventListener('scroll', () => {
+    const sc = q('.c-scroll');
+    if (replyPin !== null && Math.abs(sc.scrollTop - replyPin) > 1){
+      recordDiag('reply-scroll-blocked', {before:sc.scrollTop, after:replyPin});
+      sc.scrollTop = replyPin;
+    }
+    if (Date.now() - replyToggleAt < 1000) recordDiag('compose-scroll', {top:sc.scrollTop});
+  }, {passive:true});
   const paintPart = v => esc(v)
       .replace(/(^|[^\w@\/])(@[\w.\-]+(?:@[\w\-]+(?:\.[\w\-]+)+)?)/g, '$1<span class="hm">$2</span>')
       .replace(/(^|[^\w&#\/])(#[\p{L}\p{N}_]+)/gu, '$1<span class="hm">$2</span>');
@@ -2540,9 +2644,10 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
     };
     /* 터치 단계부터 입력칸 포커스를 유지해 키보드를 다시 열며 커서로 이동하지 않게 함 */
     const replyAction = 'a,button,video,audio,.media,.crav';
-    let typing = false, replyFrame = 0;
+    let typing = false;
     r.addEventListener('pointerdown', e => {
       typing = document.activeElement === ta;
+      if (!e.target.closest(replyAction)) replyPin = q('.c-scroll').scrollTop;
       if (typing && !e.target.closest(replyAction)) e.preventDefault();
     });
     r.addEventListener('mousedown', e => {
@@ -2550,24 +2655,27 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
     });
     r.addEventListener('click', e => {
       if (e.target.closest(replyAction)) return;
-      const sc = q('.c-scroll'), keep = sc.scrollTop;
+      const sc = q('.c-scroll'), keep = replyPin === null ? sc.scrollTop : replyPin;
+      replyToggleAt = Date.now();
       const keepFocus = typing || document.activeElement === ta;
       typing = false;
       const open = !r.classList.contains('open');
       if (open && !built) build();
       r.classList.toggle('open', open); body.hidden = open; fullBox.hidden = !open;
       if (keepFocus && document.activeElement !== ta) ta.focus({preventScroll:true});
-      /* 박스 높이만 변경: 입력칸을 따라가는 브라우저 보정은 막고, 다음 화면 갱신까지만 위치 유지 */
-      sc.scrollTop = keep;
-      cancelAnimationFrame(replyFrame);
-      replyFrame = requestAnimationFrame(() => { if (ov.isConnected) sc.scrollTop = keep; });
+      /* 브라우저가 뒤늦게 커서를 보이게 하려 해도, 직접 읽거나 쓰기 전까지 박스 위치 유지 */
+      replyPin = Math.min(keep, Math.max(0, sc.scrollHeight - sc.clientHeight));
+      sc.scrollTop = replyPin;
+      recordDiag('reply-toggle', {open, before:keep, after:sc.scrollTop});
     });
     r.append(head, body, fullBox);
   }
   if (draft && draft.cw) cw.value = draft.cw;
   if (replyTo && replyTo.spoiler_text && !draft){ S.cwOn = true; cw.value = replyTo.spoiler_text; }
 
-  const update = () => {
+  let renderedText = ta.value;
+  const update = ({followCaret = false} = {}) => {
+    renderedText = ta.value;
     const n = countChars(ta.value) + (S.cwOn ? [...cw.value].length : 0);
     const max = acc.max || 500, left = max - n;
     paintHL(left < 0 ? overAt(ta.value, max - (S.cwOn ? [...cw.value].length : 0)) : -1);
@@ -2587,12 +2695,15 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
       const hNew = Math.max(minH, Math.ceil(mirror.scrollHeight + lh)) + 'px';
       if (ta.style.height !== hNew){ const keep = sc.scrollTop; ta.style.height = hNew; if (sc.scrollTop !== keep) sc.scrollTop = keep; }
     }
-    if (document.activeElement === ta && ta.clientWidth){
+    if (followCaret && document.activeElement === ta && ta.clientWidth){
       /* 커서가 있는 줄이 화면 아래로 잘리려 할 때만, 딱 그 줄이 보일 만큼만 내림 */
       mirror.value = ta.value.slice(0, ta.selectionEnd);
       const caretBottom = ta.getBoundingClientRect().top + mirror.scrollHeight;
       const limit = sc.getBoundingClientRect().bottom - 6;
-      if (caretBottom > limit) sc.scrollTop += Math.ceil(caretBottom - limit);
+      if (caretBottom > limit){
+        const before = sc.scrollTop; sc.scrollTop += Math.ceil(caretBottom - limit);
+        recordDiag('compose-caret-scroll', {before, after:sc.scrollTop});
+      }
     }
     if (transient){ /* 지우고 다시 쓰기·수정·인용 중에는 임시저장을 덮어쓰지 않음 */ }
     else if (!replyTo){
@@ -2727,7 +2838,7 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
     const tail = /^\s/.test(post) ? '' : ' ';
     ta.value = pre + lead + text + tail + post;
     const p = (pre + lead + text + tail).length;
-    ta.focus(); ta.setSelectionRange(p, p); remember(); update(); hideSugg();
+    ta.focus(); ta.setSelectionRange(p, p); remember(); update({followCaret:true}); hideSugg();
   };
   /* 커스텀 이모지 고르기 */
   q('.c-emo').addEventListener('pointerdown', remember);
@@ -2873,11 +2984,22 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
     accountPicker({title:'어느 계정으로 쓸까요?', selected:accIdx, allowAdd:false, onPick:i => { accIdx = i; acc = accounts[i]; applyAcc(false); }});
   };
   q('.c-acc').onclick = pickAcc; q('.c-accname').onclick = pickAcc;
-  ta.addEventListener('input', update); cw.addEventListener('input', update);
+  ta.addEventListener('input', e => {
+    const changed = ta.value !== renderedText;
+    if (!changed){
+      recordDiag('compose-input-repeat', {type:e.inputType || '', composing:!!e.isComposing, scroll:q('.c-scroll').scrollTop});
+      return;
+    }
+    /* IME가 같은 글을 다시 알려 준 경우는 입력으로 인한 화면 이동을 하지 않음 */
+    releaseReplyPin();
+    update({followCaret:changed});
+  });
+  cw.addEventListener('input', update);
 
   const vv = window.visualViewport;
   const fit = () => {
     const off = window.innerHeight - vv.height;
+    if (Date.now() - replyToggleAt < 1000) recordDiag('compose-viewport', {height:vv.height, offset:vv.offsetTop});
     if (off > 120){ ov.style.height = vv.height + 'px'; ov.style.top = vv.offsetTop + 'px'; }
     else { ov.style.height = ''; ov.style.top = ''; }
   };
@@ -2929,14 +3051,14 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
       if (replyTo) body.in_reply_to_id = acc.instance === viewAcc.instance ? replyTo.id : await resolveId(replyTo, acc);
       else if (S.replyId && redraft && acc.instance === redraft.acc.instance) body.in_reply_to_id = S.replyId;
       if (quote && !quoteLink) body.quoted_status_id = acc.instance === viewAcc.instance ? quote.id : await resolveId(quote, acc);
-      await api('/api/v1/statuses', {method:'POST', body, acc, headers:{'Idempotency-Key':idem}});
+      const posted = await api('/api/v1/statuses', {method:'POST', body, acc, headers:{'Idempotency-Key':idem}});
       if (replyTo) markReplied(viewAcc, replyTo.id);
       if (transient){ /* 새 글 임시저장은 그대로 둠 */ }
       else if (!replyTo) LS.del('ytt.draft');
       else { const m = LS.get('ytt.rdraft', {}); delete m[rkey]; LS.set('ytt.rdraft', m); }
       close();
       toast(acc === cur() ? '올렸어요' : `${acc.display_name || acc.username} 계정으로 올렸어요`);
-      afterPost(acc, !!replyTo);
+      afterPost(acc, !!replyTo, posted);
     }catch(e){
       toast(e.message); S.posting = false; post.textContent = postLabel; update();
     }
@@ -2949,9 +3071,17 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
   if (quoteLink){ ta.value = '\n\n' + (quote.url || quote.uri); update(); }
   setTimeout(() => { ta.focus(); const L = quoteLink ? 0 : ta.value.length; ta.setSelectionRange(L, L); remember(); }, 60);
 }
-function afterPost(acc, isReply){
+function afterPost(acc, isReply, posted){
   const {name} = parse(), e = cache.get(curKey);
   if (!e || !e.el.refresh) return;
+  if (posted && posted.id && acc === cur() && e.el.onPosted){
+    if (name === 'thread' || ['home','homeposts','local'].includes(name)){
+      /* 로컬 타임라인에는 공개 글만 보임 */
+      if (name === 'local' && posted.visibility !== 'public') return;
+      if (name !== 'thread' && !isReply) window.scrollTo(0, 0);
+      if (e.el.onPosted(posted)) return;
+    }
+  }
   if (name === 'thread') e.el.refresh();
   else if (!isReply && acc === cur() && (name === 'home' || name === 'homeposts' || name === 'local')){ window.scrollTo(0, 0); e.el.refresh(); }
 }
@@ -3957,6 +4087,11 @@ function mainSettings(root){
   /* 그 밖 */
   const s7 = secEl('그 밖의 설정', '여기 없는 설정은 마스토돈 웹사이트에서 바꿀 수 있어요.');
   s7.append(linkRow('globe', '마스토돈 웹에서 설정 열기', me.instance + '/settings', () => window.open(`https://${me.instance}/settings/preferences`, '_blank', 'noopener')));
+  s7.append(linkRow('memo', '문제 확인용 기록 복사', '최근 요청 시간과 화면 이동만 복사해요. 글 내용과 로그인 정보는 포함하지 않아요.', async () => {
+    const text = JSON.stringify({version:'2026-10-17.1', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
+    try{ await navigator.clipboard.writeText(text); toast('문제 확인용 기록을 복사했어요'); }
+    catch(e){ toast('복사하지 못했어요. 브라우저의 클립보드 권한을 확인해 주세요.'); }
+  }));
   root.append(s7);
 }
 function tabsEditor(root){

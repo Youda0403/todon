@@ -37,7 +37,7 @@ function fixture(opts = {}){
   };
   const clone = v => structuredClone(v);
   const context = vm.createContext({
-    accounts, cur:() => accounts[0], location:{protocol:'https:'}, isIOS:false, isStandalone:true, pushAlerts:() => ({...allAlerts}),
+    accounts, cur:() => accounts[0], location:{protocol:'https:'}, isIOS:false, isStandalone:true, pushAlerts:() => ({...allAlerts}), recordDiag:()=>{},
     LS:{get:(k, fallback) => clone(data.has(k) ? data.get(k) : fallback), set:(k,v) => data.set(k,clone(v))},
     document:{hidden:false, querySelectorAll:() => []}, window:{PushManager:function(){}, Notification:function(){}},
     navigator:{onLine:opts.offline ? false : true, serviceWorker:{ready:Promise.resolve({pushManager:manager})}},

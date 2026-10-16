@@ -1,0 +1,74 @@
+const {test} = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const path = require('node:path');
+const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
+const code = html.slice(html.indexOf('function threadOrder('), html.indexOf('function userView('));
+const defer = () => { let resolve, reject; const promise = new Promise((r,j) => { resolve=r; reject=j; }); return {promise,resolve,reject}; };
+class Element {
+  constructor(className=''){ this.className=className; this.children=[]; this.style={}; this.isConnected=false; }
+  append(...nodes){ this.children.push(...nodes); }
+  replaceChildren(...nodes){ this.children=[...nodes]; }
+  set innerHTML(value){ this.children=[]; }
+  querySelector(selector){ return this.children.find(n=>'.'+n.className===selector) || null; }
+}
+const status = (id, parent=null, author='a') => ({id, in_reply_to_id:parent, account:{id:author}});
+function fixture(){
+  const calls=[], toasts=[]; let handler=async p=>p.endsWith('/context')?{ancestors:[],descendants:[]}:status('100');
+  const context=vm.createContext({
+    document:{createElement:()=>new Element()}, Date, Map, Set,
+    window:{scrollY:40, scrollTo(){}},
+    h:markup=>new Element(/class="([^"]+)/.exec(markup)?.[1] || ''),
+    ic:()=>'', statusEl:st=>Object.assign(new Element('status'),{_st:st}), toast:s=>toasts.push(s),
+    api:p=>{ calls.push(p); return handler(p); }
+  });
+  vm.runInContext(code,context);
+  const root=vm.runInContext("threadView('100')",context);
+  return {root,calls,toasts,respond:fn=>{handler=fn;},ids:()=>root.children.filter(c=>c._st).map(c=>c._st.id)};
+}
+test('thread refreshes share the initial in-flight request', async()=>{
+  const f=fixture(),a=f.root.refresh(),b=f.root.refresh();
+  assert.equal(a,b); await a; assert.equal(f.calls.length,2); assert.deepEqual(f.ids(),['100']);
+});
+test('refresh preserves visible content and a failed refresh does not erase it', async()=>{
+  const f=fixture(); await f.root.refresh(); const existing=f.root.children[0],gate=defer();
+  f.respond(()=>gate.promise);const a=f.root.refresh(),b=f.root.refresh();
+  assert.equal(a,b);assert.equal(f.calls.length,4);assert.equal(f.root.children[0],existing);
+  gate.reject(new Error('temporary server error'));await a;
+  assert.equal(f.root.children[0],existing);assert.deepEqual(f.toasts,['temporary server error']);
+});
+test('posting a reply displays the returned status without further API requests', async()=>{
+  const f=fixture();await f.root.refresh();const calls=f.calls.length;
+  assert.equal(f.root.onPosted(status('101','100')),true);
+  assert.deepEqual(f.ids(),['100','101']);assert.equal(f.calls.length,calls);
+  f.root.onPosted(status('101','100'));assert.deepEqual(f.ids(),['100','101']);
+});
+test('new replies follow their parent branch and unrelated posts stay out of the thread', async()=>{
+  const f=fixture();await f.root.refresh();
+  f.root.onPosted(status('101','100','b'));f.root.onPosted(status('102','100','c'));
+  f.root.onPosted(status('103','101','b'));assert.deepEqual(f.ids(),['100','101','103','102']);
+  f.root.onPosted(status('999'));assert.deepEqual(f.ids(),['100','101','103','102']);
+});
+test('a reply posted during an older refresh is retained until the server confirms it', async()=>{
+  const f=fixture();await f.root.refresh();const gate=defer();
+  f.respond(p=>p.endsWith('/context')?gate.promise:Promise.resolve(status('100')));
+  const pending=f.root.refresh();f.root.onPosted(status('101','100'));
+  gate.resolve({ancestors:[],descendants:[]});await pending;assert.deepEqual(f.ids(),['100','101']);
+  f.respond(async p=>p.endsWith('/context')?{ancestors:[],descendants:[status('101','100')]}:status('100'));
+  await f.root.refresh();assert.deepEqual(f.ids(),['100','101']);
+});
+test('post rendering preserves bottom space used to hold the focused post position', async()=>{
+  const f=fixture();await f.root.refresh();f.root.querySelector('.tail').style.minHeight='400px';
+  f.root.onPosted(status('101','100'));assert.equal(f.root.querySelector('.tail').style.minHeight,'400px');
+});
+test('deleted local replies are not restored when the thread renders another post', async()=>{
+  const f=fixture();await f.root.refresh();f.root.onPosted(status('101','100'));
+  f.root.forgetStatus('101');f.root.onPosted(status('102','100'));
+  assert.deepEqual(f.ids(),['100','102']);
+});
+test('edited replies retain their current content when another post is inserted', async()=>{
+  const f=fixture();await f.root.refresh();f.root.onPosted({...status('101','100'),content:'old'});
+  f.root.updateStatus({...status('101','100'),content:'edited'});f.root.onPosted(status('102','100'));
+  assert.equal(f.root.children.find(c=>c._st?.id==='101')._st.content,'edited');
+});

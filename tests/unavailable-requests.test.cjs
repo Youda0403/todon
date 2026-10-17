@@ -17,10 +17,10 @@ const untilAbort=signal=>new Promise((resolve,reject)=>{
   const stop=()=>reject(Object.assign(new Error('abort'),{name:'AbortError'}));
   if(signal.aborted)stop();else signal.addEventListener('abort',stop,{once:true});
 });
-test('unresponsive reads abort after the 15-second budget and release their timer',async()=>{
+test('unresponsive reads abort after the 10-second budget and release their timer',async()=>{
   const f=fixture((url,opts)=>untilAbort(opts.signal),true);
   await assert.rejects(f.run("api('/api/v1/statuses/10')"),e=>e.code==='timeout'&&/불러오기를 멈췄어요/.test(e.message));
-  assert.deepEqual(f.delays,[15000]);assert.equal(f.cleared,1);assert.equal(f.hidden.length,0);
+  assert.deepEqual(f.delays,[10000]);assert.equal(f.cleared,1);assert.equal(f.hidden.length,0);
 });
 test('the timeout also covers a stalled response body',async()=>{
   const f=fixture(async(url,opts)=>({...response(200,{}),text:()=>untilAbort(opts.signal)}),true);
@@ -46,7 +46,7 @@ test('context endpoints and failed writes do not classify their parent status as
   const f=fixture(async()=>response(404,{error:'Record not found'}));
   await assert.rejects(f.run("api('/api/v1/statuses/10/context')"));
   await assert.rejects(f.run("api('/api/v1/statuses/10',{method:'PUT'})"));
-  assert.equal(f.hidden.length,0);assert.deepEqual(f.delays,[15000,60000]);
+  assert.equal(f.hidden.length,0);assert.deepEqual(f.delays,[10000,60000]);
 });
 test('auth, rate limits, network errors and invalid responses keep notifications',async()=>{
   for(const status of [401,403,429,500,503]){

@@ -965,7 +965,7 @@ function recordDiag(kind, data){
   if (diagEvents.length > 80) diagEvents.shift();
 }
 function qs(obj){ const u = new URLSearchParams(); for (const [k, v] of Object.entries(obj)) (Array.isArray(v) ? v : [v]).forEach(x => u.append(k, x)); return u.toString(); }
-async function api(path, {method='GET', body=null, form=null, acc=cur(), headers={}, withLink=false, signal, timeout=form ? 120000 : method === 'GET' ? 15000 : 60000} = {}){
+async function api(path, {method='GET', body=null, form=null, acc=cur(), headers={}, withLink=false, signal, timeout=form ? 120000 : method === 'GET' ? 10000 : 60000} = {}){
   const started = Date.now(); let status = 0;
   const controller = new AbortController(); let timedOut = false;
   const cancel = () => controller.abort();
@@ -1660,6 +1660,7 @@ function lightbox(list, i){
 
 /* ---------- 알림 카드 ---------- */
 const STATUS_NOTIFICATIONS = new Set(['mention','status','quote','quoted_update','favourite','reblog','poll','update']);
+function isReply(n){ return n.type === 'mention' && !!n.status && !!(n.status.in_reply_to_id || n.status.in_reply_to_account_id); }
 const notificationAccount = a => a.instance + ':' + a.id;
 const unavailableKey = a => 'ytt.unavailable.' + notificationAccount(a);
 function filterNotifications(list, acc = cur()){
@@ -1719,9 +1720,9 @@ function notifEl(n, acc = cur()){
   };
   if (['mention','status','quote','quoted_update'].includes(n.type) && s){
     const el = statusEl(s);
-    const reply = n.type === 'mention' && String(s.in_reply_to_account_id) === String(acc.id);
+    const reply = isReply(n), toMe = reply && String(s.in_reply_to_account_id) === String(acc.id);
     const kind = n.type === 'mention' ? (reply ? 'reply' : 'mention') : n.type === 'status' ? 'status' : 'quote';
-    const preTxt = {reply:'님이 내 글에 답글을 달았어요', mention:'님이 나를 불렀어요', status:'님이 새 글을 올렸어요', quote:n.type === 'quote' ? '님이 내 글을 인용했어요' : '님이 내가 인용한 글을 수정했어요'}[kind];
+    const preTxt = {reply:toMe ? '님이 내 글에 답글을 달았어요' : '님이 답글을 달았어요', mention:'님이 나를 불렀어요', status:'님이 새 글을 올렸어요', quote:n.type === 'quote' ? '님이 내 글을 인용했어요' : '님이 내가 인용한 글을 수정했어요'}[kind];
     const icon = {reply:'corner', mention:'at', status:'bell', quote:'quote'}[kind];
     const pre = h(`<div class="pre k-${kind}">${ic(icon)}<span></span></div>`);
     $('span', pre).append(richName(a), preTxt);
@@ -3929,7 +3930,7 @@ function popup(n, more){
   document.querySelectorAll('.pop:not(.updbar)').forEach(x => x.remove()); clearTimeout(popTimer);
   const me = cur(), s = n.status, dm = isDm(n);
   /* 답글: 내 글에 단 답글뿐 아니라, 상대가 자기 글에 이어 쓰면서 나를 부른 경우처럼 대화 속 답글도 포함 */
-  const reply = n.type === 'mention' && s && !!s.in_reply_to_id;
+  const reply = isReply(n);
   const toMe = reply && String(s.in_reply_to_account_id) === String(me.id);
   const txt = dm ? '님이 쪽지를 보냈어요' : reply ? (toMe ? '님이 내 글에 답글을 달았어요' : '님이 답글을 달았어요') : POP_TXT[n.type];
   if (!txt) return;
@@ -4209,7 +4210,7 @@ function mainSettings(root){
   const s7 = secEl('그 밖의 설정', '여기 없는 설정은 마스토돈 웹사이트에서 바꿀 수 있어요.');
   s7.append(linkRow('globe', '마스토돈 웹에서 설정 열기', me.instance + '/settings', () => window.open(`https://${me.instance}/settings/preferences`, '_blank', 'noopener')));
   s7.append(linkRow('memo', '문제 확인용 기록 복사', '최근 요청 시간과 화면 이동만 복사해요. 글 내용과 로그인 정보는 포함하지 않아요.', async () => {
-    const text = JSON.stringify({version:'2026-10-18.1', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
+    const text = JSON.stringify({version:'2026-10-18.2', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
     try{ await navigator.clipboard.writeText(text); toast('문제 확인용 기록을 복사했어요'); }
     catch(e){ toast('복사하지 못했어요. 브라우저의 클립보드 권한을 확인해 주세요.'); }
   }));

@@ -72,8 +72,10 @@ self.addEventListener('pushsubscriptionchange', e => {
 // 어느 계정의 알림인지 앱이 알아볼 수 있게, 토큰 대신 토큰의 짧은 지문만 넘김
 async function tokHint(t) {
   if (!t || !self.crypto || !crypto.subtle) return '';
-  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t));
-  return [...new Uint8Array(b)].slice(0, 6).map(x => x.toString(16).padStart(2, '0')).join('');
+  try {
+    const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t));
+    return [...new Uint8Array(b)].slice(0, 6).map(x => x.toString(16).padStart(2, '0')).join('');
+  } catch (_) { return ''; }
 }
 
 // 알림 내용을 종류별로 다르게 꾸미기 (쪽지·답글·멘션·좋아요·부스트·새 글·팔로우·인용)
@@ -81,13 +83,14 @@ const plainText = html => String(html || '')
   .replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>\s*<p>/gi, '\n').replace(/<[^>]+>/g, '')
   .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
   .replace(/^(\s*@[\w.-]+(@[\w.-]+)?)+\s*/, '').trim();
+function isReply(n) { return n.type === 'mention' && !!n.status && !!(n.status.in_reply_to_id || n.status.in_reply_to_account_id); }
 function describe(n, meId) {
   const name = (n.account && (n.account.display_name || n.account.username)) || '누군가';
   const s = n.status;
   const text = s ? (s.spoiler_text ? '⚠ ' + s.spoiler_text : (plainText(s.content) || (s.media_attachments && s.media_attachments.length ? '사진' : ''))) : '';
   const dm = n.type === 'mention' && s && s.visibility === 'direct';
   // 답글: 내 글에 단 답글 + 대화 속 답글(상대가 자기 글에 이어 쓰면서 나를 부른 경우 등)
-  const reply = n.type === 'mention' && s && !!s.in_reply_to_id;
+  const reply = isReply(n);
   if (dm) return { title: `${name} · 쪽지`, body: text, kind: 'dm' };
   if (reply) return { title: `${name} · 답글`, body: text, kind: 'reply' };
   const t = {
@@ -108,7 +111,30 @@ function describe(n, meId) {
 const BADGE_OF = { dm: 'dm', reply: 'reply', mention: 'mention', favourite: 'fav', reblog: 'boost', status: 'status', follow: 'follow', follow_request: 'follow', quote: 'quote', quoted_update: 'quote' };
 const badgeFor = kind => `badge-${BADGE_OF[kind] || 'default'}.png`;
 async function readAccounts() {
-  try { const c = await caches.open('ytt-meta'); const r = await c.match('./ytt-accounts.json'); return r ? await r.json() : []; } catch (_) { return []; }
+  try {
+    const c = await caches.open('ytt-meta'), r = await c.match('./ytt-accounts.json');
+    const list = r ? await r.json() : [];
+    return Array.isArray(list) ? list : [];
+  } catch (_) { return []; }
+}
+// 푸시의 mention만으로는 답글과 일반 멘션을 구분할 수 없다.
+// 상세 조회는 전체 10초. 일시 실패는 한 번 재시도하고, 실패해도 알림은 표시한다.
+async function describePush(d, acc) {
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const r = await fetch(`https://${acc.instance}/api/v1/notifications/${encodeURIComponent(d.notification_id)}`, {
+          headers: { Authorization: 'Bearer ' + d.access_token }, signal: controller.signal
+        });
+        if (!r.ok) { if (!attempt && r.status >= 500 && !controller.signal.aborted) continue; return null; }
+        const n = await r.json();
+        if (!n || String(n.id) !== String(d.notification_id) || (d.notification_type && n.type !== d.notification_type) || (n.type === 'mention' && !n.status)) return null;
+        return describe(n, acc.id);
+      } catch (_) { if (controller.signal.aborted || attempt) return null; }
+    }
+  } finally { clearTimeout(timer); }
+  return null;
 }
 
 // 휴대폰 알림: 앱이 화면에 떠 있으면 앱 안 팝업으로, 아니면 시스템 알림으로
@@ -120,13 +146,13 @@ self.addEventListener('push', e => {
     const vis = cs.find(c => c.visibilityState === 'visible');
     if (vis) { vis.postMessage({ type: 'push' }); return; }
     const hint = await tokHint(d.access_token);
-    let title = d.title || '역극툿', body = d.body || '', kind = d.notification_type || 'other';
-    const acc = (await readAccounts()).find(a => a.hint && a.hint === hint);
+    // 상세 정보를 확인하지 못한 mention은 답글도 포함하는 일반 알림으로 표시한다.
+    const unclassified = d.notification_type === 'mention';
+    let title = unclassified ? '새 멘션·답글' : d.title || '역극툿', body = d.body || '', kind = unclassified ? 'other' : d.notification_type || 'other';
+    const acc = (await readAccounts()).find(a => a && a.instance && a.hint && a.hint === hint);
     if (acc && d.notification_id && d.access_token) {
-      try {
-        const r = await fetch(`https://${acc.instance}/api/v1/notifications/${d.notification_id}`, { headers: { Authorization: 'Bearer ' + d.access_token } });
-        if (r.ok) { const x = describe(await r.json(), acc.id); if (x) { title = x.title; body = x.body; kind = x.kind; } }
-      } catch (_) {}
+      const x = await describePush(d, acc);
+      if (x) { title = x.title; body = x.body; kind = x.kind; }
     }
     await self.registration.showNotification(title, {
       body,

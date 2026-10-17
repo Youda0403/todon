@@ -7,19 +7,23 @@ const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
 const code = html.slice(html.indexOf('function threadOrder('), html.indexOf('function userView('));
 const defer = () => { let resolve, reject; const promise = new Promise((r,j) => { resolve=r; reject=j; }); return {promise,resolve,reject}; };
 class Element {
-  constructor(className=''){ this.className=className; this.children=[]; this.style={}; this.isConnected=false; }
-  append(...nodes){ this.children.push(...nodes); }
-  replaceChildren(...nodes){ this.children=[...nodes]; }
+  constructor(className=''){ this.className=className; this.children=[]; this.style={}; this.isConnected=false; this.attributes={}; }
+  append(...nodes){ nodes.forEach(n=>{n.parent=this;this.children.push(n);}); }
+  prepend(...nodes){ nodes.forEach(n=>{n.parent=this;});this.children.unshift(...nodes); }
+  replaceChildren(...nodes){ this.children=[];this.append(...nodes); }
+  remove(){ if(this.parent)this.parent.children=this.parent.children.filter(n=>n!==this); }
+  setAttribute(k,v){ this.attributes[k]=v; }
   set innerHTML(value){ this.children=[]; }
-  querySelector(selector){ return this.children.find(n=>'.'+n.className===selector) || null; }
+  querySelector(selector){ return this.children.find(n=>'.'+n.className===selector || n.tagName===selector) || null; }
 }
 const status = (id, parent=null, author='a') => ({id, in_reply_to_id:parent, account:{id:author}});
 function fixture(){
   const calls=[], toasts=[]; let handler=async p=>p.endsWith('/context')?{ancestors:[],descendants:[]}:status('100');
   const context=vm.createContext({
-    document:{createElement:()=>new Element()}, Date, Map, Set,
+    document:{createElement:()=>new Element()}, Date, Map, Set, AbortController,cur:()=>({id:'me',instance:'server.test'}),nav:()=>{},
     window:{scrollY:40, scrollTo(){}},
-    h:markup=>new Element(/class="([^"]+)/.exec(markup)?.[1] || ''),
+    h:markup=>{const el=new Element(/class="([^"]+)/.exec(markup)?.[1] || '');if(markup.includes('<p>'))el.append(Object.assign(new Element(),{tagName:'p'}));if(markup.includes('<button'))el.append(Object.assign(new Element(),{tagName:'button'}));return el;},
+    $:(selector,el)=>el.querySelector(selector),
     ic:()=>'', statusEl:st=>Object.assign(new Element('status'),{_st:st}), toast:s=>toasts.push(s),
     api:p=>{ calls.push(p); return handler(p); }
   });
@@ -36,7 +40,7 @@ test('refresh preserves visible content and a failed refresh does not erase it',
   f.respond(()=>gate.promise);const a=f.root.refresh(),b=f.root.refresh();
   assert.equal(a,b);assert.equal(f.calls.length,4);assert.equal(f.root.children[0],existing);
   gate.reject(new Error('temporary server error'));await a;
-  assert.equal(f.root.children[0],existing);assert.deepEqual(f.toasts,['temporary server error']);
+  assert.ok(f.root.children.includes(existing));assert.equal(f.root.querySelector('.err').attributes.role,'alert');assert.deepEqual(f.toasts,[]);
 });
 test('posting a reply displays the returned status without further API requests', async()=>{
   const f=fixture();await f.root.refresh();const calls=f.calls.length;
@@ -71,4 +75,10 @@ test('edited replies retain their current content when another post is inserted'
   const f=fixture();await f.root.refresh();f.root.onPosted({...status('101','100'),content:'old'});
   f.root.updateStatus({...status('101','100'),content:'edited'});f.root.onPosted(status('102','100'));
   assert.equal(f.root.children.find(c=>c._st?.id==='101')._st.content,'edited');
+});
+test('a cached status that becomes unavailable is replaced by an alert instead of stale content',async()=>{
+  const f=fixture();await f.root.refresh();f.respond(async()=>{throw Object.assign(new Error('이 툿은 삭제되었거나 지금 계정에서 볼 수 없어요.'),{code:'unavailable',status:404});});
+  await f.root.refresh();assert.deepEqual(f.ids(),[]);assert.equal(f.root.querySelector('.err').attributes.role,'alert');
+  f.respond(async p=>p.endsWith('/context')?{ancestors:[],descendants:[]}:status('100'));
+  await f.root.refresh();assert.deepEqual(f.ids(),['100']);assert.equal(f.root.querySelector('.err'),null);
 });

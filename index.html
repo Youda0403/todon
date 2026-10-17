@@ -965,28 +965,52 @@ function recordDiag(kind, data){
   if (diagEvents.length > 80) diagEvents.shift();
 }
 function qs(obj){ const u = new URLSearchParams(); for (const [k, v] of Object.entries(obj)) (Array.isArray(v) ? v : [v]).forEach(x => u.append(k, x)); return u.toString(); }
-async function api(path, {method='GET', body=null, form=null, acc=cur(), headers={}, withLink=false, signal} = {}){
+async function api(path, {method='GET', body=null, form=null, acc=cur(), headers={}, withLink=false, signal, timeout=form ? 120000 : method === 'GET' ? 15000 : 60000} = {}){
   const started = Date.now(); let status = 0;
+  const controller = new AbortController(); let timedOut = false;
+  const cancel = () => controller.abort();
+  if (signal){ if (signal.aborted) cancel(); else signal.addEventListener('abort', cancel, {once:true}); }
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeout);
   try{
-    const opt = {method, headers:{Authorization:'Bearer ' + acc.token, ...headers}, signal};
+    const opt = {method, headers:{Authorization:'Bearer ' + acc.token, ...headers}, signal:controller.signal};
     if (form) opt.body = form;
     else if (body){ opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
-    let r;
-    try{ r = await fetch(`https://${acc.instance}${path}`, opt); }
-    catch(e){ throw new Error('서버에 연결하지 못했어요. 인터넷 연결을 확인해 주세요.'); }
+    const r = await fetch(`https://${acc.instance}${path}`, opt);
     status = r.status;
     if (!r.ok){
       let msg = ''; try{ msg = (await r.json()).error; }catch(e){}
-      const err = new Error(r.status === 401 ? '로그인이 만료되었어요. 내 계정에서 이 계정을 다시 추가해 주세요.' : msg || `요청이 실패했어요 (${r.status})`);
+      const missing = method === 'GET' && /^\/api\/v1\/statuses\/(\d+)(?:\?.*)?$/.exec(path);
+      const unavailable = missing && (r.status === 410 || r.status === 404 && typeof msg === 'string' && !!msg);
+      const text = unavailable ? '이 툿은 삭제되었거나 지금 계정에서 볼 수 없어요.'
+        : r.status === 401 ? '로그인이 만료되었어요. 내 계정에서 이 계정을 다시 추가해 주세요.'
+        : r.status === 403 ? '이 계정에는 이 내용을 볼 권한이 없어요.'
+        : r.status === 404 || r.status === 410 ? '요청한 내용을 찾을 수 없어요. 서버 주소가 바뀌었거나 운영이 종료되었을 수 있어요.'
+        : r.status === 429 ? '요청이 잠시 몰렸어요. 조금 뒤 다시 시도해 주세요.'
+        : r.status >= 500 ? '서버에 일시적인 문제가 있어요. 잠시 후 다시 시도해 주세요.'
+        : msg || `요청이 실패했어요 (${r.status})`;
+      const err = new Error(text);
+      if (unavailable){ err.code = 'unavailable'; err.statusId = missing[1]; }
       err.status = r.status; throw err;
     }
     const txt = await r.text(); const data = txt ? JSON.parse(txt) : null;
+    const readStatus = method === 'GET' && /^\/api\/v1\/statuses\/(\d+)(?:\?.*)?$/.exec(path);
+    if (readStatus && data && String(data.id) === readStatus[1]) restoreAvailableStatuses([readStatus[1]],acc);
     if (!withLink) return data;
     let next = null;
     const m = /<([^>]+)>\s*;\s*rel="next"/.exec(r.headers.get('Link') || '');
     if (m){ try{ const u = new URL(m[1]); next = u.pathname + u.search; }catch(e){} }
     return {data, next};
+  }catch(e){
+    if (timedOut) throw Object.assign(new Error(method === 'GET' ? '서버 응답이 없어 불러오기를 멈췄어요. 연결을 확인한 뒤 다시 시도해 주세요.' : '서버 응답이 늦어 결과를 확인하지 못했어요. 반영 여부를 확인한 뒤 다시 시도해 주세요.'), {code:'timeout'});
+    if (signal && signal.aborted) throw Object.assign(new Error('요청을 취소했어요.'), {name:'AbortError', code:'aborted'});
+    if (e.status){
+      if (e.code === 'unavailable') hideUnavailableStatuses([e.statusId], acc);
+      throw e;
+    }
+    throw Object.assign(new Error(e instanceof SyntaxError ? '서버에서 올바른 응답을 받지 못했어요. 서버 운영 상태를 확인해 주세요.' : '서버에 연결할 수 없어요. 인터넷 연결이나 서버 운영 상태를 확인해 주세요.'), {code:e instanceof SyntaxError ? 'invalid_response' : 'network'});
   }finally{
+    clearTimeout(timer);
+    if (signal) signal.removeEventListener('abort', cancel);
     const group = /^\/api\/v\d+\/(statuses|timelines|notifications|markers|conversations|push|accounts|media)\b/.exec(path);
     recordDiag('request', {method, api:(group ? group[1] : 'other') + (/\/context(?:\?|$)/.test(path) ? '/context' : ''), ms:Date.now() - started, status});
   }
@@ -1635,11 +1659,67 @@ function lightbox(list, i){
 }
 
 /* ---------- 알림 카드 ---------- */
-function notifEl(n){
+const STATUS_NOTIFICATIONS = new Set(['mention','status','quote','quoted_update','favourite','reblog','poll','update']);
+const notificationAccount = a => a.instance + ':' + a.id;
+const unavailableKey = a => 'ytt.unavailable.' + notificationAccount(a);
+function filterNotifications(list, acc = cur()){
+  const hidden = LS.get(unavailableKey(acc), {});
+  return list.filter(n => (!STATUS_NOTIFICATIONS.has(n.type) || n.status) && (!n.status || !hidden[String(n.status.id)]));
+}
+function hideUnavailableStatuses(ids, acc){
+  const hidden = LS.get(unavailableKey(acc), {}), now = Date.now();
+  ids.forEach(id => { hidden[String(id)] = now; });
+  const kept = Object.entries(hidden).sort((a,b) => b[1] - a[1]).slice(0,500);
+  LS.set(unavailableKey(acc), Object.fromEntries(kept));
+  const key = notificationAccount(acc);
+  for (const {el} of cache.values()) if (el._notificationAccount === key && el.pruneNotifications) el.pruneNotifications();
+  document.querySelectorAll('.pop').forEach(p => { if (p._notificationAccount === key && p._notification?.status && ids.some(id => String(id) === String(p._notification.status.id))) p.remove(); });
+  if (!cur() || notificationAccount(cur()) !== key) return;
+  let changed = false;
+  for (const [id, sid] of unread) if (sid && hidden[sid]){ unread.delete(id); changed = true; }
+  if (changed) setBadge(unread.size);
+}
+function restoreAvailableStatuses(ids, acc){
+  const hidden = LS.get(unavailableKey(acc), {}); let changed = false;
+  ids.forEach(id => { if (hidden[String(id)]){ delete hidden[String(id)]; changed = true; } });
+  if (changed) LS.set(unavailableKey(acc), hidden);
+}
+/* 지원하는 서버에서는 한 번에 확인. 알림마다 개별 요청을 보내거나 화면 표시를 기다리지 않음. */
+const notificationChecks = new Map(), notificationBatchSupport = new Map();
+function verifyNotificationStatuses(list, acc){
+  if (notificationBatchSupport.get(acc.instance) === false || navigator.onLine === false) return;
+  const key = notificationAccount(acc);
+  let state = notificationChecks.get(key);
+  if (!state){ state = {checked:new Map(), pending:null}; notificationChecks.set(key,state); }
+  if (state.pending) return state.pending;
+  const ids = [...new Set(list.filter(n => n.status).map(n => String(n.status.id)))].filter(id => Date.now() - (state.checked.get(id) || 0) >= 60000).slice(0,80);
+  if (!ids.length) return;
+  ids.forEach(id => state.checked.set(id,Date.now()));
+  while (state.checked.size > 1000) state.checked.delete(state.checked.keys().next().value);
+  state.pending = (async () => {
+    try{
+      const statuses = await api('/api/v1/statuses?' + qs({'id[]':ids}), {acc, timeout:10000});
+      if (!Array.isArray(statuses) || statuses.some(st => !st || !st.id || !st.account || !ids.includes(String(st.id)))) return;
+      const present = new Set(statuses.map(st => String(st.id)));
+      restoreAvailableStatuses([...present],acc);
+      const missing = ids.filter(id => !present.has(id));
+      if (missing.length) hideUnavailableStatuses(missing,acc);
+    }catch(e){ if ([404,405,501].includes(e.status)) notificationBatchSupport.set(acc.instance,false); }
+    finally{ state.pending = null; }
+  })();
+  return state.pending;
+}
+function notifEl(n, acc = cur()){
   const a = n.account, s = n.status;
+  if (STATUS_NOTIFICATIONS.has(n.type) && !s) return document.createComment('unavailable-status');
+  const identify = el => {
+    el._notification = n; el.dataset.nid = n.id;
+    if (s) el.dataset.sid = s.id;
+    return el;
+  };
   if (['mention','status','quote','quoted_update'].includes(n.type) && s){
     const el = statusEl(s);
-    const reply = n.type === 'mention' && String(s.in_reply_to_account_id) === String(cur().id);
+    const reply = n.type === 'mention' && String(s.in_reply_to_account_id) === String(acc.id);
     const kind = n.type === 'mention' ? (reply ? 'reply' : 'mention') : n.type === 'status' ? 'status' : 'quote';
     const preTxt = {reply:'님이 내 글에 답글을 달았어요', mention:'님이 나를 불렀어요', status:'님이 새 글을 올렸어요', quote:n.type === 'quote' ? '님이 내 글을 인용했어요' : '님이 내가 인용한 글을 수정했어요'}[kind];
     const icon = {reply:'corner', mention:'at', status:'bell', quote:'quote'}[kind];
@@ -1648,7 +1728,7 @@ function notifEl(n){
     if (el.firstElementChild && el.firstElementChild.classList.contains('pre')) el.firstElementChild.replaceWith(pre); else el.prepend(pre);
     el.classList.add('notif-card', 'k-' + kind);
     if (kind === 'reply'){ const rt = $('.replyto', el); if (rt) rt.hidden = true; }
-    return el;
+    return identify(el);
   }
   const cfg = {
     favourite:['heart','fav','님이 내 글을 좋아해요'],
@@ -1680,12 +1760,13 @@ function notifEl(n){
     ok.onclick = e => act('authorize', e); no.onclick = e => act('reject', e);
     $('.body', el).append(box);
   }
-  return el;
+  return identify(el);
 }
 
 /* ---------- 화면들 ---------- */
 function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글이 없어요', hint = null, filter = null, limit = 20, linkOnly = false} = {}){
   const root = document.createElement('div');
+  const viewAcc = cur();
   const hintKey = 'ytt.hint.' + endpoint + JSON.stringify(params);
   if (hint && !LS.get(hintKey, false)){
     const hb = h(`<div class="hint"><span></span><button class="ibtn" type="button" aria-label="안내 닫기">${ic('x')}</button></div>`);
@@ -1707,7 +1788,7 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
   /* 글 묶음 → 화면 조각 (연달아 있는 원글→답글은 원글을 위에 두고 선으로 이음) */
   const build = shown => {
     const frag = document.createDocumentFragment();
-    if (kind === 'notif') shown.forEach(it => frag.append(notifEl(it)));
+    if (kind === 'notif') filterNotifications(shown,viewAcc).forEach(it => frag.append(notifEl(it,viewAcc)));
     else for (let i = 0; i < shown.length; ){
       let j = i;
       while (j + 1 < shown.length && !shown[j].reblog && !shown[j + 1].reblog && shown[j].in_reply_to_id && String(shown[j].in_reply_to_id) === String(shown[j + 1].id)) j++;
@@ -1735,6 +1816,7 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
       fresh.forEach(it => seenIds.add(String(it.id)));
       items.forEach(it => postedItems.delete(String(it.id)));
       list.append(build(filter ? fresh.filter(filter) : fresh));
+      if (kind === 'notif') verifyNotificationStatuses(items,viewAcc);
       /* 새 글이 하나도 없는 페이지 = 끝. 북마크·좋아요처럼 서버가 알려 준 다음 주소로만 넘길 수 있는 목록은 그 주소가 없으면 끝 */
       const nextGuess = next || (linkOnly ? null : endpoint + '?' + qs({limit:String(limit), ...params, max_id:items.length ? items[items.length - 1].id : ''}));
       if (fresh.length && nextGuess){
@@ -1750,6 +1832,7 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
       $('p', b).textContent = e.message; $('button', b).onclick = () => load(reset);
       sent.append(b);
     }finally{ if (my === gen){ loading = false; hideSpin(); } }
+    if (kind === 'notif' && my === gen && root.pruneNotifications) root.pruneNotifications();
     if (refreshing && my === gen && list.animate) list.animate([{opacity:.35}, {opacity:1}], {duration:220, easing:'ease-out'});
     if (ok && root.isConnected && sent.getBoundingClientRect().top < innerHeight + 600) load(false);
   }
@@ -1794,7 +1877,7 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
   root.refresh = () => {
     if (refreshTask) return refreshTask;
     if (loading) return;
-    refreshTask = ((topId && list.childElementCount && !linkOnly) ? quick() : load(true)).finally(() => { refreshTask = null; });
+    refreshTask = ((kind !== 'notif' && topId && list.childElementCount && !linkOnly) ? quick() : load(true)).finally(() => { refreshTask = null; });
     return refreshTask;
   };
   root.onPosted = st => {
@@ -1807,6 +1890,14 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
   };
   root.forgetStatus = id => postedItems.delete(String(id));
   root.updateStatus = st => { if (postedItems.has(String(st.id))) postedItems.set(String(st.id), st); };
+  if (kind === 'notif'){
+    root._notificationAccount = notificationAccount(viewAcc);
+    root.pruneNotifications = () => {
+      const hidden = LS.get(unavailableKey(viewAcc),{});
+      for (const node of [...list.children]) if (node._notification?.status && hidden[String(node._notification.status.id)]) node.remove();
+      if (!list.childElementCount && !loading) sent.innerHTML = `<div class="empty">${esc(empty)}</div>`;
+    };
+  }
   load(true);
   return root;
 }
@@ -1829,7 +1920,7 @@ function mentionsView(){
   const list = document.createElement('div');
   const more = h('<div class="mqmore"></div>');
   root.append(bar, sum, list, more);
-  let items = [], nextPath = null, end = false, loading = false, gen = 0;
+  let items = [], nextPath = null, end = false, loading = false, gen = 0, loadError = null;
   let mine = new Set(), myNext = null, myEnd = false, myOldest = null;
   const stOf = n => {
     const id = String(n.status.id), m = mqStore(me);
@@ -1840,7 +1931,7 @@ function mentionsView(){
   const LABEL = {replied:'답장함', done:'답 안 해도 됨', todo:'아직 답 안 함'};
   const whenOf = n => n.created_at || n.status.created_at;
   function card(n){
-    const el = notifEl(n);
+    const el = notifEl(n,me);
     const k = stOf(n);
     el.classList.add('mq', 'mq-' + k);
     const row = h(`<div class="rq"><span class="rqs">${ic(k === 'todo' ? 'reply' : 'check')}<span></span></span><button class="mini" type="button"></button></div>`);
@@ -1890,6 +1981,7 @@ function mentionsView(){
     $('.mqsort', bar).innerHTML = ic(pref.asc ? 'up' : 'down') + `<span>${pref.asc ? '오래된 순' : '최신 순'}</span>`;
   }
   function draw(){
+    items = filterNotifications(items,me);
     paintBar();
     let arr = pref.only ? items.filter(n => stOf(n) === 'todo') : items.slice();
     if (pref.asc) arr.reverse();
@@ -1901,6 +1993,12 @@ function mentionsView(){
   function paintMore(){
     more.replaceChildren();
     if (loading){ more.append(h('<div class="sentinel"><div class="spin"></div></div>')); return; }
+    if (loadError){
+      const problem = h('<div class="err" role="alert"><p></p><button class="pill ghost" type="button">다시 시도</button></div>');
+      $('p',problem).textContent = loadError.message;
+      const reset = loadError.reset; $('button',problem).onclick = () => loadMore(reset);
+      more.append(problem); return;
+    }
     if (!items.length && end){ more.append(h('<div class="empty">아직 나를 부른 글이 없어요.</div>')); return; }
     more.classList.toggle('top', pref.asc);
     if (end){ more.append(h('<div class="mqend">가장 오래된 멘션까지 다 불러왔어요</div>')); return; }
@@ -1922,17 +2020,18 @@ function mentionsView(){
   async function loadMore(reset){
     if (reset){ gen++; items = []; nextPath = null; end = false; loading = false; mine = new Set(); myNext = null; myEnd = false; myOldest = null; }
     if (loading || end) return;
-    loading = true; const my = gen; paintMore();
+    loading = true; loadError = null; const my = gen; paintMore();
     try{
       const {data, next} = await api(nextPath || '/api/v1/notifications?' + qs({'types[]':['mention'], limit:'40'}), {withLink:true, acc:me});
       if (my !== gen) return;
       const seen = new Set(items.map(n => String(n.id)));
-      const fresh = (data || []).filter(n => n.status && !isDm(n) && !seen.has(String(n.id)));
+      verifyNotificationStatuses(data || [],me);
+      const fresh = filterNotifications(data || [],me).filter(n => n.status && !isDm(n) && !seen.has(String(n.id)));
       if (fresh.length) await loadMine(whenOf(fresh[fresh.length - 1]), my);
       if (my !== gen) return;
-      items = items.concat(fresh);
+      items = items.concat(filterNotifications(fresh,me));
       nextPath = next; if (!data || !data.length || !next || !(data || []).some(n => !seen.has(String(n.id)))) end = true;
-    }catch(e){ if (my === gen) toast(e.message); }
+    }catch(e){ if (my === gen) loadError = {message:e.message, reset:!!reset}; }
     if (my !== gen) return;
     loading = false;
     const y = window.scrollY; draw(); if (!reset) window.scrollTo(0, y);
@@ -1946,6 +2045,8 @@ function mentionsView(){
   });
   new IntersectionObserver(es => { if (es[0].isIntersecting && !pref.asc && !loading && !end && items.length) loadMore(); }, {rootMargin:'400px 0px'}).observe(more);
   root.refresh = () => loadMore(true);
+  root._notificationAccount = notificationAccount(me);
+  root.pruneNotifications = draw;
   draw(); loadMore(true);
   return root;
 }
@@ -1964,6 +2065,8 @@ function threadOrder(focus, desc){
 }
 function threadView(id){
   const root = document.createElement('div');
+  const viewAcc = cur();
+  let problem = null;
   let state = null, pending = null, stopFit = () => {};
   const localPosts = new Map();
   const addPosted = (s, ctx, st) => {
@@ -1973,6 +2076,7 @@ function threadView(id){
   };
   const render = (s, ctx, align) => {
     stopFit();
+    problem = null;
     const oldTail = root.querySelector('.tail');
     const keepTail = oldTail && oldTail.style.minHeight;
     root.replaceChildren();
@@ -2011,8 +2115,9 @@ function threadView(id){
     if (pending) return pending;
     if (!state) root.innerHTML = '<div class="sentinel"><div class="spin"></div></div>';
     pending = (async () => {
+      const controller = new AbortController();
       try{
-        const [s, ctx] = await Promise.all([api(`/api/v1/statuses/${id}`), api(`/api/v1/statuses/${id}/context`)]);
+        const [s, ctx] = await Promise.all([api(`/api/v1/statuses/${id}`, {acc:viewAcc, signal:controller.signal}), api(`/api/v1/statuses/${id}/context`, {acc:viewAcc, signal:controller.signal})]);
         for (const [key, item] of localPosts){
           const confirmed = ctx.descendants.some(p => String(p.id) === key);
           if (confirmed || Date.now() - item.at > 30000) localPosts.delete(key);
@@ -2020,11 +2125,19 @@ function threadView(id){
         }
         state = {s, ctx}; render(s, ctx, true);
       }catch(e){
-        if (state){ toast(e.message); return; }
-        root.replaceChildren();
+        controller.abort();
+        if (e.code === 'unavailable'){ state = null; localPosts.clear(); stopFit(); }
+        if (problem) problem.remove();
+        if (!state) root.replaceChildren();
         const b = h('<div class="err" style="padding:32px 16px"><p></p><button class="pill ghost" type="button">다시 시도</button></div>');
+        b.setAttribute('role','alert');
         $('p', b).textContent = e.message; $('button', b).onclick = load;
-        root.append(b);
+        if (e.code === 'unavailable'){
+          const back = h('<button class="pill ghost" type="button" style="margin-left:8px">알림 목록으로</button>');
+          back.onclick = () => nav('#/notifications'); b.append(back);
+        }
+        problem = b;
+        if (state) root.prepend(b); else root.append(b);
       }finally{ pending = null; }
     })();
     return pending;
@@ -3812,6 +3925,7 @@ function popOut(p){
   p.classList.add('out'); setTimeout(() => p.remove(), 260);
 }
 function popup(n, more){
+  if (!filterNotifications([n]).length) return;
   document.querySelectorAll('.pop:not(.updbar)').forEach(x => x.remove()); clearTimeout(popTimer);
   const me = cur(), s = n.status, dm = isDm(n);
   /* 답글: 내 글에 단 답글뿐 아니라, 상대가 자기 글에 이어 쓰면서 나를 부른 경우처럼 대화 속 답글도 포함 */
@@ -3824,6 +3938,7 @@ function popup(n, more){
   const cls = n.type === 'favourite' ? 'fav' : n.type === 'reblog' ? 'boost' : 'k-' + kind;
   const tagTxt = {dm:'쪽지', reply:'답글', fav:'좋아요', boost:'부스트', status:'새 글', quote:'인용', mention:'멘션'}[kind] || '알림';
   const p = h(`<div class="pop" role="status"><img class="av" alt=""><span class="pic ${cls}">${ic(icn)}</span><div class="t"><div class="pt"><span class="ptag k-${kind}">${tagTxt}</span><b></b><span class="ptx"></span></div><small></small></div><button class="ibtn" type="button" aria-label="닫기">${ic('x')}</button></div>`);
+  p._notification = n; p._notificationAccount = notificationAccount(me);
   $('img', p).src = avOf(n.account);
   $('b', p).append(richName(n.account)); $('.ptx', p).textContent = txt;
   let sub = s ? (s.spoiler_text ? '⚠ ' + s.spoiler_text : (stripLead(plain(s.content)) || (s.media_attachments && s.media_attachments.length ? '사진' : ''))) : '@' + n.account.acct;
@@ -3881,7 +3996,13 @@ async function openNotif(id, hint){
   }
   let target = '#/notifications';
   /* 알림의 계정을 못 찾았으면, 지금 계정으로 같은 번호의 다른 알림을 열지 않도록 알림 탭으로 */
-  try{ if (id && found) target = notifTarget(await api('/api/v1/notifications/' + encodeURIComponent(id))); }catch(e){}
+  try{
+    if (id && found){
+      const n = await api('/api/v1/notifications/' + encodeURIComponent(id));
+      if (filterNotifications([n]).length) target = notifTarget(n);
+      else toast('이 알림의 툿은 삭제되었거나 더 이상 볼 수 없어요.');
+    }
+  }catch(e){ toast(e.status === 404 || e.status === 410 ? '이 알림은 삭제되었거나 이미 정리되었어요.' : e.message); }
   const d = depthOf();
   if (d === 0 && !isHomeHash(target)){ history.replaceState({d:0}, '', homeTarget()); history.pushState({d:1}, '', target); }
   else history.replaceState({d}, '', target);
@@ -4088,7 +4209,7 @@ function mainSettings(root){
   const s7 = secEl('그 밖의 설정', '여기 없는 설정은 마스토돈 웹사이트에서 바꿀 수 있어요.');
   s7.append(linkRow('globe', '마스토돈 웹에서 설정 열기', me.instance + '/settings', () => window.open(`https://${me.instance}/settings/preferences`, '_blank', 'noopener')));
   s7.append(linkRow('memo', '문제 확인용 기록 복사', '최근 요청 시간과 화면 이동만 복사해요. 글 내용과 로그인 정보는 포함하지 않아요.', async () => {
-    const text = JSON.stringify({version:'2026-10-17.1', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
+    const text = JSON.stringify({version:'2026-10-18.1', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
     try{ await navigator.clipboard.writeText(text); toast('문제 확인용 기록을 복사했어요'); }
     catch(e){ toast('복사하지 못했어요. 브라우저의 클립보드 권한을 확인해 주세요.'); }
   }));
@@ -5226,8 +5347,10 @@ async function checkNotif(){
   if (pollAcct !== acc.acct){ pollAcct = acc.acct; pollTop = null; notifTop = null; unread = new Map(); }
   try{
     const first = pollTop === null;
-    const list = await api('/api/v1/notifications?' + qs(first ? {limit:'40'} : {since_id:pollTop, limit:'40'}));
+    const received = await api('/api/v1/notifications?' + qs(first ? {limit:'40'} : {since_id:pollTop, limit:'40'}));
     if (cur() !== acc) return;
+    const list = filterNotifications(received,acc), visible = new Set(list.map(n => n.id));
+    received.forEach(n => { if (!visible.has(n.id)) unread.delete(n.id); });
     if (first){
       /* 다른 기기·앱에서 읽은 위치도 반영 */
       try{
@@ -5237,19 +5360,20 @@ async function checkNotif(){
         if (sid && (!ls || cmpId(sid, ls) > 0)) LS.set(seenKey(), sid);
       }catch(e){}
     }
-    if (list.length && (first || cmpId(list[0].id, pollTop) > 0)) pollTop = list[0].id;
+    if (received.length && (first || cmpId(received[0].id, pollTop) > 0)) pollTop = received[0].id;
     const nonDm = list.filter(n => !isDm(n));
     if (nonDm.length && (!notifTop || cmpId(nonDm[0].id, notifTop) > 0)) notifTop = nonDm[0].id;
     const {name} = parse();
     const onNotif = name === 'notifications' || name === 'mentions';
     let seen = LS.get(seenKey(), null);
     if (notifTop && (!seen || onNotif)){ markSeen(notifTop); seen = notifTop; }
-    nonDm.forEach(n => { if (seen && cmpId(n.id, seen) > 0) unread.set(n.id, true); });
+    nonDm.forEach(n => { if (seen && cmpId(n.id, seen) > 0) unread.set(n.id, n.status ? String(n.status.id) : null); });
     for (const id of [...unread.keys()]) if (!seen || cmpId(id, seen) <= 0) unread.delete(id);
     if (onNotif) unread.clear();
     setBadge(unread.size, first && list.length >= 40 && unread.size >= nonDm.length);
     if (first) list.forEach(n => shownIds.add(n.id));
     else showNew(list);
+    if (onNotif) verifyNotificationStatuses(received,acc);
   }catch(e){}
   checkDm();
 }

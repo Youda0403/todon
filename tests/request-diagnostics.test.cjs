@@ -6,7 +6,7 @@ const path = require('node:path');
 const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
 const code = html.slice(html.indexOf('const diagEvents ='), html.indexOf('/* ---------- 로그인 (OAuth)'));
 function fixture(fetch){
-  const context=vm.createContext({fetch,Date,URL,URLSearchParams,cur:()=>({instance:'private.example',token:'private-token'})});
+  const context=vm.createContext({fetch,Date,URL,URLSearchParams,AbortController,setTimeout,clearTimeout,hideUnavailableStatuses:()=>{},restoreAvailableStatuses:()=>{},cur:()=>({instance:'private.example',token:'private-token'})});
   vm.runInContext(code,context);
   return {run:s=>vm.runInContext(s,context),events:()=>JSON.parse(vm.runInContext('JSON.stringify(diagEvents)',context))};
 }

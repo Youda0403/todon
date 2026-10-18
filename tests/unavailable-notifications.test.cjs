@@ -9,7 +9,7 @@ function fixture(handler=async()=>[]){
   const data=new Map(),calls=[],pruned=[],badges=[],pops=[],unread=new Map([['n1','10'],['n2','20'],['n3',null]]);
   const context=vm.createContext({Date,Map,Set,Object,Array,navigator:{onLine:true},cur:()=>account,unread,
     LS:{get:(k,d)=>structuredClone(data.has(k)?data.get(k):d),set:(k,v)=>data.set(k,structuredClone(v))},
-    cache:new Map([['a',{el:{_notificationAccount:'server.test:a',pruneNotifications:()=>pruned.push('a')}}],['b',{el:{_notificationAccount:'server.test:b',pruneNotifications:()=>pruned.push('b')}}]]),
+    forgetStatusSnapshots:()=>{},cache:new Map([['a',{el:{_notificationAccount:'server.test:a',pruneNotifications:()=>pruned.push('a')}}],['b',{el:{_notificationAccount:'server.test:b',pruneNotifications:()=>pruned.push('b')}}]]),
     document:{querySelectorAll:()=>pops},setBadge:n=>badges.push(n),
     qs:obj=>Object.entries(obj).flatMap(([k,v])=>v.map(x=>encodeURIComponent(k)+'='+encodeURIComponent(x))).join('&'),
     api:async(p,opts)=>{calls.push({path:p,account:opts.acc.id});return handler(p,opts);}});
@@ -54,4 +54,13 @@ test('successful revalidation restores access without changing another account',
 test('offline checks do no extra network work and the hidden list is bounded',async()=>{
   const f=fixture();f.context.navigator.onLine=false;f.context.items=[notice('1','10')];await f.run('verifyNotificationStatuses(items,a)');assert.equal(f.calls.length,0);
   f.run("hideUnavailableStatuses(Array.from({length:600},(_,i)=>String(i)),a)");assert.equal(Object.keys(f.data.get('ytt.unavailable.server.test:a')).length,500);
+});
+test('eighty notification statuses are verified in supported groups of twenty',async()=>{
+  const f=fixture(async p=>new URL('https://server.test'+p).searchParams.getAll('id[]').map(id=>({id,account:{}})));
+  f.context.items=Array.from({length:80},(_,i)=>notice('n'+i,String(i+1)));await f.run('verifyNotificationStatuses(items,a)');
+  assert.equal(f.calls.length,4);assert.ok(f.calls.every(c=>new URL('https://server.test'+c.path).searchParams.getAll('id[]').length===20));assert.equal(f.list(f.context.items).length,80);
+});
+test('a rejected batch stops further background attempts without hiding valid notifications',async()=>{
+  const f=fixture(async()=>{throw Object.assign(new Error('rejected'),{status:422});});f.context.items=[notice('1','10')];await f.run('verifyNotificationStatuses(items,a)');
+  f.context.items=[notice('2','20')];await f.run('verifyNotificationStatuses(items,a)');assert.equal(f.calls.length,1);assert.equal(f.list(f.context.items).length,1);assert.equal(f.data.size,0);
 });

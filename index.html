@@ -961,13 +961,50 @@ function setDefaultVis(a, v){ const m = LS.get('ytt.vis', {}); m[a.acct] = v; LS
 /* ---------- API ---------- */
 /* 문제 확인용 최근 기록: 메모리에만 보관하고 본문·주소·계정·토큰은 넣지 않음 */
 const diagEvents = [];
+let diagSequence = 0;
 function recordDiag(kind, data){
-  diagEvents.push({at:new Date().toISOString(), kind, ...data});
+  const seq = ++diagSequence;
+  diagEvents.push({at:new Date().toISOString(), seq, kind, ...data});
   if (diagEvents.length > 80) diagEvents.shift();
+  return seq;
+}
+/* 이미 받은 본문만 계정별 메모리에 잠시 보관. 열 때마다 서버에서 다시 확인한다. */
+const statusSnapshots = new Map();
+const snapshotAccount = acc => acc.instance + ':' + acc.id;
+function rememberStatusData(data, acc){
+  if (!acc) return;
+  const remember = st => {
+    if (!st || !st.id || !st.account || typeof st.content !== 'string') return;
+    const id = String(st.id), account = snapshotAccount(acc), key = account + ':' + id;
+    statusSnapshots.delete(key);
+    statusSnapshots.set(key, {st, id, account, instance:acc.instance, at:Date.now()});
+    if (st.reblog) remember(st.reblog);
+  };
+  const item = it => { if (it) remember(it.status || it); };
+  if (Array.isArray(data)) data.forEach(item);
+  else if (data){ item(data); (data.ancestors || []).forEach(remember); (data.descendants || []).forEach(remember); }
+  while (statusSnapshots.size > 200) statusSnapshots.delete(statusSnapshots.keys().next().value);
+}
+function readStatusSnapshot(id, acc){
+  if (LS.get('ytt.unavailable.' + snapshotAccount(acc),{})[String(id)]) return null;
+  const key = snapshotAccount(acc) + ':' + id, item = statusSnapshots.get(key);
+  if (!item) return null;
+  if (Date.now() - item.at > 300000){ statusSnapshots.delete(key); return null; }
+  return item.st;
+}
+function forgetStatusSnapshots(id, acc, allAccounts = false){
+  for (const [key, item] of statusSnapshots) if (item.id === String(id) && item.instance === acc.instance && (allAccounts || item.account === snapshotAccount(acc))) statusSnapshots.delete(key);
+}
+function requestOperation(path, method){
+  if (/^\/api\/v\d+\/statuses(?:\?|$)/.test(path)) return method === 'GET' ? 'status-batch' : 'status-create';
+  if (/\/statuses\/[^/]+\/context(?:\?|$)/.test(path)) return 'thread-context';
+  if (/^\/api\/v\d+\/statuses\/[^/?]+(?:\?|$)/.test(path)) return 'status-single';
+  if (/\/accounts\/[^/]+\/statuses(?:\?|$)/.test(path)) return 'account-posts';
+  return 'other';
 }
 function qs(obj){ const u = new URLSearchParams(); for (const [k, v] of Object.entries(obj)) (Array.isArray(v) ? v : [v]).forEach(x => u.append(k, x)); return u.toString(); }
-async function api(path, {method='GET', body=null, form=null, acc=cur(), headers={}, withLink=false, signal, timeout=form ? 120000 : method === 'GET' ? 10000 : 60000} = {}){
-  const started = Date.now(); let status = 0;
+async function api(path, {method='GET', body=null, form=null, acc=cur(), headers={}, withLink=false, signal, trace, timeout=form ? 120000 : method === 'GET' ? 10000 : 60000} = {}){
+  const started = Date.now(); let status = 0, headersMs = null, bodyMs = null, decodeMs = null, outcome = 'ok';
   const controller = new AbortController(); let timedOut = false;
   const cancel = () => controller.abort();
   if (signal){ if (signal.aborted) cancel(); else signal.addEventListener('abort', cancel, {once:true}); }
@@ -977,7 +1014,7 @@ async function api(path, {method='GET', body=null, form=null, acc=cur(), headers
     if (form) opt.body = form;
     else if (body){ opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
     const r = await fetch(`https://${acc.instance}${path}`, opt);
-    status = r.status;
+    status = r.status; headersMs = Date.now() - started;
     if (!r.ok){
       let msg = ''; try{ msg = (await r.json()).error; }catch(e){}
       const missing = method === 'GET' && /^\/api\/v1\/statuses\/(\d+)(?:\?.*)?$/.exec(path);
@@ -993,7 +1030,9 @@ async function api(path, {method='GET', body=null, form=null, acc=cur(), headers
       if (unavailable){ err.code = 'unavailable'; err.statusId = missing[1]; }
       err.status = r.status; throw err;
     }
-    const txt = await r.text(); const data = txt ? JSON.parse(txt) : null;
+    const bodyStart = Date.now(), txt = await r.text(); bodyMs = Date.now() - bodyStart;
+    const decodeStart = Date.now(), data = txt ? JSON.parse(txt) : null; decodeMs = Date.now() - decodeStart;
+    rememberStatusData(data,acc);
     const readStatus = method === 'GET' && /^\/api\/v1\/statuses\/(\d+)(?:\?.*)?$/.exec(path);
     if (readStatus && data && String(data.id) === readStatus[1]) restoreAvailableStatuses([readStatus[1]],acc);
     if (!withLink) return data;
@@ -1002,6 +1041,7 @@ async function api(path, {method='GET', body=null, form=null, acc=cur(), headers
     if (m){ try{ const u = new URL(m[1]); next = u.pathname + u.search; }catch(e){} }
     return {data, next};
   }catch(e){
+    outcome = timedOut ? 'timeout' : signal && signal.aborted ? 'aborted' : e.status ? 'http-error' : e instanceof SyntaxError ? 'invalid-response' : 'network-error';
     if (timedOut) throw Object.assign(new Error(method === 'GET' ? '서버 응답이 없어 불러오기를 멈췄어요. 연결을 확인한 뒤 다시 시도해 주세요.' : '서버 응답이 늦어 결과를 확인하지 못했어요. 반영 여부를 확인한 뒤 다시 시도해 주세요.'), {code:'timeout'});
     if (signal && signal.aborted) throw Object.assign(new Error('요청을 취소했어요.'), {name:'AbortError', code:'aborted'});
     if (e.status){
@@ -1013,7 +1053,7 @@ async function api(path, {method='GET', body=null, form=null, acc=cur(), headers
     clearTimeout(timer);
     if (signal) signal.removeEventListener('abort', cancel);
     const group = /^\/api\/v\d+\/(statuses|timelines|notifications|markers|conversations|push|accounts|media)\b/.exec(path);
-    recordDiag('request', {method, api:(group ? group[1] : 'other') + (/\/context(?:\?|$)/.test(path) ? '/context' : ''), ms:Date.now() - started, status});
+    recordDiag('request', {method, api:(group ? group[1] : 'other') + (/\/context(?:\?|$)/.test(path) ? '/context' : ''), operation:requestOperation(path,method), ...(Number.isInteger(trace) ? {trace} : {}), ms:Date.now() - started, headersMs, bodyMs, decodeMs, status, outcome});
   }
 }
 
@@ -1159,6 +1199,7 @@ function switchAccount(i){
 
 /* ---------- 글 카드 ---------- */
 function statusEl(s, o = {}){
+  const viewAcc = o.acc || cur();
   const by = s.reblog ? s.account : null;
   const st = s.reblog || s;
   const el = document.createElement('article');
@@ -1275,7 +1316,7 @@ function statusEl(s, o = {}){
   if (!o.focus) el.addEventListener('click', e => {
     if (e.target.closest('a,button,video,audio,.media')) return;
     if (String(getSelection())) return;
-    nav('#/thread/' + st.id);
+    rememberStatusData(st,viewAcc); nav('#/thread/' + st.id);
   });
   const fr = (st.filtered || []).filter(f => f && f.filter);
   if (fr.some(f => f.filter.filter_action === 'hide')){ el.hidden = true; return el; }
@@ -1304,6 +1345,7 @@ async function toggleAct(st, kind, paint){
 /* 같은 서버에 로그인해 둔 내 캐릭터 계정의 툿이면 그 계정으로 지우거나 고정할 수 있음 */
 const ownerAcc = st => accounts.find(a => a.instance === cur().instance && String(a.id) === String(st.account.id)) || null;
 function removeStatusEverywhere(id){
+  forgetStatusSnapshots(id,cur(),true);
   const roots = new Set([...cache.values()].map(e => e.el)); roots.add($('#main'));
   const sel = `[data-sid="${CSS.escape(String(id))}"]`;
   roots.forEach(r => {
@@ -1342,6 +1384,7 @@ function statusMenu(st){
 }
 /* 같은 툿이 떠 있는 모든 화면에서 새 내용으로 바꾸기 (수정한 뒤) */
 function replaceStatusEverywhere(ns){
+  rememberStatusData(ns,cur());
   const roots = new Set([...cache.values()].map(e => e.el)); roots.add($('#main'));
   roots.forEach(r => { if (r.updateStatus) r.updateStatus(ns); });
   const sel = `[data-sid="${CSS.escape(String(ns.id))}"]`;
@@ -1669,6 +1712,7 @@ function filterNotifications(list, acc = cur()){
   return list.filter(n => (!STATUS_NOTIFICATIONS.has(n.type) || n.status) && (!n.status || !hidden[String(n.status.id)]));
 }
 function hideUnavailableStatuses(ids, acc){
+  ids.forEach(id => forgetStatusSnapshots(id,acc));
   const hidden = LS.get(unavailableKey(acc), {}), now = Date.now();
   ids.forEach(id => { hidden[String(id)] = now; });
   const kept = Object.entries(hidden).sort((a,b) => b[1] - a[1]).slice(0,500);
@@ -1700,13 +1744,16 @@ function verifyNotificationStatuses(list, acc){
   while (state.checked.size > 1000) state.checked.delete(state.checked.keys().next().value);
   state.pending = (async () => {
     try{
-      const statuses = await api('/api/v1/statuses?' + qs({'id[]':ids}), {acc, timeout:10000});
-      if (!Array.isArray(statuses) || statuses.some(st => !st || !st.id || !st.account || !ids.includes(String(st.id)))) return;
-      const present = new Set(statuses.map(st => String(st.id)));
-      restoreAvailableStatuses([...present],acc);
-      const missing = ids.filter(id => !present.has(id));
-      if (missing.length) hideUnavailableStatuses(missing,acc);
-    }catch(e){ if ([404,405,501].includes(e.status)) notificationBatchSupport.set(acc.instance,false); }
+      for (let i = 0; i < ids.length; i += 20){
+        const batch = ids.slice(i,i + 20);
+        const statuses = await api('/api/v1/statuses?' + qs({'id[]':batch}), {acc, timeout:10000});
+        if (!Array.isArray(statuses) || statuses.some(st => !st || !st.id || !st.account || !batch.includes(String(st.id)))) return;
+        const present = new Set(statuses.map(st => String(st.id)));
+        restoreAvailableStatuses([...present],acc);
+        const missing = batch.filter(id => !present.has(id));
+        if (missing.length) hideUnavailableStatuses(missing,acc);
+      }
+    }catch(e){ if ([404,405,422,501].includes(e.status)) notificationBatchSupport.set(acc.instance,false); }
     finally{ state.pending = null; }
   })();
   return state.pending;
@@ -1720,7 +1767,7 @@ function notifEl(n, acc = cur()){
     return el;
   };
   if (['mention','status','quote','quoted_update'].includes(n.type) && s){
-    const el = statusEl(s);
+    const el = statusEl(s,{acc});
     const reply = isReply(n), toMe = reply && String(s.in_reply_to_account_id) === String(acc.id);
     const kind = n.type === 'mention' ? (reply ? 'reply' : 'mention') : n.type === 'status' ? 'status' : 'quote';
     const preTxt = {reply:toMe ? '님이 내 글에 답글을 달았어요' : '님이 답글을 달았어요', mention:'님이 나를 불렀어요', status:'님이 새 글을 올렸어요', quote:n.type === 'quote' ? '님이 내 글을 인용했어요' : '님이 내가 인용한 글을 수정했어요'}[kind];
@@ -1749,7 +1796,7 @@ function notifEl(n, acc = cur()){
   else { const b = document.createElement('b'); b.append(richName(a)); t.append(b, cfg[2]); }
   if (s){
     $('.nsnip', el).textContent = s.spoiler_text ? '⚠ ' + s.spoiler_text : (plain(s.content) || (s.media_attachments?.length ? '(이미지)' : ''));
-    el.onclick = () => nav('#/thread/' + s.id);
+    el.onclick = () => { rememberStatusData(s,acc); nav('#/thread/' + s.id); };
   } else el.onclick = () => nav('#/user/' + a.id);
   if (n.type === 'follow_request'){
     const box = h('<div class="nbtns"><button class="pill" type="button">수락</button><button class="pill ghost" type="button">거절</button></div>');
@@ -1794,7 +1841,7 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
     else for (let i = 0; i < shown.length; ){
       let j = i;
       while (j + 1 < shown.length && !shown[j].reblog && !shown[j + 1].reblog && shown[j].in_reply_to_id && String(shown[j].in_reply_to_id) === String(shown[j + 1].id)) j++;
-      for (let k = j; k >= i; k--) frag.append(statusEl(shown[k], {up:k > i, chained:k < j}));
+      for (let k = j; k >= i; k--) frag.append(statusEl(shown[k], {up:k > i, chained:k < j, acc:viewAcc}));
       i = j + 1;
     }
     return frag;
@@ -2112,6 +2159,10 @@ function threadOrder(focus, desc){
 function threadView(id){
   const root = document.createElement('div');
   const viewAcc = cur();
+  const opened = Date.now(), seed = readStatusSnapshot(id,viewAcc);
+  const trace = recordDiag('thread-open', {snapshot:!!seed});
+  let firstContent = false, generation = 0, controller = null;
+  const noteContent = source => { if (!firstContent){ firstContent = true; recordDiag('thread-content', {trace, source, ms:Date.now() - opened}); } };
   let problem = null;
   let state = null, pending = null, stopFit = () => {};
   const localPosts = new Map();
@@ -2120,21 +2171,23 @@ function threadView(id){
     if (!ctx.descendants.some(p => String(p.id) === String(st.id))) ctx.descendants.push(st);
     return true;
   };
-  const render = (s, ctx, align) => {
+  const render = (s, ctx, align, anchorTop = null) => {
+    const started = Date.now();
     stopFit();
     problem = null;
     const oldTail = root.querySelector('.tail');
     const keepTail = oldTail && oldTail.style.minHeight;
     root.replaceChildren();
-    ctx.ancestors.forEach((a, i) => root.append(statusEl(a, {up:true, chained:i > 0, inThread:true})));
-    const f = statusEl(s, {focus:true, inThread:true}); root.append(f);
+    ctx.ancestors.forEach((a, i) => root.append(statusEl(a, {up:true, chained:i > 0, inThread:true, acc:viewAcc})));
+    const f = statusEl(s, {focus:true, inThread:true, acc:viewAcc}); root.append(f);
     const order = threadOrder(s, ctx.descendants);
     const directCount = order.filter(d => String(d.in_reply_to_id) === String(s.id)).length;
-    if (order.length) root.append(h(`<div class="thsec">${ic('reply')}<span>답글 ${directCount}개</span></div>`));
+    if (order.length && state.complete) root.append(h(`<div class="thsec">${ic('reply')}<span>답글 ${directCount}개</span></div>`));
     order.forEach((d, i) => {
       const nx = order[i + 1], pv = order[i - 1];
-      root.append(statusEl(d, {up:!!nx && String(nx.in_reply_to_id) === String(d.id), chained:!!pv && String(d.in_reply_to_id) === String(pv.id), inThread:true}));
+      root.append(statusEl(d, {up:!!nx && String(nx.in_reply_to_id) === String(d.id), chained:!!pv && String(d.in_reply_to_id) === String(pv.id), inThread:true, acc:viewAcc}));
     });
+    if (!state.complete) root.append(h('<div class="sentinel mqprogress thread-wait" role="status"><div class="spin"></div><span>타래를 불러오는 중이에요</span></div>'));
     const tail = h('<div class="tail"></div>');
     if (!align && keepTail) tail.style.minHeight = keepTail;
     root.append(tail);
@@ -2142,7 +2195,7 @@ function threadView(id){
        그 뒤 위쪽 이전 글이 사진 등으로 길어질 때만 다시 맞춤 (직접 화면을 만지거나 10초 지나면 멈춤) */
     if (align && ctx.ancestors.length && root.isConnected){
       const fit = () => {
-        const want = parseFloat(getComputedStyle(f).scrollMarginTop) || 0;
+        const want = anchorTop === null ? parseFloat(getComputedStyle(f).scrollMarginTop) || 0 : anchorTop;
         /* 아래 글이 짧아서 그 자리까지 못 올라가면 아래 빈칸을 늘림 */
         const short = window.scrollY + f.getBoundingClientRect().top - want - (document.documentElement.scrollHeight - window.innerHeight);
         if (short > 0) tail.style.minHeight = Math.ceil(tail.offsetHeight + short) + 'px';
@@ -2157,23 +2210,52 @@ function threadView(id){
       addEventListener('touchstart', stop, {passive:true}); addEventListener('wheel', stop, {passive:true}); addEventListener('keydown', stop);
       setTimeout(stop, 10000);
     }
+    recordDiag('thread-render', {trace, ms:Date.now() - started, cards:ctx.ancestors.length + order.length + 1, complete:!!state.complete});
+  };
+  const show = (s, ctx) => {
+    const previous = root.isConnected && root.querySelector('.focus');
+    const top = previous ? previous.getBoundingClientRect().top : null;
+    render(s,ctx,true,top);
   };
   const load = () => {
     if (pending) return pending;
+    const my = ++generation;
     if (!state) root.innerHTML = '<div class="sentinel"><div class="spin"></div></div>';
     pending = (async () => {
-      const controller = new AbortController();
+      const active = new AbortController(); controller = active;
       try{
-        const [s, ctx] = await Promise.all([api(`/api/v1/statuses/${id}`, {acc:viewAcc, signal:controller.signal}), api(`/api/v1/statuses/${id}/context`, {acc:viewAcc, signal:controller.signal})]);
+        const options = {acc:viewAcc, signal:active.signal, trace};
+        let contextSettled = false;
+        const statusRequest = api(`/api/v1/statuses/${id}`,options);
+        const contextRequest = api(`/api/v1/statuses/${id}/context`,options).then(
+          value => { contextSettled = true; return {value}; },
+          error => { contextSettled = true; return {error}; }
+        );
+        const s = await statusRequest;
+        if (my !== generation) return;
+        /* 본문은 타래 전체의 응답을 기다리지 않고 표시한다. */
+        if (!contextSettled && (!state || !state.complete)){
+          state = {s, ctx:state ? state.ctx : {ancestors:[],descendants:[]}, complete:false};
+          show(s,state.ctx); noteContent('network');
+        }
+        const result = await contextRequest;
+        if (my !== generation) return;
+        if (result.error){
+          if (!state || !state.complete){ state = {s,ctx:state ? state.ctx : {ancestors:[],descendants:[]},complete:false}; show(s,state.ctx); noteContent('network'); }
+          throw result.error;
+        }
+        const ctx = result.value;
         for (const [key, item] of localPosts){
           const confirmed = ctx.descendants.some(p => String(p.id) === key);
           if (confirmed || Date.now() - item.at > 30000) localPosts.delete(key);
           else addPosted(s, ctx, item.st);
         }
-        state = {s, ctx}; render(s, ctx, true);
+        state = {s, ctx, complete:true}; show(s,ctx); noteContent('network');
       }catch(e){
-        controller.abort();
-        if (e.code === 'unavailable'){ state = null; localPosts.clear(); stopFit(); }
+        active.abort();
+        if (my !== generation) return;
+        const wait = root.querySelector('.thread-wait'); if (wait) wait.remove();
+        if (e.code === 'unavailable' || [401,403].includes(e.status)){ state = null; localPosts.clear(); forgetStatusSnapshots(id,viewAcc); stopFit(); }
         if (problem) problem.remove();
         if (!state) root.replaceChildren();
         const b = h('<div class="err" style="padding:32px 16px"><p></p><button class="pill ghost" type="button">다시 시도</button></div>');
@@ -2185,7 +2267,7 @@ function threadView(id){
         }
         problem = b;
         if (state) root.prepend(b); else root.append(b);
-      }finally{ pending = null; }
+      }finally{ if (my === generation){ pending = null; controller = null; } }
     })();
     return pending;
   };
@@ -2200,7 +2282,7 @@ function threadView(id){
   root.forgetStatus = id => {
     localPosts.delete(String(id));
     if (!state) return;
-    if (String(state.s.id) === String(id)){ state = null; return; }
+    if (String(state.s.id) === String(id)){ root.suspend(); state = null; return; }
     state.ctx.ancestors = state.ctx.ancestors.filter(st => String(st.id) !== String(id));
     state.ctx.descendants = state.ctx.descendants.filter(st => String(st.id) !== String(id));
   };
@@ -2212,6 +2294,9 @@ function threadView(id){
       const i = list.findIndex(p => String(p.id) === String(st.id)); if (i >= 0) list[i] = st;
     }
   };
+  root.suspend = () => { generation++; if (controller) controller.abort(); controller = null; pending = null; stopFit(); const wait = root.querySelector('.thread-wait'); if (wait) wait.remove(); };
+  root.resume = () => { if (!state || !state.complete) return load(); };
+  if (seed){ state = {s:seed,ctx:{ancestors:[],descendants:[]},complete:false}; render(seed,state.ctx,false); noteContent('snapshot'); }
   load(); root.refresh = load;
   return root;
 }
@@ -3991,7 +4076,7 @@ function popup(n, more){
   let sub = s ? (s.spoiler_text ? '⚠ ' + s.spoiler_text : (stripLead(plain(s.content)) || (s.media_attachments && s.media_attachments.length ? '사진' : ''))) : '@' + n.account.acct;
   if (more) sub += ` · 새 알림 ${more}개 더`;
   $('small', p).textContent = sub;
-  p.onclick = () => { popOut(p); nav(notifTarget(n)); };
+  p.onclick = () => { popOut(p); rememberStatusData(n,me); nav(notifTarget(n)); };
   $('button', p).onclick = e => { e.stopPropagation(); popOut(p); };
   let y0 = null;
   p.addEventListener('touchstart', e => { y0 = e.touches[0].clientY; }, {passive:true});
@@ -4256,7 +4341,7 @@ function mainSettings(root){
   const s7 = secEl('그 밖의 설정', '여기 없는 설정은 마스토돈 웹사이트에서 바꿀 수 있어요.');
   s7.append(linkRow('globe', '마스토돈 웹에서 설정 열기', me.instance + '/settings', () => window.open(`https://${me.instance}/settings/preferences`, '_blank', 'noopener')));
   s7.append(linkRow('memo', '문제 확인용 기록 복사', '최근 요청 시간과 화면 이동만 복사해요. 글 내용과 로그인 정보는 포함하지 않아요.', async () => {
-    const text = JSON.stringify({version:'2026-10-18.4', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
+    const text = JSON.stringify({version:'2026-10-18.5', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
     try{ await navigator.clipboard.writeText(text); toast('문제 확인용 기록을 복사했어요'); }
     catch(e){ toast('복사하지 못했어요. 브라우저의 클립보드 권한을 확인해 주세요.'); }
   }));
@@ -5493,8 +5578,10 @@ function buildView(name, arg, arg2){
 function route(){
   const fresh = freshNav; freshNav = false;
   const main = $('#main');
+  const previousRoot = main.firstElementChild;
   let {hsh, name, arg, arg2} = parse();
   if (!cur() || name === 'login'){
+    if (previousRoot && previousRoot.suspend) previousRoot.suspend();
     if (curKey && cache.has(curKey)) cache.get(curKey).y = window.scrollY;
     document.body.classList.add('in-login');
     main.replaceChildren(loginView(!!cur()));
@@ -5512,7 +5599,9 @@ function route(){
   if (!e){ e = {el:buildView(name, arg, arg2), y:0}; }
   cache.delete(hsh); cache.set(hsh, e);
   while (cache.size > 15){ const k = [...cache.keys()].find(k => !TABS.includes(k.slice(2)) && k !== hsh); if (!k) break; cache.delete(k); }
+  if (previousRoot && previousRoot !== e.el && previousRoot.suspend) previousRoot.suspend();
   main.replaceChildren(e.el);
+  if (e.el.resume) e.el.resume();
   if (!skipFade && e.el.animate) e.el.animate([{opacity:0}, {opacity:1}], {duration:180, easing:'ease-out'});
   skipFade = false;
   curKey = hsh;

@@ -2,7 +2,7 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), vm = require('node:vm'), path = require('node:path');
 const html = fs.readFileSync(path.join(__dirname,'../index.html'),'utf8');
-const code = html.slice(html.indexOf('async function api('),html.indexOf('/* ---------- 로그인 (OAuth)'));
+const code = html.slice(html.indexOf('const statusSnapshots ='),html.indexOf('/* ---------- 로그인 (OAuth)'));
 const response = (status,data) => ({status,ok:status>=200&&status<300,json:async()=>data,text:async()=>JSON.stringify(data),headers:{get:()=>null}});
 function fixture(fetch, fast=false){
   const hidden=[],restored=[],delays=[];let cleared=0;

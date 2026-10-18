@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
-const apiCode = html.slice(html.indexOf('async function api('), html.indexOf('/* ---------- 로그인 (OAuth)'));
+const apiCode = html.slice(html.indexOf('const statusSnapshots ='), html.indexOf('/* ---------- 로그인 (OAuth)'));
 const pushCode = html.slice(html.indexOf('const pushState ='), html.indexOf('const POP_TXT ='));
 const key = Buffer.from([1, 2, 3]).toString('base64url');
 const otherKey = Buffer.from([4, 5, 6]).toString('base64url');

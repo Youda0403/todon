@@ -1006,7 +1006,8 @@ function requestOperation(path, method){
 }
 function qs(obj){ const u = new URLSearchParams(); for (const [k, v] of Object.entries(obj)) (Array.isArray(v) ? v : [v]).forEach(x => u.append(k, x)); return u.toString(); }
 async function api(path, {method='GET', body=null, form=null, acc=cur(), headers={}, withLink=false, signal, trace, timeout=form ? 120000 : method === 'GET' ? 10000 : 60000} = {}){
-  const started = Date.now(); let status = 0, headersMs = null, bodyMs = null, decodeMs = null, outcome = 'ok';
+  const started = Date.now(), hiddenStart = typeof document !== 'undefined' && !!document.hidden;
+  let status = 0, headersMs = null, bodyMs = null, decodeMs = null, outcome = 'ok';
   const controller = new AbortController(); let timedOut = false;
   const cancel = () => controller.abort();
   if (signal){ if (signal.aborted) cancel(); else signal.addEventListener('abort', cancel, {once:true}); }
@@ -1055,7 +1056,7 @@ async function api(path, {method='GET', body=null, form=null, acc=cur(), headers
     clearTimeout(timer);
     if (signal) signal.removeEventListener('abort', cancel);
     const group = /^\/api\/v\d+\/(statuses|timelines|notifications|markers|conversations|push|accounts|media)\b/.exec(path);
-    recordDiag('request', {method, api:(group ? group[1] : 'other') + (/\/context(?:\?|$)/.test(path) ? '/context' : ''), operation:requestOperation(path,method), ...(Number.isInteger(trace) ? {trace} : {}), ms:Date.now() - started, headersMs, bodyMs, decodeMs, status, outcome});
+    recordDiag('request', {method, api:(group ? group[1] : 'other') + (/\/context(?:\?|$)/.test(path) ? '/context' : ''), operation:requestOperation(path,method), ...(Number.isInteger(trace) ? {trace} : {}), ms:Date.now() - started, headersMs, bodyMs, decodeMs, status, outcome, hiddenStart, hiddenEnd:typeof document !== 'undefined' && !!document.hidden});
   }
 }
 
@@ -2214,16 +2215,42 @@ function threadOrder(focus, desc){
   desc.forEach(d => { if (!seen.has(String(d.id))){ seen.add(String(d.id)); out.push(d); walk(d.id, String(d.account.id)); } });
   return out;
 }
-function threadView(id){
+function threadView(id, threadSeed = null){
   const root = document.createElement('div');
   const viewAcc = cur();
-  const opened = Date.now(), seed = readStatusSnapshot(id,viewAcc);
-  const trace = recordDiag('thread-open', {snapshot:!!seed});
-  let firstContent = false, generation = 0, controller = null;
+  const opened = Date.now(), seed = threadSeed ? threadSeed.s : readStatusSnapshot(id,viewAcc);
+  const trace = recordDiag('thread-open', {snapshot:!!seed, contextSnapshot:!!threadSeed?.complete});
+  let firstContent = false, firstReplies = false, generation = 0, controller = null;
+  let bodyPending = false, contextPending = false, needsRefresh = true;
   const noteContent = source => { if (!firstContent){ firstContent = true; recordDiag('thread-content', {trace, source, ms:Date.now() - opened}); } };
-  let problem = null;
+  let problem = null, failure = null;
   let state = null, pending = null, stopFit = () => {};
-  const localPosts = new Map();
+  const localPosts = new Map(threadSeed?.localPosts || []);
+  const noteReplies = source => {
+    if (!firstReplies && state?.complete){ firstReplies = true; recordDiag('thread-replies', {trace, source, ms:Date.now() - opened, cards:state.ctx.descendants.length}); }
+  };
+  const paintWait = () => {
+    const old = root.querySelector('.thread-wait'); if (old) old.remove();
+    if (!bodyPending && !contextPending) return;
+    const text = contextPending ? state?.complete ? '새 답글을 확인하는 중이에요' : '타래를 불러오는 중이에요'
+      : state ? '본문의 최신 내용을 확인하는 중이에요' : '툿 본문을 불러오는 중이에요';
+    const wait = h(`<div class="sentinel mqprogress thread-wait" role="status"><div class="spin"></div><span>${text}</span></div>`);
+    root.insertBefore(wait,root.querySelector('.tail'));
+  };
+  const paintProblem = () => {
+    if (problem) problem.remove(); problem = null;
+    if (!failure) return;
+    const b = h('<div class="err" style="padding:32px 16px"><p></p><button class="pill ghost" type="button">다시 시도</button></div>');
+    b.setAttribute('role','alert');
+    $('p',b).textContent = failure.message;
+    $('button',b).onclick = () => { if (pending) root.suspend(); load(); };
+    if (failure.code === 'unavailable'){
+      const back = h('<button class="pill ghost" type="button" style="margin-left:8px">알림 목록으로</button>');
+      back.onclick = () => nav('#/notifications'); b.append(back);
+    }
+    problem = b;
+    if (state) root.prepend(b); else root.append(b);
+  };
   const addPosted = (s, ctx, st) => {
     if (!st.in_reply_to_id || ![s, ...ctx.descendants].some(p => String(p.id) === String(st.in_reply_to_id))) return false;
     if (!ctx.descendants.some(p => String(p.id) === String(st.id))) ctx.descendants.push(st);
@@ -2245,15 +2272,16 @@ function threadView(id){
       const nx = order[i + 1], pv = order[i - 1];
       root.append(statusEl(d, {up:!!nx && String(nx.in_reply_to_id) === String(d.id), chained:!!pv && String(d.in_reply_to_id) === String(pv.id), inThread:true, acc:viewAcc}));
     });
-    if (!state.complete) root.append(h('<div class="sentinel mqprogress thread-wait" role="status"><div class="spin"></div><span>타래를 불러오는 중이에요</span></div>'));
     const tail = h('<div class="tail"></div>');
     if (!align && keepTail) tail.style.minHeight = keepTail;
     root.append(tail);
     /* 이전 글이 있으면 누른 툿을 화면 위쪽(scroll-margin-top 자리)에 놓음.
        그 뒤 위쪽 이전 글이 사진 등으로 길어질 때만 다시 맞춤 (직접 화면을 만지거나 10초 지나면 멈춤) */
-    if (align && ctx.ancestors.length && root.isConnected){
+    const startFit = (targetTop = null) => {
+      stopFit();
+      if (!ctx.ancestors.length || !root.isConnected) return;
       const fit = () => {
-        const want = anchorTop === null ? parseFloat(getComputedStyle(f).scrollMarginTop) || 0 : anchorTop;
+        const want = targetTop === null ? parseFloat(getComputedStyle(f).scrollMarginTop) || 0 : targetTop;
         /* 아래 글이 짧아서 그 자리까지 못 올라가면 아래 빈칸을 늘림 */
         const short = window.scrollY + f.getBoundingClientRect().top - want - (document.documentElement.scrollHeight - window.innerHeight);
         if (short > 0) tail.style.minHeight = Math.ceil(tail.offsetHeight + short) + 'px';
@@ -2267,8 +2295,11 @@ function threadView(id){
       for (const c of root.children){ if (c === f) break; ro.observe(c); }
       addEventListener('touchstart', stop, {passive:true}); addEventListener('wheel', stop, {passive:true}); addEventListener('keydown', stop);
       setTimeout(stop, 10000);
-    }
-    recordDiag('thread-render', {trace, ms:Date.now() - started, cards:ctx.ancestors.length + order.length + 1, complete:!!state.complete});
+    };
+    root.alignSeed = () => startFit();
+    if (align) startFit(anchorTop);
+    paintWait(); paintProblem();
+    recordDiag('thread-render', {trace, ms:Date.now() - started, cards:ctx.ancestors.length + order.length + 1, complete:!!state.complete, statusPending:bodyPending, contextPending});
   };
   const show = (s, ctx) => {
     const previous = root.isConnected && root.querySelector('.focus');
@@ -2277,55 +2308,62 @@ function threadView(id){
   };
   const load = () => {
     if (pending) return pending;
-    const my = ++generation;
-    if (!state) root.innerHTML = '<div class="sentinel"><div class="spin"></div></div>';
+    const my = ++generation, active = new AbortController(); controller = active;
+    let blocked = false, receivedContext = null, appliedContext = false;
+    failure = null; needsRefresh = true; bodyPending = true; contextPending = true;
+    if (!state) root.replaceChildren();
+    paintWait(); paintProblem();
+    const current = () => my === generation && !blocked;
+    const contextFor = s => {
+      if (!receivedContext) return state ? state.ctx : {ancestors:[],descendants:[]};
+      if (!appliedContext){
+        appliedContext = true;
+        for (const [key, item] of localPosts){
+          const confirmed = receivedContext.descendants.some(p => String(p.id) === key);
+          if (confirmed || Date.now() - item.at > 30000) localPosts.delete(key);
+          else addPosted(s,receivedContext,item.st);
+        }
+      }
+      return receivedContext;
+    };
+    const failed = (e, phase) => {
+      if (!current()) return;
+      if (phase === 'status') bodyPending = false; else contextPending = false;
+      failure = e;
+      recordDiag('thread-error', {trace, phase, ms:Date.now() - opened, status:e.status || 0, outcome:e.code === 'timeout' ? 'timeout' : e.status ? 'http-error' : 'network-error'});
+      if (e.code === 'unavailable' || [401,403].includes(e.status)){
+        blocked = true; active.abort(); bodyPending = false; contextPending = false;
+        state = null; localPosts.clear(); forgetStatusSnapshots(id,viewAcc); stopFit(); root.replaceChildren();
+      }
+      paintWait(); paintProblem();
+    };
     pending = (async () => {
-      const active = new AbortController(); controller = active;
       try{
         const options = {acc:viewAcc, signal:active.signal, trace};
-        let contextSettled = false;
-        const statusRequest = api(`/api/v1/statuses/${id}`,options);
-        const contextRequest = api(`/api/v1/statuses/${id}/context`,options).then(
-          value => { contextSettled = true; return {value}; },
-          error => { contextSettled = true; return {error}; }
-        );
-        const s = await statusRequest;
-        if (my !== generation) return;
-        /* 본문은 타래 전체의 응답을 기다리지 않고 표시한다. */
-        if (!contextSettled && (!state || !state.complete)){
-          state = {s, ctx:state ? state.ctx : {ancestors:[],descendants:[]}, complete:false};
-          show(s,state.ctx); noteContent('network');
-        }
-        const result = await contextRequest;
-        if (my !== generation) return;
-        if (result.error){
-          if (!state || !state.complete){ state = {s,ctx:state ? state.ctx : {ancestors:[],descendants:[]},complete:false}; show(s,state.ctx); noteContent('network'); }
-          throw result.error;
-        }
-        const ctx = result.value;
-        for (const [key, item] of localPosts){
-          const confirmed = ctx.descendants.some(p => String(p.id) === key);
-          if (confirmed || Date.now() - item.at > 30000) localPosts.delete(key);
-          else addPosted(s, ctx, item.st);
-        }
-        state = {s, ctx, complete:true}; show(s,ctx); noteContent('network');
-      }catch(e){
-        active.abort();
-        if (my !== generation) return;
-        const wait = root.querySelector('.thread-wait'); if (wait) wait.remove();
-        if (e.code === 'unavailable' || [401,403].includes(e.status)){ state = null; localPosts.clear(); forgetStatusSnapshots(id,viewAcc); stopFit(); }
-        if (problem) problem.remove();
-        if (!state) root.replaceChildren();
-        const b = h('<div class="err" style="padding:32px 16px"><p></p><button class="pill ghost" type="button">다시 시도</button></div>');
-        b.setAttribute('role','alert');
-        $('p', b).textContent = e.message; $('button', b).onclick = load;
-        if (e.code === 'unavailable'){
-          const back = h('<button class="pill ghost" type="button" style="margin-left:8px">알림 목록으로</button>');
-          back.onclick = () => nav('#/notifications'); b.append(back);
-        }
-        problem = b;
-        if (state) root.prepend(b); else root.append(b);
-      }finally{ if (my === generation){ pending = null; controller = null; } }
+        /* 본문과 답글은 서로 기다리지 않고 먼저 도착한 쪽부터 반영한다. */
+        const statusRequest = api(`/api/v1/statuses/${id}`,options).then(s => {
+          if (!current()) return;
+          if (!s || String(s.id) !== String(id) || !s.account) throw new Error('툿 본문을 올바르게 받지 못했어요. 다시 시도해 주세요.');
+          bodyPending = false;
+          state = {s,ctx:contextFor(s),complete:!!receivedContext || !!state?.complete};
+          show(s,state.ctx); noteContent('network'); noteReplies('network');
+        }).catch(e => failed(e,'status'));
+        const contextRequest = api(`/api/v1/statuses/${id}/context`,options).then(ctx => {
+          if (!current()) return;
+          if (!ctx || !Array.isArray(ctx.ancestors) || !Array.isArray(ctx.descendants)) throw new Error('타래를 올바르게 받지 못했어요. 다시 시도해 주세요.');
+          contextPending = false; receivedContext = ctx;
+          /* 먼저 받은 본문이 있으면 본문 재확인을 기다리지 않고 답글을 표시한다. */
+          if (state){
+            state = {s:state.s,ctx:contextFor(state.s),complete:true};
+            show(state.s,state.ctx); noteContent('snapshot'); noteReplies('network');
+          }else paintWait();
+        }).catch(e => failed(e,'context'));
+        await Promise.all([statusRequest,contextRequest]);
+        if (!current()) return;
+        needsRefresh = !!failure;
+      }finally{
+        if (my === generation){ pending = null; controller = null; bodyPending = false; contextPending = false; paintWait(); }
+      }
     })();
     return pending;
   };
@@ -2352,9 +2390,21 @@ function threadView(id){
       const i = list.findIndex(p => String(p.id) === String(st.id)); if (i >= 0) list[i] = st;
     }
   };
-  root.suspend = () => { generation++; if (controller) controller.abort(); controller = null; pending = null; stopFit(); const wait = root.querySelector('.thread-wait'); if (wait) wait.remove(); };
-  root.resume = () => { if (!state || !state.complete) return load(); };
-  if (seed){ state = {s:seed,ctx:{ancestors:[],descendants:[]},complete:false}; render(seed,state.ctx,false); noteContent('snapshot'); }
+  root.suspend = () => { generation++; if (controller) controller.abort(); controller = null; pending = null; bodyPending = false; contextPending = false; stopFit(); paintWait(); };
+  root.resume = () => { if (!state || needsRefresh) return load(); };
+  root.snapshotThread = () => {
+    const nowAcc = cur();
+    if (!state || !nowAcc || nowAcc.id !== viewAcc.id || nowAcc.instance !== viewAcc.instance) return null;
+    const hidden = LS.get(unavailableKey(viewAcc),{});
+    if (hidden[String(id)]) return null;
+    return {s:state.s,complete:state.complete,
+      ctx:{ancestors:state.ctx.ancestors.filter(s => !hidden[String(s.id)]),descendants:state.ctx.descendants.filter(s => !hidden[String(s.id)])},
+      localPosts:[...localPosts].filter(([key]) => !hidden[key])};
+  };
+  if (seed){
+    state = threadSeed ? {s:seed,ctx:threadSeed.ctx,complete:threadSeed.complete} : {s:seed,ctx:{ancestors:[],descendants:[]},complete:false};
+    render(seed,state.ctx,false); noteContent(threadSeed ? 'view-cache' : 'snapshot'); noteReplies('view-cache');
+  }
   load(); root.refresh = load;
   return root;
 }
@@ -4399,7 +4449,7 @@ function mainSettings(root){
   const s7 = secEl('그 밖의 설정', '여기 없는 설정은 마스토돈 웹사이트에서 바꿀 수 있어요.');
   s7.append(linkRow('globe', '마스토돈 웹에서 설정 열기', me.instance + '/settings', () => window.open(`https://${me.instance}/settings/preferences`, '_blank', 'noopener')));
   s7.append(linkRow('memo', '문제 확인용 기록 복사', '최근 요청 시간과 화면 이동만 복사해요. 글 내용과 로그인 정보는 포함하지 않아요.', async () => {
-    const text = JSON.stringify({version:'2026-10-18.6', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
+    const text = JSON.stringify({version:'2026-10-18.7', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
     try{ await navigator.clipboard.writeText(text); toast('문제 확인용 기록을 복사했어요'); }
     catch(e){ toast('복사하지 못했어요. 브라우저의 클립보드 권한을 확인해 주세요.'); }
   }));
@@ -5606,7 +5656,7 @@ function nav(hash){
   freshNav = true; route();
 }
 function goBack(){ if (depthOf() > 0) history.back(); else goTop(homeTarget()); }
-function buildView(name, arg, arg2){
+function buildView(name, arg, arg2, threadSeed = null){
   switch (name){
     case 'home': return feedView('/api/v1/timelines/home', {hint:'내가 팔로우한 사람들의 글이 올라와요.', empty:'아직 글이 없어요. 커뮤 사람들을 팔로우해 보세요!', filter:homeFilter});
     /* 답글은 빼고 툿만 (자기 글에 이어 쓴 타래는 보임) — ‘홈에 답글 보이기’ 설정과 상관없이 */
@@ -5623,7 +5673,7 @@ function buildView(name, arg, arg2){
     case 'dm': return dmListView();
     case 'chat': return chatView(arg);
     case 'edit': return editView();
-    case 'thread': return threadView(arg);
+    case 'thread': return threadView(arg,threadSeed);
     case 'user': return userView(arg);
     case 'follows': return followsView(arg, arg2 === 'followers' ? 'followers' : 'following');
     case 'htag': return tagView(decodeURIComponent(arg));
@@ -5650,11 +5700,13 @@ function route(){
   if (![...TABS,'thread','user','chat','edit','settings','follows','htag','who','shot','backup'].includes(name) || (['thread','user','chat','list','tag','follows','htag','who','shot'].includes(name) && !arg)){ hsh = '#/home'; name = 'home'; }
   if (curKey && cache.has(curKey)) cache.get(curKey).y = window.scrollY;
   if (name === 'edit' || name === 'settings') cache.delete(hsh);
-  /* 뒤로가기가 아니라 눌러서 새로 들어온 세부 화면(글·프로필 등)은 예전에 만들어 둔 것을 쓰지 않고 새로 만듦 */
+  /* 같은 툿 재진입은 읽어 둔 타래부터 복원하고 최신 내용을 다시 확인한다. */
+  const threadSeed = fresh && name === 'thread' ? cache.get(hsh)?.el.snapshotThread?.() || null : null;
+  /* 새 진입의 화면 위치·조회 상태는 새로 만든다. */
   if (fresh && !TABS.includes(name)) cache.delete(hsh);
   const existed = cache.has(hsh);
   let e = cache.get(hsh);
-  if (!e){ e = {el:buildView(name, arg, arg2), y:0}; }
+  if (!e){ e = {el:buildView(name, arg, arg2,threadSeed), y:0}; }
   cache.delete(hsh); cache.set(hsh, e);
   while (cache.size > 15){ const k = [...cache.keys()].find(k => !TABS.includes(k.slice(2)) && k !== hsh); if (!k) break; cache.delete(k); }
   if (previousRoot && previousRoot !== e.el && previousRoot.suspend) previousRoot.suspend();
@@ -5670,7 +5722,13 @@ function route(){
   updateTimes(e.el);
   if (name === 'notifications' || name === 'mentions'){ setBadge(false); checkNotif(); }
   if (existed && (name === 'dm' || name === 'chat') && e.el.refresh) e.el.refresh();
-  const y = e.y; window.scrollTo(0, y); requestAnimationFrame(() => window.scrollTo(0, y));
+  const y = e.y;
+  const restore = () => {
+    if (main.firstElementChild !== e.el) return;
+    window.scrollTo(0,y);
+    if (threadSeed) e.el.alignSeed?.();
+  };
+  restore(); requestAnimationFrame(restore);
 }
 function refreshCurrent(){
   const e = cache.get(curKey); if (!e || !e.el.refresh) return;

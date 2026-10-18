@@ -5,8 +5,8 @@ const vm = require('node:vm');
 const path = require('node:path');
 const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
 const code = html.slice(html.indexOf('const diagEvents ='), html.indexOf('/* ---------- 로그인 (OAuth)'));
-function fixture(fetch){
-  const context=vm.createContext({fetch,Date,URL,URLSearchParams,AbortController,setTimeout,clearTimeout,hideUnavailableStatuses:()=>{},restoreAvailableStatuses:()=>{},cur:()=>({instance:'private.example',token:'private-token'})});
+function fixture(fetch, document){
+  const context=vm.createContext({fetch,document,Date,URL,URLSearchParams,AbortController,setTimeout,clearTimeout,hideUnavailableStatuses:()=>{},restoreAvailableStatuses:()=>{},cur:()=>({instance:'private.example',token:'private-token'})});
   vm.runInContext(code,context);
   return {run:s=>vm.runInContext(s,context),events:()=>JSON.parse(vm.runInContext('JSON.stringify(diagEvents)',context))};
 }
@@ -37,4 +37,10 @@ test('request groups and phases distinguish a single status, context, batch and 
   assert.ok(events.every(e=>e.trace===7&&e.headersMs>=0&&e.bodyMs>=0&&e.decodeMs>=0&&e.outcome==='ok'));assert.equal(new Set(events.map(e=>e.seq)).size,4);
   assert.doesNotMatch(JSON.stringify(events),/\/statuses\/123|\/accounts\/456|private|token/);
   await f.run("api('/api/v1/statuses',{trace:'private-token'})");assert.equal(f.events().at(-1).trace,undefined);
+});
+
+test('request diagnostics record whether the page was hidden at start and completion',async()=>{
+  const document={hidden:true};const f=fixture(async()=>{document.hidden=false;return response(200,{});},document);
+  await f.run("api('/api/v1/statuses/123')");
+  assert.equal(f.events()[0].hiddenStart,true);assert.equal(f.events()[0].hiddenEnd,false);
 });

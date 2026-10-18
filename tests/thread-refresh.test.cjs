@@ -17,19 +17,20 @@ class Element {
   querySelector(selector){ return this.children.find(n=>'.'+n.className===selector || n.tagName===selector) || null; }
 }
 const status = (id, parent=null, author='a') => ({id, in_reply_to_id:parent, account:{id:author}});
-function fixture(){
-  const calls=[], toasts=[]; let handler=async p=>p.endsWith('/context')?{ancestors:[],descendants:[]}:status('100');
+function fixture(focusId='100'){
+  const calls=[], toasts=[]; let handler=async p=>p.endsWith('/context')?{ancestors:[],descendants:[]}:status(focusId);
   const context=vm.createContext({
     document:{createElement:()=>new Element()}, Date, Map, Set, AbortController,cur:()=>({id:'me',instance:'server.test'}),nav:()=>{},
     window:{scrollY:40, scrollTo(){}},
-    h:markup=>{const el=new Element(/class="([^"]+)/.exec(markup)?.[1] || '');if(markup.includes('<p>'))el.append(Object.assign(new Element(),{tagName:'p'}));if(markup.includes('<button'))el.append(Object.assign(new Element(),{tagName:'button'}));return el;},
+    h:markup=>{const el=new Element(/class="([^"]+)/.exec(markup)?.[1] || '');el._markup=markup;if(markup.includes('<p>'))el.append(Object.assign(new Element(),{tagName:'p'}));if(markup.includes('<button'))el.append(Object.assign(new Element(),{tagName:'button'}));return el;},
     $:(selector,el)=>el.querySelector(selector),
     ic:()=>'', statusEl:st=>Object.assign(new Element('status'),{_st:st}), toast:s=>toasts.push(s),
     api:p=>{ calls.push(p); return handler(p); }
   });
   vm.runInContext(code,context);
-  const root=vm.runInContext("threadView('100')",context);
-  return {root,calls,toasts,respond:fn=>{handler=fn;},ids:()=>root.children.filter(c=>c._st).map(c=>c._st.id)};
+  const root=vm.runInContext(`threadView(${JSON.stringify(focusId)})`,context);
+  return {root,calls,toasts,respond:fn=>{handler=fn;},ids:()=>root.children.filter(c=>c._st).map(c=>c._st.id),
+    replyCount:()=>Number(/답글 (\d+)개/.exec(root.querySelector('.thsec')?._markup||'')?.[1]||0)};
 }
 test('thread refreshes share the initial in-flight request', async()=>{
   const f=fixture(),a=f.root.refresh(),b=f.root.refresh();
@@ -51,8 +52,19 @@ test('posting a reply displays the returned status without further API requests'
 test('new replies follow their parent branch and unrelated posts stay out of the thread', async()=>{
   const f=fixture();await f.root.refresh();
   f.root.onPosted(status('101','100','b'));f.root.onPosted(status('102','100','c'));
-  f.root.onPosted(status('103','101','b'));assert.deepEqual(f.ids(),['100','101','103','102']);
+  f.root.onPosted(status('103','101','b'));assert.deepEqual(f.ids(),['100','101','103','102']);assert.equal(f.replyCount(),2);
   f.root.onPosted(status('999'));assert.deepEqual(f.ids(),['100','101','103','102']);
+});
+test('the displayed reply count includes three direct branches and keeps every nested reply visible',async()=>{
+  const f=fixture();await f.root.refresh();
+  const replies=[status('101',100),status('111','101'),status('102','100'),status('121','102'),status('122','121'),status('103','100')];
+  f.respond(async p=>p.endsWith('/context')?{ancestors:[],descendants:replies}:status('100'));
+  await f.root.refresh();assert.equal(f.replyCount(),3);assert.deepEqual(f.ids(),['100','101','111','102','121','122','103']);
+});
+test('opening a reply counts only that post’s children rather than its ancestors or deeper descendants',async()=>{
+  const f=fixture('102');await f.root.refresh();
+  f.respond(async p=>p.endsWith('/context')?{ancestors:[status('100')],descendants:[status('121','102'),status('122','121')]}:status('102','100'));
+  await f.root.refresh();assert.equal(f.replyCount(),1);assert.deepEqual(f.ids(),['100','102','121','122']);
 });
 test('a reply posted during an older refresh is retained until the server confirms it', async()=>{
   const f=fixture();await f.root.refresh();const gate=defer();
@@ -69,7 +81,7 @@ test('post rendering preserves bottom space used to hold the focused post positi
 test('deleted local replies are not restored when the thread renders another post', async()=>{
   const f=fixture();await f.root.refresh();f.root.onPosted(status('101','100'));
   f.root.forgetStatus('101');f.root.onPosted(status('102','100'));
-  assert.deepEqual(f.ids(),['100','102']);
+  assert.deepEqual(f.ids(),['100','102']);assert.equal(f.replyCount(),1);
 });
 test('edited replies retain their current content when another post is inserted', async()=>{
   const f=fixture();await f.root.refresh();f.root.onPosted({...status('101','100'),content:'old'});

@@ -2129,7 +2129,8 @@ function threadView(id){
     ctx.ancestors.forEach((a, i) => root.append(statusEl(a, {up:true, chained:i > 0, inThread:true})));
     const f = statusEl(s, {focus:true, inThread:true}); root.append(f);
     const order = threadOrder(s, ctx.descendants);
-    if (order.length) root.append(h(`<div class="thsec">${ic('reply')}<span>답글 ${order.length}개</span></div>`));
+    const directCount = order.filter(d => String(d.in_reply_to_id) === String(s.id)).length;
+    if (order.length) root.append(h(`<div class="thsec">${ic('reply')}<span>답글 ${directCount}개</span></div>`));
     order.forEach((d, i) => {
       const nx = order[i + 1], pv = order[i - 1];
       root.append(statusEl(d, {up:!!nx && String(nx.in_reply_to_id) === String(d.id), chained:!!pv && String(d.in_reply_to_id) === String(pv.id), inThread:true}));
@@ -4255,7 +4256,7 @@ function mainSettings(root){
   const s7 = secEl('그 밖의 설정', '여기 없는 설정은 마스토돈 웹사이트에서 바꿀 수 있어요.');
   s7.append(linkRow('globe', '마스토돈 웹에서 설정 열기', me.instance + '/settings', () => window.open(`https://${me.instance}/settings/preferences`, '_blank', 'noopener')));
   s7.append(linkRow('memo', '문제 확인용 기록 복사', '최근 요청 시간과 화면 이동만 복사해요. 글 내용과 로그인 정보는 포함하지 않아요.', async () => {
-    const text = JSON.stringify({version:'2026-10-18.3', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
+    const text = JSON.stringify({version:'2026-10-18.4', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
     try{ await navigator.clipboard.writeText(text); toast('문제 확인용 기록을 복사했어요'); }
     catch(e){ toast('복사하지 못했어요. 브라우저의 클립보드 권한을 확인해 주세요.'); }
   }));

@@ -728,7 +728,9 @@ body.no-counts .fstats b{display:none}
 .rqs .ic{width:15px;height:15px;stroke-width:2.2}
 .mq-todo .rqs{color:#e8590c}
 .mq-replied .rqs{color:var(--boost)}
-.mq-done .rqs{color:var(--sub)}
+.mq-done .rqs,.mq-checking .rqs{color:var(--sub)}
+.mqsum .err{padding:8px 0 12px}
+.mqsum .err p{margin:0 0 8px}
 .status.mq-replied,.status.mq-done{opacity:.62}
 .status.flash{animation:fl 1.2s}
 .mqload{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;border:0;border-bottom:1px solid var(--line);background:none;padding:13px 16px;color:var(--accent);font-size:14px;font-weight:700}
@@ -1973,51 +1975,59 @@ function mentionsView(){
   let recentCutoff = 0, oldestReceived = Infinity, loadingRecent = false;
   const seenNotifications = new Set(), seenMine = new Set();
   let mine = new Set(), myNext = null, myEnd = false, myOldest = null;
+  let replyTarget = Infinity, replyTask = null, replyError = null, checking = false;
+  let controller = new AbortController(), suspended = false, resumePage = false, resumeRecent = false, resumeReply = false;
+  let opened = 0, trace = null, contentNoted = false;
+  let saved = mqStore(me);
+  const replyTime = n => Date.parse(n.status?.created_at || n.created_at);
   const stOf = n => {
-    const id = String(n.status.id), m = mqStore(me);
-    if (mine.has(id) || m.replied.includes(id)) return 'replied';
-    if (m.done.includes(id)) return 'done';
-    return 'todo';
+    const id = String(n.status.id);
+    if (mine.has(id) || saved.replied.includes(id)) return 'replied';
+    if (saved.done.includes(id)) return 'done';
+    /* 아직 읽지 않은 답장 기록은 미답으로 단정하지 않는다. */
+    return myEnd || myOldest !== null && myOldest < replyTime(n) ? 'todo' : 'checking';
   };
-  const LABEL = {replied:'답장함', done:'답 안 해도 됨', todo:'아직 답 안 함'};
+  const LABEL = {replied:'답장함', done:'답 안 해도 됨', todo:'아직 답 안 함', checking:'답장 여부 확인 중'};
   const whenOf = n => n.created_at || n.status?.created_at;
   const recentComplete = () => end || oldestReceived < recentCutoff;
   function card(n){
     const el = notifEl(n,me);
     const k = stOf(n);
-    el.classList.add('mq', 'mq-' + k);
-    const row = h(`<div class="rq"><span class="rqs">${ic(k === 'todo' ? 'reply' : 'check')}<span></span></span><button class="mini" type="button"></button></div>`);
+    el.classList.add('mq', 'mq-' + k); el._mqState = k;
+    const row = h(`<div class="rq"><span class="rqs">${ic(k === 'todo' || k === 'checking' ? 'reply' : 'check')}<span></span></span><button class="mini" type="button"></button></div>`);
     $('.rqs span', row).textContent = LABEL[k];
     const b = $('button', row);
     if (k === 'replied') b.remove();
-    else b.textContent = k === 'todo' ? '답 안 해도 돼요' : '되돌리기';
+    else b.textContent = k === 'done' ? '되돌리기' : '답 안 해도 돼요';
     b.onclick = e => {
       e.stopPropagation();
       const m = mqStore(me), id = String(n.status.id);
-      if (k === 'todo') m.done.push(id); else m.done = m.done.filter(x => x !== id);
+      if (k === 'done') m.done = m.done.filter(x => x !== id); else if (!m.done.includes(id)) m.done.push(id);
       mqSave(me, m);
-      repaint(el, n);
+      redraw(true);
     };
     row.addEventListener('click', e => e.stopPropagation());
     const body = $('.body', el); if (body) body.append(row);
     el._n = n;
     return el;
   }
-  function repaint(el, n){
-    if (pref.only && stOf(n) !== 'todo'){ el.remove(); }
-    else el.replaceWith(card(n));
-    paintSum();
-  }
   function paintSum(){
-    const todo = items.filter(n => stOf(n) === 'todo');
+    const todo = items.filter(n => stOf(n) === 'todo'), pending = items.filter(n => stOf(n) === 'checking');
     const oldest = items.length ? whenOf(items[items.length - 1]) : null;
     sum.replaceChildren();
     if (!items.length) return;
     const t = document.createElement('div'); t.className = 'mqt';
     t.innerHTML = `<b></b><span></span>`;
-    $('b', t).textContent = todo.length ? `안 답한 멘션 ${todo.length}개` : '불러온 멘션은 다 답했어요';
+    $('b', t).textContent = todo.length ? `안 답한 멘션 ${todo.length}개` : pending.length ? '답장 여부를 확인하고 있어요' : '불러온 멘션은 다 답했어요';
     $('span', t).textContent = ` · 불러온 멘션 ${items.length}개 (${oldest ? rel(oldest) + (SET.absTime ? '부터' : ' 전부터') : ''})`;
+    if (pending.length) $('span', t).textContent += ` · 확인 중 ${pending.length}개`;
     sum.append(t);
+    if (pending.length && replyError){
+      const problem = h('<div class="err" role="alert"><p></p><button class="pill ghost" type="button">답장 기록 다시 확인</button></div>');
+      $('p',problem).textContent = replyError;
+      $('button',problem).onclick = () => { replyError = null; checkReplies(replyTarget); redraw(true); };
+      sum.append(problem);
+    }
     if (todo.length && !pref.only){
       const jump = h('<button class="linkbtn" type="button">가장 오래된 안 답한 멘션으로</button>');
       jump.onclick = () => {
@@ -2033,14 +2043,26 @@ function mentionsView(){
     $('.mqsort', bar).innerHTML = ic(pref.asc ? 'up' : 'down') + `<span>${pref.asc ? '오래된 순' : '최신 순'}</span>`;
   }
   function draw(){
-    items = filterNotifications(items,me);
+    items = filterNotifications(items,me); saved = mqStore(me);
     paintBar();
-    let arr = pref.only ? items.filter(n => stOf(n) === 'todo') : items.slice();
+    let arr = pref.only ? items.filter(n => ['todo','checking'].includes(stOf(n))) : items.slice();
     if (pref.asc) arr.reverse();
-    list.replaceChildren(...arr.map(card));
+    /* 같은 카드는 유지하고, 새 멘션이나 답장 상태가 바뀐 카드만 만든다. */
+    const existing = new Map([...list.children].filter(c => c._n).map(c => [String(c._n.id),c]));
+    const nodes = arr.map(n => {
+      const el = existing.get(String(n.id));
+      return el && el._n === n && el._mqState === stOf(n) ? el : card(n);
+    });
+    const wanted = new Set(nodes);
+    for (const el of [...list.children]) if (!wanted.has(el)) el.remove();
+    nodes.forEach((el,i) => { if (list.children[i] !== el) list.insertBefore(el,list.children[i] || null); });
     if (!arr.length && items.length) list.append(h(`<div class="empty">${pref.only ? '불러온 멘션 중 안 답한 멘션이 없어요.' : '아직 나를 부른 글이 없어요.'}</div>`));
     if (pref.asc) list.before(more); else list.after(more);
     paintMore(); paintSum();
+    if (arr.length && !contentNoted){
+      contentNoted = true;
+      recordDiag('mentions-content', {trace, ms:Date.now() - opened, cards:arr.length, checking:arr.filter(n => stOf(n) === 'checking').length});
+    }
   }
   /* 자동으로 오래된 멘션을 붙일 때도 지금 읽는 카드는 같은 위치에 둔다. */
   function redraw(keepPosition){
@@ -2071,72 +2093,108 @@ function mentionsView(){
     b.onclick = () => loadMore();
     more.append(b);
   }
-  /* 내가 쓴 글을 멘션이 있는 시점까지 거슬러 읽어서, 어떤 멘션에 답했는지 알아냄 */
-  async function loadMine(until, my){
-    while (!myEnd && (!myOldest || new Date(myOldest) >= new Date(until))){
-      const {data, next} = await api(myNext || `/api/v1/accounts/${me.id}/statuses?` + qs({limit:'40', exclude_reblogs:'true'}), {withLink:true, acc:me});
+  /* 목록과 동시에 답장 기록을 읽고, 확인한 범위부터 상태를 갱신한다. */
+  function checkReplies(until){
+    if (Number.isFinite(until)) replyTarget = Math.min(replyTarget,until);
+    if (suspended || replyError || replyTask || myEnd || replyTarget === Infinity && seenMine.size || myOldest !== null && myOldest < replyTarget) return replyTask || Promise.resolve();
+    const my = gen; checking = true;
+    replyTask = readReplies(my).finally(() => {
       if (my !== gen) return;
-      if (!Array.isArray(data)) throw new Error('답장 기록을 불러오지 못했어요. 다시 시도해 주세요.');
-      if (data.length && !data.some(st => !seenMine.has(String(st.id)))) throw new Error('더 오래된 답장 기록을 불러오지 못했어요. 다시 시도해 주세요.');
-      data.forEach(st => {
-        seenMine.add(String(st.id));
-        if (st.in_reply_to_id) mine.add(String(st.in_reply_to_id));
-        if (st.created_at && (!myOldest || new Date(st.created_at) < new Date(myOldest))) myOldest = st.created_at;
-      });
-      const last = data[data.length - 1];
-      myNext = next || (last && `/api/v1/accounts/${me.id}/statuses?` + qs({limit:'40', exclude_reblogs:'true', max_id:last.id}));
-      if (!data.length) myEnd = true;
-    }
+      replyTask = null;
+      /* 마지막 페이지 응답과 새 멘션 페이지가 겹쳐 목표 시점이 바뀐 경우도 이어 읽는다. */
+      checkReplies(replyTarget);
+    });
+    return replyTask;
   }
-  /* 처음 40개에서 멈추지 않고, 정렬이나 화면 위치와 관계없이 최근 72시간까지 읽는다. */
+  async function readReplies(my){
+    try{
+      while (!myEnd && (myOldest === null || myOldest >= replyTarget)){
+        const {data, next} = await api(myNext || `/api/v1/accounts/${me.id}/statuses?` + qs({limit:'40', exclude_reblogs:'true'}), {withLink:true, acc:me, signal:controller.signal, trace});
+        if (my !== gen) return;
+        if (!Array.isArray(data)) throw new Error('답장 기록을 불러오지 못했어요. 다시 시도해 주세요.');
+        if (data.length && !data.some(st => !seenMine.has(String(st.id)))) throw new Error('더 오래된 답장 기록을 불러오지 못했어요. 다시 시도해 주세요.');
+        data.forEach(st => {
+          seenMine.add(String(st.id));
+          if (st.in_reply_to_id) mine.add(String(st.in_reply_to_id));
+          const at = Date.parse(st.created_at);
+          if (Number.isFinite(at) && (myOldest === null || at < myOldest)) myOldest = at;
+        });
+        const last = data[data.length - 1];
+        myNext = next || (last && `/api/v1/accounts/${me.id}/statuses?` + qs({limit:'40', exclude_reblogs:'true', max_id:last.id}));
+        if (!data.length) myEnd = true;
+        if (items.length) redraw(true);
+        if (replyTarget === Infinity) break;
+      }
+    }catch(e){ if (my === gen) replyError = e.message; }
+    if (my !== gen) return;
+    checking = false;
+    recordDiag('mentions-replies', {trace, ms:Date.now() - opened, cards:items.length, pending:items.filter(n => stOf(n) === 'checking').length, failed:!!replyError});
+    if (items.length) redraw(true);
+  }
+  /* 정렬이나 화면 위치와 관계없이 최근 72시간까지 목록부터 표시한다. */
   function loadMore(reset = false, recent = reset){
+    if (suspended) return Promise.resolve();
     if (loadTask) return loadTask;
     if (end && !reset) return Promise.resolve();
-    loadTask = readMore(reset, recent).finally(() => { loadTask = null; });
-    return loadTask;
+    const shared = readMore(reset, recent).finally(() => { if (loadTask === shared) loadTask = null; });
+    loadTask = shared;
+    return shared;
   }
   async function readMore(reset, recent){
     if (reset){
-      gen++; items = []; nextPath = null; end = false; mine = new Set(); myNext = null; myEnd = false; myOldest = null;
+      gen++; controller.abort(); controller = new AbortController(); replyTask = null; replyError = null; checking = false; replyTarget = Infinity;
+      items = []; nextPath = null; end = false; mine = new Set(); myNext = null; myEnd = false; myOldest = null;
       recentCutoff = Date.now() - 3 * 24 * 60 * 60 * 1000; oldestReceived = Infinity;
       seenNotifications.clear(); seenMine.clear();
+      opened = Date.now(); trace = recordDiag('mentions-open'); contentNoted = false;
     }
     loading = true; loadingRecent = recent; loadError = null; const my = gen; paintMore();
+    /* 첫 답장 페이지는 미리 읽되, 멘션을 받기 전부터 과거 기록 전체를 훑지는 않는다. */
+    checkReplies();
     try{
       do{
-        const {data, next} = await api(nextPath || '/api/v1/notifications?' + qs({'types[]':['mention'], limit:'80'}), {withLink:true, acc:me});
+        const {data, next} = await api(nextPath || '/api/v1/notifications?' + qs({'types[]':['mention'], limit:'80'}), {withLink:true, acc:me, signal:controller.signal, trace});
         if (my !== gen) return;
         if (!Array.isArray(data)) throw new Error('멘션을 불러오지 못했어요. 다시 시도해 주세요.');
         const received = data.filter(n => !seenNotifications.has(String(n.id)));
         if (data.length && !received.length) throw new Error('더 오래된 멘션을 불러오지 못했어요. 다시 시도해 주세요.');
-        verifyNotificationStatuses(data,me);
         const fresh = filterNotifications(received,me).filter(n => n.status && !isDm(n));
-        if (fresh.length) await loadMine(whenOf(fresh[fresh.length - 1]), my);
-        if (my !== gen) return;
         const keepPosition = !reset || seenNotifications.size > 0;
         data.forEach(n => {
           seenNotifications.add(String(n.id));
           const at = Date.parse(whenOf(n)); if (Number.isFinite(at)) oldestReceived = Math.min(oldestReceived, at);
         });
-        items = items.concat(filterNotifications(fresh,me));
+        items = items.concat(fresh);
         const last = data[data.length - 1];
         nextPath = next || (last && '/api/v1/notifications?' + qs({'types[]':['mention'], limit:'80', max_id:last.id}));
         if (!data.length) end = true;
+        for (const n of fresh) checkReplies(replyTime(n));
         redraw(keepPosition);
+        verifyNotificationStatuses(data,me);
       }while (recent && !recentComplete());
     }catch(e){ if (my === gen) loadError = {message:e.message, reset:false, recent}; }
     if (my !== gen) return;
     loading = false;
+    if (recent) recordDiag('mentions-range', {trace, ms:Date.now() - opened, cards:items.length, complete:recentComplete(), checking:items.filter(n => stOf(n) === 'checking').length});
     redraw(true);
   }
   bar.querySelectorAll('.mqseg button').forEach(b => { b.onclick = () => { pref.only = b.dataset.v === 'todo'; LS.set('ytt.mqpref', pref); draw(); }; });
   $('.mqsort', bar).onclick = () => { pref.asc = !pref.asc; LS.set('ytt.mqpref', pref); draw(); window.scrollTo(0, 0); };
   window.addEventListener('ytt-replied', e => {
-    if (!e.detail || e.detail.acct !== me.acct) return;
-    [...list.children].forEach(c => { if (c._n && String(c._n.status.id) === e.detail.id) repaint(c, c._n); });
-    paintSum();
+    if (e.detail && e.detail.acct === me.acct) redraw(true);
   });
-  new IntersectionObserver(es => { if (es[0].isIntersecting && !pref.asc && !loading && !loadError && !end && items.length) loadMore(); }, {rootMargin:'400px 0px'}).observe(more);
+  new IntersectionObserver(es => { if (es[0].isIntersecting && !suspended && !pref.asc && !loading && !loadError && !end && items.length) loadMore(); }, {rootMargin:'400px 0px'}).observe(more);
+  root.suspend = () => {
+    if (suspended) return;
+    resumePage = loading; resumeRecent = loadingRecent; resumeReply = checking;
+    suspended = true; gen++; controller.abort(); loadTask = null; replyTask = null; loading = false; checking = false;
+  };
+  root.resume = () => {
+    if (!suspended) return;
+    suspended = false; controller = new AbortController();
+    if (resumePage) loadMore(false,resumeRecent);
+    if (resumeReply) checkReplies(replyTarget);
+  };
   root.refresh = () => loadMore(true);
   root._notificationAccount = notificationAccount(me);
   root.pruneNotifications = draw;
@@ -4341,7 +4399,7 @@ function mainSettings(root){
   const s7 = secEl('그 밖의 설정', '여기 없는 설정은 마스토돈 웹사이트에서 바꿀 수 있어요.');
   s7.append(linkRow('globe', '마스토돈 웹에서 설정 열기', me.instance + '/settings', () => window.open(`https://${me.instance}/settings/preferences`, '_blank', 'noopener')));
   s7.append(linkRow('memo', '문제 확인용 기록 복사', '최근 요청 시간과 화면 이동만 복사해요. 글 내용과 로그인 정보는 포함하지 않아요.', async () => {
-    const text = JSON.stringify({version:'2026-10-18.5', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
+    const text = JSON.stringify({version:'2026-10-18.6', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
     try{ await navigator.clipboard.writeText(text); toast('문제 확인용 기록을 복사했어요'); }
     catch(e){ toast('복사하지 못했어요. 브라우저의 클립보드 권한을 확인해 주세요.'); }
   }));

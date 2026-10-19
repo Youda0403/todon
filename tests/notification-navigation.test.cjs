@@ -18,13 +18,13 @@ function fixture(handler=async()=>notice()){
   isDm:n=>n.status?.visibility==='direct',dmKeyOf:()=> 'dm-key',rememberStatusData:()=>{},
   depthOf:()=>history.state.d,isHomeHash:t=>t==='#/home',homeTarget:()=> '#/home',
   recordDiag:(kind,data)=>{events.push({kind,...data});return events.length;},
-  route:()=>{if(!location.hash.startsWith('#/open/'))vm.runInContext("cancelNotificationOpen('route')",context);navigations.push(location.hash);},
+  route:()=>{if(!/^#\/(open|notice)\//.test(location.hash))vm.runInContext("cancelNotificationOpen('route')",context);navigations.push(location.hash);},
   nav:target=>{vm.runInContext("cancelNotificationOpen('navigation')",context);location.hash=target;navigations.push(target);},
   api:(p,opts)=>{calls.push({path:p,...opts});for(const w of waiters)if(calls.length>=w.n)w.resolve();return handler(p,opts);},
   checkNotif:()=>{},checkPush:()=>{},showUpdate:()=>{}});
  vm.runInContext('let curIdx=0,curKey="#/home",freshNav=false;'+app,context);
  return {context,accounts,calls,waitForCalls:n=>calls.length>=n?Promise.resolve():new Promise(resolve=>waiters.push({n,resolve})),events,messages,navigations,saved,main,location,history,cache,run:s=>vm.runInContext(s,context),
-  start:(id='42',hint=fingerprint(accounts[0].token))=>{location.hash='#/open/'+id+'/'+hint;context.id=id;context.hint=hint;return vm.runInContext('openNotif(id,hint)',context);}};
+  start:(id='42',hint=fingerprint(accounts[0].token),target={kind:'thread',id:'100'})=>{location.hash=target?'#/notice/'+id+'/'+hint+'/'+target.kind+'/'+target.id:'#/open/'+id+'/'+hint;context.id=id;context.hint=hint;context.target=target;return vm.runInContext('openNotif(id,hint,target)',context);}};
 }
 test('system click resolves the exact notified post rather than its parent and pins the recipient account',async()=>{
  const f=fixture(async()=>notice());await f.start('42',fingerprint(f.accounts[1].token));
@@ -38,7 +38,7 @@ test('waiting for a clicked notification replaces the previous thread with an ex
 });
 test('a late first click cannot overwrite a second notification click',async()=>{
  const first=defer(),second=defer();const f=fixture(p=>p.endsWith('/42')?first.promise:second.promise);
- const a=f.start('42');await f.waitForCalls(1);const b=f.start('43');await f.waitForCalls(2);assert.equal(f.calls[0].signal.aborted,true);
+ const a=f.start('42');await f.waitForCalls(1);const b=f.start('43',fingerprint('private-a'),{kind:'thread',id:'200'});await f.waitForCalls(2);assert.equal(f.calls[0].signal.aborted,true);
  second.resolve(notice('43','200'));await b;first.resolve(notice('42','100'));await a;
  assert.equal(f.location.hash,'#/thread/200');assert.deepEqual(f.navigations,['#/thread/200']);
 });
@@ -56,7 +56,7 @@ test('mismatched notification IDs are rejected without opening the returned unre
  const f=fixture(async()=>notice('43','999'));await f.start();assert.equal(f.location.hash,'#/notifications');assert.match(f.messages[0],/일치하지/);
 });
 test('opaque long string IDs stay exact and unsafe numeric IDs cannot select a rounded notification',async()=>{
- const id='123456789012345678901',f=fixture(async()=>notice(id,'98765432109876543210'));await f.start(id);
+ const id='123456789012345678901',f=fixture(async()=>notice(id,'98765432109876543210'));await f.start(id,fingerprint('private-a'),{kind:'thread',id:'98765432109876543210'});
  assert.ok(f.calls[0].path.endsWith(id));assert.equal(f.location.hash,'#/thread/98765432109876543210');
  const unsafe=fixture();await unsafe.start(9007199254740993);assert.equal(unsafe.calls.length,0);assert.equal(unsafe.location.hash,'#/notifications');
 });
@@ -88,7 +88,7 @@ function workerFixture(clients=[]){
   setTimeout:(fn,ms)=>setTimeout(fn,ms===1500?10:ms),clearTimeout,
   caches:{open:async()=>({match:async()=>({json:async()=>[]})})}});
  vm.runInContext(worker,context);
- return {opened,navigated,messages,shown,context,click:(id='42',hint=fingerprint('private-a'))=>{let task;handlers.get('notificationclick')({notification:{data:{id,hint},close(){}},waitUntil:p=>task=p});return task;},
+ return {opened,navigated,messages,shown,context,click:(id='42',hint=fingerprint('private-a'),target={kind:'thread',id:'100'})=>{let task;handlers.get('notificationclick')({notification:{data:{id,hint,...(target?{routeVersion:2,target}:{})},close(){}},waitUntil:p=>task=p});return task;},
   push:()=>{let task;handlers.get('push')({data:{json:()=>({notification_id:'42',notification_type:'mention'})},waitUntil:p=>task=p});return task;}};
 }
 test('an unrelated focused or visible app never receives this app notification clicks',async()=>{
@@ -100,7 +100,7 @@ test('an unrelated visible app does not suppress an OS push notification',async(
  const f=workerFixture([{url:'https://app.test/tower/',visibilityState:'visible',postMessage(){throw new Error('wrong app');}}]);await f.push();assert.equal(f.shown.length,1);
 });
 test('when there is no app window the worker opens the exact notification route',async()=>{
- const f=workerFixture([{url:'https://app.test/todon-other/',focused:true}]);await f.click('123456789012345678901');assert.equal(f.opened.length,1);assert.ok(f.opened[0].includes('/todon/#/open/123456789012345678901/'));
+ const f=workerFixture([{url:'https://app.test/todon-other/',focused:true}]);await f.click('123456789012345678901');assert.equal(f.opened.length,1);assert.ok(f.opened[0].includes('/todon/#/notice/123456789012345678901/'));
 });
 test('an invalid handoff response triggers fallback navigation instead of pretending it opened',async()=>{
  const destinations=[],ours={url:'https://app.test/todon/',focus:async()=>{},postMessage:(m,ports)=>ports[0].postMessage('ignored'),navigate:async u=>{destinations.push(u);return true;}};
@@ -126,4 +126,38 @@ test('a failed lookup opens the recipient account list rather than the previousl
 });
 test('an unsafe status ID returned by a notification cannot become an unrelated thread target',async()=>{
  const f=fixture(async()=>notice('42',9007199254740993));await f.start();assert.equal(f.location.hash,'#/notifications');
+});
+
+test('same notification ID with a different target cannot pass the displayed-post check',async()=>{
+ const f=fixture(async()=>notice('42','999'));await f.start('42',fingerprint('private-a'),{kind:'thread',id:'100'});
+ assert.equal(f.location.hash,'#/notifications');assert.ok(f.events.some(e=>e.kind==='notification-resolved'&&e.matched&&!e.targetMatched));assert.match(f.messages[0],/표시된 툿/);
+});
+test('old notifications without a captured target fail safely without looking up a guessed post',async()=>{
+ const f=fixture();await f.start('42',fingerprint('private-a'),null);assert.equal(f.calls.length,0);assert.equal(f.location.hash,'#/notifications');assert.ok(f.events.some(e=>e.reason==='legacy'));
+});
+test('a fallback notification without verified details opens only the recipient list',async()=>{
+ const f=fixture();await f.start('42',fingerprint('private-b'),{kind:'list',id:'-'});assert.equal(f.calls.length,0);assert.equal(f.run('curIdx'),1);assert.equal(f.location.hash,'#/notifications');
+});
+test('a DM is routed only when the captured target kind and post match',async()=>{
+ const f=fixture(async()=>({...notice(),status:{...notice().status,visibility:'direct'}}));
+ await f.start('42',fingerprint('private-a'),{kind:'chat',id:'100'});assert.equal(f.location.hash,'#/chat/dm-key');
+ const mismatch=fixture(async()=>({...notice(),status:{...notice().status,visibility:'direct'}}));
+ await mismatch.start();assert.equal(mismatch.location.hash,'#/notifications');
+});
+test('profile notifications are bound to the displayed actor',async()=>{
+ const f=fixture(async()=>({id:'42',type:'follow',account:{id:'other'}}));await f.start('42',fingerprint('private-a'),{kind:'user',id:'other'});assert.equal(f.location.hash,'#/user/other');
+});
+test('boost wrappers use the displayed original post consistently for the captured target',async()=>{
+ const n=notice('42','wrapper');n.status.reblog={...notice().status,id:'original'};const f=fixture(async()=>n);
+ await f.start('42',fingerprint('private-a'),{kind:'thread',id:'original'});assert.equal(f.location.hash,'#/thread/original');
+});
+test('the new target-bearing route validates each path component',()=>{
+ const f=fixture();assert.equal(f.run("notificationOpenTarget('#/notice/42/"+fingerprint('private-a')+"/thread/100').id"),'100');
+ for(const hash of ['#/notice/42/'+fingerprint('private-a')+'/thread/100/extra','#/notice/42/'+fingerprint('private-a')+'/bad/100','#/notice/42/'+fingerprint('private-a')+'/list/100']){f.context.hash=hash;assert.equal(f.run('notificationOpenTarget(hash)'),null);}
+});
+test('a worker click forwards the captured target in a route understood only by the new protocol',async()=>{
+ const f=workerFixture();await f.click('42',fingerprint('private-a'),{kind:'thread',id:'987654321012345678'});assert.ok(f.opened[0].endsWith('/thread/987654321012345678'));assert.ok(f.opened[0].includes('#/notice/42/'));
+});
+test('old OS notification data is converted to a list destination by a new worker',async()=>{
+ const f=workerFixture();await f.click('42',fingerprint('private-a'),null);assert.ok(f.opened[0].endsWith('/list/-'));
 });

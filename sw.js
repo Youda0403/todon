@@ -1,5 +1,6 @@
 // 역극툿 서비스 워커: 앱 화면 파일만 캐시하고, 마스토돈 서버 요청은 건드리지 않음
 const CACHE = 'ytt-v5';
+const WORKER_VERSION = '2026-10-19.2';
 const BADGES = ['dm', 'reply', 'mention', 'fav', 'boost', 'status', 'follow', 'quote', 'default'].map(k => `./badge-${k}.png`);
 async function appClients(){
   const scope = new URL(self.registration.scope);
@@ -12,6 +13,16 @@ async function appClients(){
 function exactNotificationId(value){
   if (typeof value === 'number') return Number.isSafeInteger(value) && value >= 0 ? String(value) : null;
   return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value) ? value : null;
+}
+function notificationTarget(n){
+  const s = n.status?.reblog || n.status;
+  if (s){ const id = exactNotificationId(s.id); return id ? {kind:n.type === 'mention' && s.visibility === 'direct' ? 'chat' : 'thread',id} : {kind:'list',id:'-'}; }
+  if (['mention','favourite','reblog','status','quote','quoted_update','poll','update'].includes(n.type)) return {kind:'list',id:'-'};
+  const id = exactNotificationId(n.account?.id);
+  return id ? {kind:'user',id} : {kind:'list',id:'-'};
+}
+function validNotificationTarget(target){
+  return !!target && (target.kind === 'list' ? target.id === '-' : ['thread','chat','user'].includes(target.kind) && !!exactNotificationId(target.id));
 }
 const SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', ...BADGES];
 
@@ -70,6 +81,7 @@ async function checkPage() {
 }
 self.addEventListener('message', e => {
   if (e.data && e.data.type === 'check') e.waitUntil(checkPage());
+  if (e.data?.type === 'worker-info') e.source?.postMessage({type:'worker-info',version:WORKER_VERSION,routeVersion:2});
 });
 
 // 브라우저가 푸시 연결을 바꿨다면 열린 앱에 재등록을 부탁한다.
@@ -98,11 +110,11 @@ const plainText = html => String(html || '')
 function isReply(n) { return n.type === 'mention' && !!n.status && !!(n.status.in_reply_to_id || n.status.in_reply_to_account_id); }
 function describe(n, meId) {
   const name = (n.account && (n.account.display_name || n.account.username)) || '누군가';
-  const s = n.status;
+  const s = n.status?.reblog || n.status;
   const text = s ? (s.spoiler_text ? '⚠ ' + s.spoiler_text : (plainText(s.content) || (s.media_attachments && s.media_attachments.length ? '사진' : ''))) : '';
   const dm = n.type === 'mention' && s && s.visibility === 'direct';
   // 답글: 내 글에 단 답글 + 대화 속 답글(상대가 자기 글에 이어 쓰면서 나를 부른 경우 등)
-  const reply = isReply(n);
+  const reply = isReply({...n,status:s});
   if (dm) return { title: `${name} · 쪽지`, body: text, kind: 'dm' };
   if (reply) return { title: `${name} · 답글`, body: text, kind: 'reply' };
   const t = {
@@ -142,7 +154,8 @@ async function describePush(d, acc) {
         if (!r.ok) { if (!attempt && r.status >= 500 && !controller.signal.aborted) continue; return null; }
         const n = await r.json();
         if (!n || String(n.id) !== String(d.notification_id) || (d.notification_type && n.type !== d.notification_type) || (n.type === 'mention' && !n.status)) return null;
-        return describe(n, acc.id);
+        const described = describe(n,acc.id);
+        return described ? {...described,target:notificationTarget(n)} : null;
       } catch (_) { if (controller.signal.aborted || attempt) return null; }
     }
   } finally { clearTimeout(timer); }
@@ -163,10 +176,11 @@ self.addEventListener('push', e => {
     // 상세 정보를 확인하지 못한 mention은 답글도 포함하는 일반 알림으로 표시한다.
     const unclassified = d.notification_type === 'mention';
     let title = unclassified ? '새 멘션·답글' : d.title || '역극툿', body = d.body || '', kind = unclassified ? 'other' : d.notification_type || 'other';
+    let target = {kind:'list',id:'-'};
     const acc = (await readAccounts()).find(a => a && a.instance && a.hint && a.hint === hint);
     if (acc && d.notification_id && d.access_token) {
       const x = await describePush(d, acc);
-      if (x) { title = x.title; body = x.body; kind = x.kind; }
+      if (x) { title = x.title; body = x.body; kind = x.kind; target = x.target; }
     }
     await self.registration.showNotification(title, {
       body,
@@ -174,8 +188,8 @@ self.addEventListener('push', e => {
       badge: badgeFor(kind),
       vibrate: [80, 40, 80],
       timestamp: Date.now(),
-      tag: 'ytt-' + (d.notification_id || Date.now()),
-      data: { id: d.notification_id || null, hint }
+      tag: 'ytt-' + (hint || 'unmatched') + '-' + (d.notification_id || Date.now()),
+      data: {id:d.notification_id || null,hint,routeVersion:2,workerVersion:WORKER_VERSION,target}
     });
   })());
 });
@@ -196,7 +210,8 @@ self.addEventListener('notificationclick', e => {
   const click = ++notificationClickGeneration;
   e.notification.close();
   const data = e.notification.data || {}, id = exactNotificationId(data.id), hint = /^[a-f0-9]{12}$/.test(data.hint || '') ? data.hint : '';
-  const hash = id ? `#/open/${id}/${hint || ''}` : '#/notifications';
+  const target = data.routeVersion === 2 && validNotificationTarget(data.target) ? data.target : {kind:'list',id:'-'};
+  const hash = id ? `#/notice/${id}/${hint}/${target.kind}/${target.id}` : '#/notifications';
   const url = new URL('./' + hash, self.registration.scope).href;
   const task = notificationClickTask.catch(() => {}).then(async () => {
     if (click !== notificationClickGeneration) return;

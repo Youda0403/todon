@@ -4159,11 +4159,26 @@ function exactNotificationId(value){
   if (typeof value === 'number') return Number.isSafeInteger(value) && value >= 0 ? String(value) : null;
   return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value) ? value : null;
 }
+function notificationTarget(n){
+  const s = n.status?.reblog || n.status;
+  if (s){ const id = exactNotificationId(s.id); return id ? {kind:n.type === 'mention' && s.visibility === 'direct' ? 'chat' : 'thread',id} : {kind:'list',id:'-'}; }
+  if (['mention','favourite','reblog','status','quote','quoted_update','poll','update'].includes(n.type)) return {kind:'list',id:'-'};
+  const id = exactNotificationId(n.account?.id);
+  return id ? {kind:'user',id} : {kind:'list',id:'-'};
+}
+function validNotificationTarget(target){
+  return !!target && (target.kind === 'list' ? target.id === '-' : ['thread','chat','user'].includes(target.kind) && !!exactNotificationId(target.id));
+}
+function notificationOpenTarget(hash){
+  const match = /^#\/notice\/[A-Za-z0-9_-]{1,128}\/(?:[a-f0-9]{12})?\/(thread|chat|user|list)\/([A-Za-z0-9_-]{1,128})$/.exec(hash);
+  const target = match && {kind:match[1],id:match[2]};
+  return validNotificationTarget(target) ? target : null;
+}
 function notifTarget(n){
-  if (n.status && !exactNotificationId(n.status.id)) return '#/notifications';
-  if (isDm(n)) return '#/chat/' + dmKeyOf(n.status);
-  if (n.status) return '#/thread/' + n.status.id;
-  if (n.account) return '#/user/' + n.account.id;
+  const target = notificationTarget(n);
+  if (target.kind === 'chat') return '#/chat/' + dmKeyOf(n.status.reblog || n.status);
+  if (target.kind === 'thread') return '#/thread/' + target.id;
+  if (target.kind === 'user') return '#/user/' + target.id;
   return '#/notifications';
 }
 let popTimer = null;
@@ -4174,9 +4189,9 @@ function popOut(p){
 function popup(n, more){
   if (!filterNotifications([n]).length) return;
   document.querySelectorAll('.pop:not(.updbar)').forEach(x => x.remove()); clearTimeout(popTimer);
-  const me = cur(), s = n.status, dm = isDm(n);
+  const me = cur(), s = n.status?.reblog || n.status, dm = isDm({...n,status:s});
   /* 답글: 내 글에 단 답글뿐 아니라, 상대가 자기 글에 이어 쓰면서 나를 부른 경우처럼 대화 속 답글도 포함 */
-  const reply = isReply(n);
+  const reply = isReply({...n,status:s});
   const toMe = reply && String(s.in_reply_to_account_id) === String(me.id);
   const txt = dm ? '님이 쪽지를 보냈어요' : reply ? (toMe ? '님이 내 글에 답글을 달았어요' : '님이 답글을 달았어요') : POP_TXT[n.type];
   if (!txt) return;
@@ -4184,6 +4199,7 @@ function popup(n, more){
   const kind = dm ? 'dm' : reply ? 'reply' : ({favourite:'fav', reblog:'boost', status:'status', quote:'quote', quoted_update:'quote', mention:'mention'}[n.type] || 'other');
   const cls = n.type === 'favourite' ? 'fav' : n.type === 'reblog' ? 'boost' : 'k-' + kind;
   const tagTxt = {dm:'쪽지', reply:'답글', fav:'좋아요', boost:'부스트', status:'새 글', quote:'인용', mention:'멘션'}[kind] || '알림';
+  const shownDestination = notifTarget(n), shownStatus = s ? {...s} : null;
   const p = h(`<div class="pop" role="status"><img class="av" alt=""><span class="pic ${cls}">${ic(icn)}</span><div class="t"><div class="pt"><span class="ptag k-${kind}">${tagTxt}</span><b></b><span class="ptx"></span></div><small></small></div><button class="ibtn" type="button" aria-label="닫기">${ic('x')}</button></div>`);
   p._notification = n; p._notificationAccount = notificationAccount(me);
   $('img', p).src = avOf(n.account);
@@ -4195,8 +4211,8 @@ function popup(n, more){
     popOut(p); cancelNotificationOpen('popup');
     const trace = recordDiag('notification-click', {source:'popup'});
     if (!selectNotificationAccount(me)){ toast('이 알림을 받은 계정을 찾지 못했어요. 알림 목록에서 확인해 주세요.'); nav('#/notifications'); return; }
-    rememberStatusData(n,me);
-    const target = notifTarget(n);
+    rememberStatusData(shownStatus || n,me);
+    const target = shownDestination;
     recordDiag('notification-navigation', {trace, target:notificationDestination(target)}); nav(target);
   };
   $('button', p).onclick = e => { e.stopPropagation(); popOut(p); };
@@ -4248,9 +4264,10 @@ function onSwMessage(ev){
   const m = ev.data || {};
   if (m.type === 'push') checkNotif();
   if (m.type === 'push-repair') checkPush({force:true});
+  if (m.type === 'worker-info' && /^\d{4}-\d{2}-\d{2}\.\d+$/.test(m.version || '')) recordDiag('worker-info', {version:m.version,routeVersion:m.routeVersion === 2 ? 2 : 1});
   if (m.type === 'open'){
     let accepted = false;
-    if (typeof m.hash === 'string' && (m.hash === '#/notifications' || /^#\/open\/[A-Za-z0-9_-]{1,128}\/(?:[a-f0-9]{12})?$/.test(m.hash))){
+    if (typeof m.hash === 'string' && (m.hash === '#/notifications' || notificationOpenTarget(m.hash) || /^#\/open\/[A-Za-z0-9_-]{1,128}\/(?:[a-f0-9]{12})?$/.test(m.hash))){
       try{
         recordDiag('notification-click', {source:'system'});
         if (location.hash === m.hash) route(); else nav(m.hash);
@@ -4261,11 +4278,12 @@ function onSwMessage(ev){
   }
   if (m.type === 'update') showUpdate();
 }
-function openNotif(id, hint){
+function openNotif(id, hint, shownTarget = null){
   const hash = location.hash;
   if (notificationOpen && notificationOpen.hash === hash) return notificationOpen.task;
   cancelNotificationOpen('new-notification');
-  const controller = new AbortController(), trace = recordDiag('notification-open', {hasAccountHint:!!hint});
+  const bound = validNotificationTarget(shownTarget);
+  const controller = new AbortController(), trace = recordDiag('notification-open', {hasAccountHint:!!hint,routeVersion:bound ? 2 : 1});
   const job = {hash,controller,trace,task:null}; notificationOpen = job;
   const current = () => notificationOpen === job && !controller.signal.aborted && location.hash === hash;
   const main = $('#main'), previous = main.firstElementChild;
@@ -4301,13 +4319,24 @@ function openNotif(id, hint){
       recordDiag('notification-account', {trace, matched:!!acc});
       if (!acc){ toast('이 알림을 받은 계정을 확인하지 못했어요. 알림 목록에서 확인해 주세요.'); finish('#/notifications'); return; }
       recipient = acc;
+      if (!bound || shownTarget.kind === 'list'){
+        recordDiag('notification-target', {trace,bound,matched:false,reason:bound ? 'unverified-display' : 'legacy'});
+        toast('이 알림에는 확인된 툿 정보가 없어 알림 목록을 열었어요.'); finish('#/notifications',acc); return;
+      }
       const n = await api('/api/v1/notifications/' + encodeURIComponent(notificationId), {acc,signal:controller.signal,trace});
       if (!current()) return;
       if (!n || exactNotificationId(n.id) !== notificationId){
         recordDiag('notification-resolved', {trace, matched:false});
         toast('알림 정보가 일치하지 않아 열지 못했어요. 알림 목록에서 확인해 주세요.'); finish('#/notifications',acc); return;
       }
-      recordDiag('notification-resolved', {trace, matched:true});
+      const actualTarget = notificationTarget(n);
+      const targetMatched = actualTarget.kind === shownTarget.kind && actualTarget.id === shownTarget.id;
+      const type = ['mention','favourite','reblog','status','quote','quoted_update','poll','update','follow','follow_request'].includes(n.type) ? n.type : 'other';
+      const status = n.status?.reblog || n.status;
+      recordDiag('notification-resolved', {trace,matched:true,targetMatched,type,hasParent:!!status?.in_reply_to_id});
+      if (!targetMatched){
+        toast('알림에 표시된 툿과 조회 결과가 달라 알림 목록을 열었어요.'); finish('#/notifications',acc); return;
+      }
       if (!filterNotifications([n],acc).length){ toast('이 알림의 툿은 삭제되었거나 더 이상 볼 수 없어요.'); finish('#/notifications',acc); return; }
       rememberStatusData(n,acc); finish(notifTarget(n),acc);
     }catch(e){
@@ -4520,7 +4549,7 @@ function mainSettings(root){
   const s7 = secEl('그 밖의 설정', '여기 없는 설정은 마스토돈 웹사이트에서 바꿀 수 있어요.');
   s7.append(linkRow('globe', '마스토돈 웹에서 설정 열기', me.instance + '/settings', () => window.open(`https://${me.instance}/settings/preferences`, '_blank', 'noopener')));
   s7.append(linkRow('memo', '문제 확인용 기록 복사', '최근 요청 시간과 화면 이동만 복사해요. 글 내용과 로그인 정보는 포함하지 않아요.', async () => {
-    const text = JSON.stringify({version:'2026-10-19.1', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
+    const text = JSON.stringify({version:'2026-10-19.2', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
     try{ await navigator.clipboard.writeText(text); toast('문제 확인용 기록을 복사했어요'); }
     catch(e){ toast('복사하지 못했어요. 브라우저의 클립보드 권한을 확인해 주세요.'); }
   }));
@@ -5770,7 +5799,7 @@ function route(){
     curKey = null; window.scrollTo(0, 0); return;
   }
   document.body.classList.remove('in-login');
-  if (name === 'open'){ openNotif(arg, arg2); return; }
+  if (name === 'open' || name === 'notice'){ openNotif(arg,arg2,name === 'notice' ? notificationOpenTarget(hsh) : null); return; }
   cancelNotificationOpen('route');
   if (![...TABS,'thread','user','chat','edit','settings','follows','htag','who','shot','backup'].includes(name) || (['thread','user','chat','list','tag','follows','htag','who','shot'].includes(name) && !arg)){ hsh = '#/home'; name = 'home'; }
   if (curKey && cache.has(curKey)) cache.get(curKey).y = window.scrollY;
@@ -5877,7 +5906,7 @@ async function init(){
   window.addEventListener('hashchange', () => { if (location.hash !== curKey) route(); });
   /* 처음 열 때: 맨 아래 칸이 홈이 되도록 정리 (알림을 눌러 바로 세부 화면이 열린 경우 포함) */
   const h0 = location.hash;
-  if (cur() && depthOf() === 0 && h0 && h0 !== '#' && !isHomeHash(h0) && !/^#\/(login|open)/.test(h0)){
+  if (cur() && depthOf() === 0 && h0 && h0 !== '#' && !isHomeHash(h0) && !/^#\/(login|open|notice)/.test(h0)){
     history.replaceState({d:0}, '', homeTarget());
     history.pushState({d:1}, '', h0);
   }
@@ -5893,8 +5922,10 @@ async function init(){
   setupSwipe();
   shareAccountsWithSW();
   if ('serviceWorker' in navigator && location.protocol === 'https:'){
-    navigator.serviceWorker.register('sw.js').then(() => checkPush()).catch(() => {});
-    navigator.serviceWorker.addEventListener('message', onSwMessage);
+    navigator.serviceWorker.addEventListener('message',onSwMessage);
+    const workerInfo = () => navigator.serviceWorker.controller?.postMessage({type:'worker-info'});
+    navigator.serviceWorker.addEventListener('controllerchange',workerInfo); workerInfo();
+    navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(reg => { reg.active?.postMessage({type:'worker-info'}); checkPush(); }).catch(() => {});
   }
 }
 init();

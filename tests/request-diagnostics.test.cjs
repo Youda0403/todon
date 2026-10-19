@@ -32,9 +32,9 @@ test('diagnostic memory stays bounded',()=>{
 });
 test('request groups and phases distinguish a single status, context, batch and account history without identifiers',async()=>{
   const f=fixture(async()=>response(200,{}));
-  for(const p of ['/api/v1/statuses/123','/api/v1/statuses/123/context','/api/v1/statuses?id[]=123','/api/v1/accounts/456/statuses'])await f.run(`api(${JSON.stringify(p)},{trace:7})`);
-  const events=f.events();assert.deepEqual(events.map(e=>e.operation),['status-single','thread-context','status-batch','account-posts']);
-  assert.ok(events.every(e=>e.trace===7&&e.headersMs>=0&&e.bodyMs>=0&&e.decodeMs>=0&&e.outcome==='ok'));assert.equal(new Set(events.map(e=>e.seq)).size,4);
+  for(const p of ['/api/v1/statuses/123','/api/v1/statuses/123/context','/api/v1/statuses?id[]=123','/api/v1/accounts/456/statuses','/api/v1/notifications/12345'])await f.run(`api(${JSON.stringify(p)},{trace:7})`);
+  const events=f.events();assert.deepEqual(events.map(e=>e.operation),['status-single','thread-context','status-batch','account-posts','notification-single']);
+  assert.ok(events.every(e=>e.trace===7&&e.headersMs>=0&&e.bodyMs>=0&&e.decodeMs>=0&&e.outcome==='ok'));assert.equal(new Set(events.map(e=>e.seq)).size,5);
   assert.doesNotMatch(JSON.stringify(events),/\/statuses\/123|\/accounts\/456|private|token/);
   await f.run("api('/api/v1/statuses',{trace:'private-token'})");assert.equal(f.events().at(-1).trace,undefined);
 });
@@ -44,3 +44,4 @@ test('request diagnostics record whether the page was hidden at start and comple
   await f.run("api('/api/v1/statuses/123')");
   assert.equal(f.events()[0].hiddenStart,true);assert.equal(f.events()[0].hiddenEnd,false);
 });
+

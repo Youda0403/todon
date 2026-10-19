@@ -202,10 +202,11 @@ test('uses the browser lock when available', async () => {
 });
 test('service worker signals subscription changes without persisting credentials', async () => {
   const events=new Map(), messages=[];
-  const self={addEventListener:(n,fn)=>events.set(n,fn),clients:{matchAll:async()=>[{postMessage:m=>messages.push(m)}]}};
-  const context=vm.createContext({self});
+  const self={registration:{scope:'https://app.test/todon/'},addEventListener:(n,fn)=>events.set(n,fn),clients:{matchAll:async()=>[{url:'https://app.test/todon/',postMessage:m=>messages.push(m)}]}};
+  const context=vm.createContext({self,URL});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../sw.js'),'utf8'),context);
   let promise; events.get('pushsubscriptionchange')({waitUntil:p=>promise=p}); await promise;
   assert.equal(messages.length,1); assert.equal(messages[0].type,'push-repair');
   assert.equal(vm.runInContext("describe({type:'mention',account:{username:'a'},status:{content:'hi',in_reply_to_id:'1',in_reply_to_account_id:'a'}},'b').kind",context),'reply');
 });
+

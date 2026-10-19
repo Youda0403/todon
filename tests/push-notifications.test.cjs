@@ -13,9 +13,9 @@ function fixture({metadata=[account],fetchNotification=async()=>response(200,not
   const events=new Map(),shown=[],calls=[],delays=[],messages=[];let cleared=0;
   const crypto=cryptoError?{subtle:{digest:async()=>{throw new Error('unavailable');}}}:webcrypto;
   const self={crypto,addEventListener:(name,fn)=>events.set(name,fn),
-    clients:{matchAll:async()=>visible?[{visibilityState:'visible',postMessage:m=>messages.push(m)}]:[]},
-    registration:{showNotification:async(title,options)=>shown.push({title,...options})}};
-  const context=vm.createContext({self,crypto,TextEncoder,Uint8Array,AbortController,
+    clients:{matchAll:async()=>visible?[{url:'https://app.test/todon/',visibilityState:'visible',postMessage:m=>messages.push(m)}]:[]},
+    registration:{scope:'https://app.test/todon/',showNotification:async(title,options)=>shown.push({title,...options})}};
+  const context=vm.createContext({self,crypto,TextEncoder,Uint8Array,AbortController,URL,
     caches:{open:async()=>({match:async()=>({json:async()=>metadata})})},
     setTimeout:(fn,ms)=>{delays.push(ms);return setTimeout(fn,fast?5:ms);},clearTimeout:id=>{cleared++;clearTimeout(id);},
     fetch:async(url,options)=>{calls.push({url,options});return fetchNotification(url,options);}});
@@ -85,3 +85,4 @@ test('other raw notification types preserve their badges when details are unavai
     const f=fixture({metadata:[]});await f.push({notification_type:type});assert.equal(f.shown[0].badge,'badge-'+badge+'.png');
   }
 });
+

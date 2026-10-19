@@ -1,6 +1,18 @@
 // 역극툿 서비스 워커: 앱 화면 파일만 캐시하고, 마스토돈 서버 요청은 건드리지 않음
 const CACHE = 'ytt-v5';
 const BADGES = ['dm', 'reply', 'mention', 'fav', 'boost', 'status', 'follow', 'quote', 'default'].map(k => `./badge-${k}.png`);
+async function appClients(){
+  const scope = new URL(self.registration.scope);
+  const clients = await self.clients.matchAll({type:'window',includeUncontrolled:true});
+  return clients.filter(c => {
+    try{ const url = new URL(c.url); return url.origin === scope.origin && url.pathname.startsWith(scope.pathname); }
+    catch(e){ return false; }
+  });
+}
+function exactNotificationId(value){
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value >= 0 ? String(value) : null;
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value) ? value : null;
+}
 const SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', ...BADGES];
 
 self.addEventListener('install', e => {
@@ -16,7 +28,7 @@ self.addEventListener('activate', e => {
 // 같은 사이트 파일: 저장해 둔 것을 바로 보여 주고(빠르게 열림), 뒤에서 새 버전을 받아 둠.
 // 앱 화면 파일이 바뀌었으면 열린 앱에 '새 버전이 있어요'를 알림
 async function notifyUpdate() {
-  const cs = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  const cs = await appClients();
   cs.forEach(c => c.postMessage({ type: 'update' }));
 }
 self.addEventListener('fetch', e => {
@@ -64,7 +76,7 @@ self.addEventListener('message', e => {
 // 인증 토큰은 서비스 워커에 따로 저장하지 않는다. 앱이 닫혀 있으면 다음 실행 때 실제 등록을 점검한다.
 self.addEventListener('pushsubscriptionchange', e => {
   e.waitUntil((async () => {
-    const cs = await self.clients.matchAll({type:'window', includeUncontrolled:true});
+    const cs = await appClients();
     cs.forEach(c => c.postMessage({type:'push-repair'}));
   })());
 });
@@ -141,8 +153,10 @@ async function describePush(d, acc) {
 self.addEventListener('push', e => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch (_) {}
+  const notificationId = exactNotificationId(d.notification_id);
+  d.notification_id = notificationId;
   e.waitUntil((async () => {
-    const cs = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const cs = await appClients();
     const vis = cs.find(c => c.visibilityState === 'visible');
     if (vis) { vis.postMessage({ type: 'push' }); return; }
     const hint = await tokHint(d.access_token);
@@ -173,24 +187,33 @@ function askOpen(c, hash) {
     const ch = new MessageChannel();
     const done = ok => { clearTimeout(t); ch.port1.close(); res(ok); };
     const t = setTimeout(() => done(false), 1500);
-    ch.port1.onmessage = () => done(true);
+    ch.port1.onmessage = e => done(e.data === 'ok');
     try { c.postMessage({ type: 'open', hash }, [ch.port2]); } catch (_) { done(false); }
   });
 }
+let notificationClickGeneration = 0, notificationClickTask = Promise.resolve();
 self.addEventListener('notificationclick', e => {
+  const click = ++notificationClickGeneration;
   e.notification.close();
-  const { id, hint } = e.notification.data || {};
+  const data = e.notification.data || {}, id = exactNotificationId(data.id), hint = /^[a-f0-9]{12}$/.test(data.hint || '') ? data.hint : '';
   const hash = id ? `#/open/${id}/${hint || ''}` : '#/notifications';
   const url = new URL('./' + hash, self.registration.scope).href;
-  e.waitUntil((async () => {
-    const cs = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    // 지금 보고 있는 창 → 화면에 떠 있는 창 → 가장 최근에 쓴 창 순서로 고름
+  const task = notificationClickTask.catch(() => {}).then(async () => {
+    if (click !== notificationClickGeneration) return;
+    const cs = await appClients();
+    if (click !== notificationClickGeneration) return;
+    // 이 앱의 창 안에서 지금 보는 창 → 보이는 창 → 최근 창 순서로 고름
     const c = cs.find(x => x.focused) || cs.find(x => x.visibilityState === 'visible') || cs[0];
     if (!c) { await self.clients.openWindow(url); return; }
     try { await c.focus(); } catch (_) {}
-    if (await askOpen(c, hash)) return;
+    if (click !== notificationClickGeneration) return;
+    const accepted = await askOpen(c, hash);
+    if (accepted || click !== notificationClickGeneration) return;
     try { if (await c.navigate(url)) return; } catch (_) {}
+    if (click !== notificationClickGeneration) return;
     await self.clients.openWindow(url);
-  })());
+  });
+  notificationClickTask = task; e.waitUntil(task);
 });
+
 

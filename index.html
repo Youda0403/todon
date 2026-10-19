@@ -1002,6 +1002,7 @@ function requestOperation(path, method){
   if (/\/statuses\/[^/]+\/context(?:\?|$)/.test(path)) return 'thread-context';
   if (/^\/api\/v\d+\/statuses\/[^/?]+(?:\?|$)/.test(path)) return 'status-single';
   if (/\/accounts\/[^/]+\/statuses(?:\?|$)/.test(path)) return 'account-posts';
+  if (/^\/api\/v\d+\/notifications\/[^/?]+(?:\?|$)/.test(path)) return 'notification-single';
   return 'other';
 }
 function qs(obj){ const u = new URLSearchParams(); for (const [k, v] of Object.entries(obj)) (Array.isArray(v) ? v : [v]).forEach(x => u.append(k, x)); return u.toString(); }
@@ -1150,6 +1151,7 @@ function overlayClosedByUI(id){
   }, 0);
 }
 window.addEventListener('popstate', e => {
+  cancelNotificationOpen('history');
   if (ignorePop > 0){ ignorePop--; return; }
   if (navAfterPop){ const f = navAfterPop; navAfterPop = null; f(); return; }
   if (ovStack.length){
@@ -4153,7 +4155,12 @@ function notifSettingsEl(){
   return sec;
 }
 const POP_TXT = {mention:'님이 나를 불렀어요', favourite:'님이 내 글을 좋아해요', reblog:'님이 내 글을 부스트했어요', follow:'님이 나를 팔로우했어요', follow_request:'님이 팔로우를 요청했어요', status:'님이 새 글을 올렸어요', quote:'님이 내 글을 인용했어요', quoted_update:'님이 내가 인용한 글을 수정했어요', poll:'님의 투표가 끝났어요'};
+function exactNotificationId(value){
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value >= 0 ? String(value) : null;
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value) ? value : null;
+}
 function notifTarget(n){
+  if (n.status && !exactNotificationId(n.status.id)) return '#/notifications';
   if (isDm(n)) return '#/chat/' + dmKeyOf(n.status);
   if (n.status) return '#/thread/' + n.status.id;
   if (n.account) return '#/user/' + n.account.id;
@@ -4184,7 +4191,14 @@ function popup(n, more){
   let sub = s ? (s.spoiler_text ? '⚠ ' + s.spoiler_text : (stripLead(plain(s.content)) || (s.media_attachments && s.media_attachments.length ? '사진' : ''))) : '@' + n.account.acct;
   if (more) sub += ` · 새 알림 ${more}개 더`;
   $('small', p).textContent = sub;
-  p.onclick = () => { popOut(p); rememberStatusData(n,me); nav(notifTarget(n)); };
+  p.onclick = () => {
+    popOut(p); cancelNotificationOpen('popup');
+    const trace = recordDiag('notification-click', {source:'popup'});
+    if (!selectNotificationAccount(me)){ toast('이 알림을 받은 계정을 찾지 못했어요. 알림 목록에서 확인해 주세요.'); nav('#/notifications'); return; }
+    rememberStatusData(n,me);
+    const target = notifTarget(n);
+    recordDiag('notification-navigation', {trace, target:notificationDestination(target)}); nav(target);
+  };
   $('button', p).onclick = e => { e.stopPropagation(); popOut(p); };
   let y0 = null;
   p.addEventListener('touchstart', e => { y0 = e.touches[0].clientY; }, {passive:true});
@@ -4212,41 +4226,98 @@ async function tokHint(t){
   const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t));
   return [...new Uint8Array(b)].slice(0, 6).map(x => x.toString(16).padStart(2, '0')).join('');
 }
-/* 서비스 워커가 보내는 말: 알림을 눌렀으면(open) '받았어요'라고 답하고 그 화면으로 이동 */
+/* 알림 조회 결과는 사용자가 마지막으로 고른 이동에만 적용한다. */
+let notificationOpen = null;
+function cancelNotificationOpen(reason = 'navigation'){
+  if (!notificationOpen) return;
+  const old = notificationOpen; notificationOpen = null; old.controller.abort();
+  recordDiag('notification-open-cancel', {trace:old.trace, reason});
+}
+function notificationDestination(target){
+  const kind = target.split('/')[1];
+  return ['thread','chat','user','notifications'].includes(kind) ? kind : 'other';
+}
+function selectNotificationAccount(acc){
+  const i = accounts.findIndex(a => a.instance === acc.instance && String(a.id) === String(acc.id) && a.token === acc.token);
+  if (i < 0) return false;
+  if (i !== curIdx){ curIdx = i; saveAccounts(); cache.clear(); curKey = null; setBadge(false); }
+  return true;
+}
+/* '받았어요' 응답은 이동 요청을 실제로 처리한 뒤에 보낸다. */
 function onSwMessage(ev){
   const m = ev.data || {};
   if (m.type === 'push') checkNotif();
   if (m.type === 'push-repair') checkPush({force:true});
-  if (m.type === 'open' && m.hash){
-    if (ev.ports && ev.ports[0]) ev.ports[0].postMessage('ok');
-    nav(m.hash);
+  if (m.type === 'open'){
+    let accepted = false;
+    if (typeof m.hash === 'string' && (m.hash === '#/notifications' || /^#\/open\/[A-Za-z0-9_-]{1,128}\/(?:[a-f0-9]{12})?$/.test(m.hash))){
+      try{
+        recordDiag('notification-click', {source:'system'});
+        if (location.hash === m.hash) route(); else nav(m.hash);
+        accepted = true;
+      }catch(e){ recordDiag('notification-open-error', {phase:'handoff'}); }
+    }
+    if (ev.ports && ev.ports[0]) ev.ports[0].postMessage(accepted ? 'ok' : 'ignored');
   }
   if (m.type === 'update') showUpdate();
 }
-async function openNotif(id, hint){
-  let found = !hint;
-  if (hint){
-    for (let i = 0; i < accounts.length; i++){
-      if (await tokHint(accounts[i].token) === hint){
-        found = true;
-        if (i !== curIdx){ curIdx = i; saveAccounts(); cache.clear(); curKey = null; }
-        break;
+function openNotif(id, hint){
+  const hash = location.hash;
+  if (notificationOpen && notificationOpen.hash === hash) return notificationOpen.task;
+  cancelNotificationOpen('new-notification');
+  const controller = new AbortController(), trace = recordDiag('notification-open', {hasAccountHint:!!hint});
+  const job = {hash,controller,trace,task:null}; notificationOpen = job;
+  const current = () => notificationOpen === job && !controller.signal.aborted && location.hash === hash;
+  const main = $('#main'), previous = main.firstElementChild;
+  if (curKey && cache.has(curKey)) cache.get(curKey).y = window.scrollY;
+  if (previous?.suspend) previous.suspend();
+  const waiting = h('<div class="sentinel" role="status"><div class="spin"></div><span>누른 알림의 툿을 확인하고 있어요</span></div>');
+  main.replaceChildren(waiting); curKey = hash;
+  if (cur()) setHeader('thread',waiting);
+  const finish = (target,acc = null) => {
+    if (!current()) return;
+    if (acc && !selectNotificationAccount(acc)) target = '#/notifications';
+    notificationOpen = null;
+    recordDiag('notification-navigation', {trace, target:notificationDestination(target)});
+    const d = depthOf();
+    if (d === 0 && !isHomeHash(target)){ history.replaceState({d:0}, '', homeTarget()); history.pushState({d:1}, '', target); }
+    else history.replaceState({d}, '', target);
+    freshNav = true; route();
+  };
+  job.task = (async () => {
+    let recipient = null;
+    try{
+      const notificationId = exactNotificationId(id);
+      let acc = null;
+      /* 계정 지문이 없을 때 현재 계정의 같은 번호를 대신 조회하지 않는다. */
+      if (notificationId && /^[a-f0-9]{12}$/.test(hint || '')){
+        for (const a of accounts.slice()){
+          const matches = await tokHint(a.token) === hint;
+          if (!current()) return;
+          if (matches){ acc = a; break; }
+        }
       }
+      if (!current()) return;
+      recordDiag('notification-account', {trace, matched:!!acc});
+      if (!acc){ toast('이 알림을 받은 계정을 확인하지 못했어요. 알림 목록에서 확인해 주세요.'); finish('#/notifications'); return; }
+      recipient = acc;
+      const n = await api('/api/v1/notifications/' + encodeURIComponent(notificationId), {acc,signal:controller.signal,trace});
+      if (!current()) return;
+      if (!n || exactNotificationId(n.id) !== notificationId){
+        recordDiag('notification-resolved', {trace, matched:false});
+        toast('알림 정보가 일치하지 않아 열지 못했어요. 알림 목록에서 확인해 주세요.'); finish('#/notifications',acc); return;
+      }
+      recordDiag('notification-resolved', {trace, matched:true});
+      if (!filterNotifications([n],acc).length){ toast('이 알림의 툿은 삭제되었거나 더 이상 볼 수 없어요.'); finish('#/notifications',acc); return; }
+      rememberStatusData(n,acc); finish(notifTarget(n),acc);
+    }catch(e){
+      if (!current()) return;
+      recordDiag('notification-open-error', {trace, phase:'lookup', status:e.status || 0, timeout:e.code === 'timeout'});
+      toast(e.status === 404 || e.status === 410 ? '이 알림은 삭제되었거나 이미 정리되었어요.' : e.message);
+      finish('#/notifications',recipient);
     }
-  }
-  let target = '#/notifications';
-  /* 알림의 계정을 못 찾았으면, 지금 계정으로 같은 번호의 다른 알림을 열지 않도록 알림 탭으로 */
-  try{
-    if (id && found){
-      const n = await api('/api/v1/notifications/' + encodeURIComponent(id));
-      if (filterNotifications([n]).length) target = notifTarget(n);
-      else toast('이 알림의 툿은 삭제되었거나 더 이상 볼 수 없어요.');
-    }
-  }catch(e){ toast(e.status === 404 || e.status === 410 ? '이 알림은 삭제되었거나 이미 정리되었어요.' : e.message); }
-  const d = depthOf();
-  if (d === 0 && !isHomeHash(target)){ history.replaceState({d:0}, '', homeTarget()); history.pushState({d:1}, '', target); }
-  else history.replaceState({d}, '', target);
-  freshNav = true; route();
+  })();
+  return job.task;
 }
 
 /* ---------- 홈 탭 ---------- */
@@ -4449,7 +4520,7 @@ function mainSettings(root){
   const s7 = secEl('그 밖의 설정', '여기 없는 설정은 마스토돈 웹사이트에서 바꿀 수 있어요.');
   s7.append(linkRow('globe', '마스토돈 웹에서 설정 열기', me.instance + '/settings', () => window.open(`https://${me.instance}/settings/preferences`, '_blank', 'noopener')));
   s7.append(linkRow('memo', '문제 확인용 기록 복사', '최근 요청 시간과 화면 이동만 복사해요. 글 내용과 로그인 정보는 포함하지 않아요.', async () => {
-    const text = JSON.stringify({version:'2026-10-18.7', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
+    const text = JSON.stringify({version:'2026-10-19.1', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
     try{ await navigator.clipboard.writeText(text); toast('문제 확인용 기록을 복사했어요'); }
     catch(e){ toast('복사하지 못했어요. 브라우저의 클립보드 권한을 확인해 주세요.'); }
   }));
@@ -5637,6 +5708,7 @@ const isTop = hash => TABS.includes(hash.split('/')[1]);
 const isHomeHash = hash => HOME_NAMES.includes(hash.split('/')[1]);
 let navAfterPop = null, skipFade = false;
 function goTop(hash){
+  cancelNotificationOpen('tab');
   const d = depthOf();
   const finish = () => {
     if (isHomeHash(hash)) history.replaceState({d:0}, '', hash);
@@ -5651,11 +5723,12 @@ function goTop(hash){
 var freshNav = false;
 function nav(hash){
   if (location.hash === hash) return;
+  cancelNotificationOpen('navigation');
   if (isTop(hash)){ goTop(hash); return; }
   history.pushState({d:depthOf() + 1}, '', hash);
   freshNav = true; route();
 }
-function goBack(){ if (depthOf() > 0) history.back(); else goTop(homeTarget()); }
+function goBack(){ cancelNotificationOpen('back'); if (depthOf() > 0) history.back(); else goTop(homeTarget()); }
 function buildView(name, arg, arg2, threadSeed = null){
   switch (name){
     case 'home': return feedView('/api/v1/timelines/home', {hint:'내가 팔로우한 사람들의 글이 올라와요.', empty:'아직 글이 없어요. 커뮤 사람들을 팔로우해 보세요!', filter:homeFilter});
@@ -5689,6 +5762,7 @@ function route(){
   const previousRoot = main.firstElementChild;
   let {hsh, name, arg, arg2} = parse();
   if (!cur() || name === 'login'){
+    cancelNotificationOpen('login');
     if (previousRoot && previousRoot.suspend) previousRoot.suspend();
     if (curKey && cache.has(curKey)) cache.get(curKey).y = window.scrollY;
     document.body.classList.add('in-login');
@@ -5697,6 +5771,7 @@ function route(){
   }
   document.body.classList.remove('in-login');
   if (name === 'open'){ openNotif(arg, arg2); return; }
+  cancelNotificationOpen('route');
   if (![...TABS,'thread','user','chat','edit','settings','follows','htag','who','shot','backup'].includes(name) || (['thread','user','chat','list','tag','follows','htag','who','shot'].includes(name) && !arg)){ hsh = '#/home'; name = 'home'; }
   if (curKey && cache.has(curKey)) cache.get(curKey).y = window.scrollY;
   if (name === 'edit' || name === 'settings') cache.delete(hsh);
@@ -5826,4 +5901,5 @@ init();
 </script>
 </body>
 </html>
+
 

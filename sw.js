@@ -1,6 +1,6 @@
 // 역극툿 서비스 워커: 앱 화면 파일만 캐시하고, 마스토돈 서버 요청은 건드리지 않음
 const CACHE = 'ytt-v5';
-const WORKER_VERSION = '2026-10-19.2';
+const WORKER_VERSION = '2026-10-20.5';
 const BADGES = ['dm', 'reply', 'mention', 'fav', 'boost', 'status', 'follow', 'quote', 'default'].map(k => `./badge-${k}.png`);
 async function appClients(){
   const scope = new URL(self.registration.scope);
@@ -81,8 +81,45 @@ async function checkPage() {
 }
 self.addEventListener('message', e => {
   if (e.data && e.data.type === 'check') e.waitUntil(checkPage());
-  if (e.data?.type === 'worker-info') e.source?.postMessage({type:'worker-info',version:WORKER_VERSION,routeVersion:2});
+  if (e.data?.type === 'worker-info') e.source?.postMessage({type:'worker-info',version:WORKER_VERSION,routeVersion:3});
+  if (e.data?.type === 'notification-open-claim' && e.ports?.[0]){
+    const task = claimNotificationIntent(e.data.hash,e.source?.url).catch(() => false).then(accepted => e.ports[0].postMessage({type:'notification-open-claim',accepted}));
+    e.waitUntil(task);
+  }
 });
+
+/* 실제 클릭만 짧게 보관하고 확인·삭제를 같은 큐에서 처리한다. */
+let notificationIntentTask = Promise.resolve();
+function changeNotificationIntents(change){
+  const task = notificationIntentTask.catch(() => {}).then(async () => {
+    const cache = await caches.open('ytt-meta'), key = new URL('./ytt-notification-opens.json',self.registration.scope).href;
+    const stored = await cache.match(key), data = stored ? await stored.json() : [], now = Date.now();
+    const entries = (Array.isArray(data) ? data : []).filter(x => x && typeof x.hash === 'string' && Number.isFinite(x.at) && now >= x.at && now - x.at < 120000).slice(-20);
+    const result = change(entries);
+    await cache.put(key,new Response(JSON.stringify(entries.slice(-20)),{headers:{'Content-Type':'application/json'}}));
+    return result;
+  });
+  notificationIntentTask = task;
+  return task;
+}
+async function issueNotificationIntent(hash){
+  const nonce = [...self.crypto.getRandomValues(new Uint8Array(16))].map(x => x.toString(16).padStart(2,'0')).join('');
+  const target = hash + '/' + nonce;
+  await changeNotificationIntents(entries => entries.push({hash:target,at:Date.now()}));
+  return target;
+}
+function claimNotificationIntent(hash,clientURL){
+  try{
+    const url = new URL(clientURL), scope = new URL(self.registration.scope);
+    if (url.origin !== scope.origin || !url.pathname.startsWith(scope.pathname)) return Promise.resolve(false);
+  }catch(e){ return Promise.resolve(false); }
+  if (typeof hash !== 'string' || !/^#\/notice\/[A-Za-z0-9_-]{1,128}\/(?:[a-f0-9]{12})?\/(?:thread|chat|user|list)\/[A-Za-z0-9_-]{1,128}\/[a-f0-9]{32}$/.test(hash)) return Promise.resolve(false);
+  return changeNotificationIntents(entries => {
+    const i = entries.findIndex(x => x.hash === hash);
+    if (i < 0) return false;
+    entries.splice(i,1); return true;
+  });
+}
 
 // 브라우저가 푸시 연결을 바꿨다면 열린 앱에 재등록을 부탁한다.
 // 인증 토큰은 서비스 워커에 따로 저장하지 않는다. 앱이 닫혀 있으면 다음 실행 때 실제 등록을 점검한다.
@@ -189,7 +226,7 @@ self.addEventListener('push', e => {
       vibrate: [80, 40, 80],
       timestamp: Date.now(),
       tag: 'ytt-' + (hint || 'unmatched') + '-' + (d.notification_id || Date.now()),
-      data: {id:d.notification_id || null,hint,routeVersion:2,workerVersion:WORKER_VERSION,target}
+      data: {id:d.notification_id || null,hint,routeVersion:3,workerVersion:WORKER_VERSION,target}
     });
   })());
 });
@@ -210,11 +247,17 @@ self.addEventListener('notificationclick', e => {
   const click = ++notificationClickGeneration;
   e.notification.close();
   const data = e.notification.data || {}, id = exactNotificationId(data.id), hint = /^[a-f0-9]{12}$/.test(data.hint || '') ? data.hint : '';
-  const target = data.routeVersion === 2 && validNotificationTarget(data.target) ? data.target : {kind:'list',id:'-'};
-  const hash = id ? `#/notice/${id}/${hint}/${target.kind}/${target.id}` : '#/notifications';
-  const url = new URL('./' + hash, self.registration.scope).href;
+  const target = [2,3].includes(data.routeVersion) && validNotificationTarget(data.target) ? data.target : {kind:'list',id:'-'};
+  const baseHash = id ? `#/notice/${id}/${hint}/${target.kind}/${target.id}` : '#/notifications';
   const task = notificationClickTask.catch(() => {}).then(async () => {
     if (click !== notificationClickGeneration) return;
+    let hash = baseHash;
+    if (id){
+      try{ hash = await issueNotificationIntent(baseHash); }
+      catch(e){ hash = '#/notifications'; }
+    }
+    if (click !== notificationClickGeneration) return;
+    const url = new URL('./' + hash,self.registration.scope).href;
     const cs = await appClients();
     if (click !== notificationClickGeneration) return;
     // 이 앱의 창 안에서 지금 보는 창 → 보이는 창 → 최근 창 순서로 고름

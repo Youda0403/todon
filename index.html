@@ -4419,11 +4419,12 @@ function notificationTarget(n){
 function validNotificationTarget(target){
   return !!target && (target.kind === 'list' ? target.id === '-' : ['thread','chat','user'].includes(target.kind) && !!exactNotificationId(target.id));
 }
-function notificationOpenTarget(hash){
-  const match = /^#\/notice\/[A-Za-z0-9_-]{1,128}\/(?:[a-f0-9]{12})?\/(thread|chat|user|list)\/([A-Za-z0-9_-]{1,128})$/.exec(hash);
+function notificationOpenRoute(hash){
+  const match = /^#\/notice\/[A-Za-z0-9_-]{1,128}\/(?:[a-f0-9]{12})?\/(thread|chat|user|list)\/([A-Za-z0-9_-]{1,128})(?:\/([a-f0-9]{32}))?$/.exec(hash);
   const target = match && {kind:match[1],id:match[2]};
-  return validNotificationTarget(target) ? target : null;
+  return validNotificationTarget(target) ? {target,nonce:match[3] || null} : null;
 }
+function notificationOpenTarget(hash){ return notificationOpenRoute(hash)?.target || null; }
 function notifTarget(n){
   const target = notificationTarget(n);
   if (target.kind === 'chat') return '#/chat/' + dmKeyOf(n.status.reblog || n.status);
@@ -4493,7 +4494,26 @@ async function tokHint(t){
   return [...new Uint8Array(b)].slice(0, 6).map(x => x.toString(16).padStart(2, '0')).join('');
 }
 /* 알림 조회 결과는 사용자가 마지막으로 고른 이동에만 적용한다. */
-let notificationOpen = null;
+let notificationOpen = null, notificationHandoffHash = null;
+/* 복원된 주소만으로는 알림을 열지 않는다. 실제 클릭 때 발급한 정보를 한 번만 사용한다. */
+function claimNotificationOpen(hash){
+  if (!navigator.serviceWorker || typeof MessageChannel !== 'function') return Promise.resolve(false);
+  return new Promise(resolve => {
+    const channel = new MessageChannel(); let settled = false;
+    const done = ok => { if (settled) return; settled = true; clearTimeout(timer); channel.port1.close(); resolve(ok); };
+    const timer = setTimeout(() => done(false),2500);
+    channel.port1.onmessage = e => done(e.data?.type === 'notification-open-claim' && e.data.accepted === true);
+    (async () => {
+      try{
+        const reg = await navigator.serviceWorker.getRegistration();
+        const worker = reg?.active || navigator.serviceWorker.controller;
+        if (settled) return;
+        if (!worker){ done(false); return; }
+        worker.postMessage({type:'notification-open-claim',hash},[channel.port2]);
+      }catch(e){ done(false); }
+    })();
+  });
+}
 function cancelNotificationOpen(reason = 'navigation'){
   if (!notificationOpen) return;
   const old = notificationOpen; notificationOpen = null; old.controller.abort();
@@ -4501,6 +4521,7 @@ function cancelNotificationOpen(reason = 'navigation'){
 }
 function notificationDestination(target){
   const kind = target.split('/')[1];
+  if (isHomeHash(target)) return 'home';
   return ['thread','chat','user','notifications'].includes(kind) ? kind : 'other';
 }
 function selectNotificationAccount(acc){
@@ -4514,15 +4535,17 @@ function onSwMessage(ev){
   const m = ev.data || {};
   if (m.type === 'push') checkNotif();
   if (m.type === 'push-repair') checkPush({force:true});
-  if (m.type === 'worker-info' && /^\d{4}-\d{2}-\d{2}\.\d+$/.test(m.version || '')) recordDiag('worker-info', {version:m.version,routeVersion:m.routeVersion === 2 ? 2 : 1});
+  if (m.type === 'worker-info' && /^\d{4}-\d{2}-\d{2}\.\d+$/.test(m.version || '')) recordDiag('worker-info', {version:m.version,routeVersion:[2,3].includes(m.routeVersion) ? m.routeVersion : 1});
   if (m.type === 'open'){
     let accepted = false;
     if (typeof m.hash === 'string' && (m.hash === '#/notifications' || notificationOpenTarget(m.hash) || /^#\/open\/[A-Za-z0-9_-]{1,128}\/(?:[a-f0-9]{12})?$/.test(m.hash))){
       try{
         recordDiag('notification-click', {source:'system'});
+        notificationHandoffHash = m.hash;
         if (location.hash === m.hash) route(); else nav(m.hash);
         accepted = true;
       }catch(e){ recordDiag('notification-open-error', {phase:'handoff'}); }
+      finally{ notificationHandoffHash = null; }
     }
     if (ev.ports && ev.ports[0]) ev.ports[0].postMessage(accepted ? 'ok' : 'ignored');
   }
@@ -4530,10 +4553,11 @@ function onSwMessage(ev){
 }
 function openNotif(id, hint, shownTarget = null){
   const hash = location.hash;
+  const handedOff = notificationHandoffHash === hash; notificationHandoffHash = null;
   if (notificationOpen && notificationOpen.hash === hash) return notificationOpen.task;
   cancelNotificationOpen('new-notification');
-  const bound = validNotificationTarget(shownTarget);
-  const controller = new AbortController(), trace = recordDiag('notification-open', {hasAccountHint:!!hint,routeVersion:bound ? 2 : 1});
+  const bound = validNotificationTarget(shownTarget), entry = notificationOpenRoute(hash), source = handedOff ? 'handoff' : 'url';
+  const controller = new AbortController(), trace = recordDiag('notification-open', {hasAccountHint:!!hint,routeVersion:entry?.nonce ? 3 : bound ? 2 : 1,source});
   const job = {hash,controller,trace,task:null}; notificationOpen = job;
   const current = () => notificationOpen === job && !controller.signal.aborted && location.hash === hash;
   const main = $('#main'), previous = main.firstElementChild;
@@ -4548,13 +4572,18 @@ function openNotif(id, hint, shownTarget = null){
     notificationOpen = null;
     recordDiag('notification-navigation', {trace, target:notificationDestination(target)});
     const d = depthOf();
-    if (d === 0 && !isHomeHash(target)){ history.replaceState({d:0}, '', homeTarget()); history.pushState({d:1}, '', target); }
+    if (isHomeHash(target)) history.replaceState({d:0}, '', target);
+    else if (d === 0){ history.replaceState({d:0}, '', homeTarget()); history.pushState({d:1}, '', target); }
     else history.replaceState({d}, '', target);
     freshNav = true; route();
   };
   job.task = (async () => {
     let recipient = null;
     try{
+      const verified = entry?.nonce ? await claimNotificationOpen(hash) : handedOff;
+      if (!current()) return;
+      recordDiag('notification-launch', {trace,source,verified});
+      if (!verified){ finish(homeTarget()); return; }
       const notificationId = exactNotificationId(id);
       let acc = null;
       /* 계정 지문이 없을 때 현재 계정의 같은 번호를 대신 조회하지 않는다. */
@@ -4799,7 +4828,7 @@ function mainSettings(root){
   const s7 = secEl('그 밖의 설정', '여기 없는 설정은 마스토돈 웹사이트에서 바꿀 수 있어요.');
   s7.append(linkRow('globe', '마스토돈 웹에서 설정 열기', me.instance + '/settings', () => window.open(`https://${me.instance}/settings/preferences`, '_blank', 'noopener')));
   s7.append(linkRow('memo', '문제 확인용 기록 복사', '최근 요청 시간과 화면 이동만 복사해요. 글 내용과 로그인 정보는 포함하지 않아요.', async () => {
-    const text = JSON.stringify({version:'2026-10-20.4', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
+    const text = JSON.stringify({version:'2026-10-20.5', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
     try{ await navigator.clipboard.writeText(text); toast('문제 확인용 기록을 복사했어요'); }
     catch(e){ toast('복사하지 못했어요. 브라우저의 클립보드 권한을 확인해 주세요.'); }
   }));

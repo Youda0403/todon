@@ -6,12 +6,14 @@ const defer=()=>{let resolve,reject;const promise=new Promise((r,j)=>{resolve=r;
 const tick=()=>new Promise(setImmediate);
 const fingerprint=token=>createHash('sha256').update(token).digest('hex').slice(0,12);
 const notice=(id='42',statusId='100')=>({id,type:'mention',account:{id:'other'},status:{id:statusId,content:'private body',visibility:'public',in_reply_to_id:'99'}});
-function fixture(handler=async()=>notice()){
+function fixture(handler=async()=>notice(),claimHandler=null){
  const accounts=['a','b'].map(id=>({id,acct:id+'@server.test',instance:'server.test',token:'private-'+id}));
- const calls=[],waiters=[],events=[],messages=[],navigations=[],saved=[],main={firstElementChild:{suspend(){this.stopped=true;}},replaceChildren(node){this.firstElementChild=node;}};
+ const calls=[],claims=[],claimed=new Set(),waiters=[],events=[],messages=[],navigations=[],saved=[],main={firstElementChild:{suspend(){this.stopped=true;}},replaceChildren(node){this.firstElementChild=node;}};
+ class Channel{constructor(){const port1={onmessage:null,close(){}};this.port1=port1;this.port2={postMessage:data=>queueMicrotask(()=>port1.onmessage?.({data}))};}}
+ const active={postMessage:async(m,ports)=>{claims.push(m.hash);const accepted=claimHandler?await claimHandler(m.hash):!claimed.has(m.hash);claimed.add(m.hash);ports[0].postMessage({type:'notification-open-claim',accepted});}};
  const location={hash:'#/home'},history={state:{d:0},replaceState(st,title,hash){this.state=st;location.hash=hash;},pushState(st,title,hash){this.state=st;location.hash=hash;}};
  const cache=new Map();let context;
- context=vm.createContext({accounts,crypto:webcrypto,TextEncoder,Uint8Array,AbortController,Number,Promise,location,history,cache,
+ context=vm.createContext({accounts,crypto:webcrypto,TextEncoder,Uint8Array,AbortController,Number,Promise,location,history,cache,MessageChannel:Channel,queueMicrotask,setTimeout,clearTimeout,navigator:{serviceWorker:{getRegistration:async()=>({active})}},
   window:{scrollY:12},$:selector=>main,h:markup=>({_markup:markup}),setHeader:()=>{},setBadge:()=>{},
   saveAccounts:()=>saved.push(true),toast:text=>messages.push(text),cur:()=>accounts[vm.runInContext('curIdx',context)],
   filterNotifications:(list,acc)=>list.filter(n=>!n.hidden&&(!['mention','favourite'].includes(n.type)||n.status)),
@@ -23,8 +25,9 @@ function fixture(handler=async()=>notice()){
   api:(p,opts)=>{calls.push({path:p,...opts});for(const w of waiters)if(calls.length>=w.n)w.resolve();return handler(p,opts);},
   checkNotif:()=>{},checkPush:()=>{},showUpdate:()=>{}});
  vm.runInContext('let curIdx=0,curKey="#/home",freshNav=false;'+app,context);
- return {context,accounts,calls,waitForCalls:n=>calls.length>=n?Promise.resolve():new Promise(resolve=>waiters.push({n,resolve})),events,messages,navigations,saved,main,location,history,cache,run:s=>vm.runInContext(s,context),
-  start:(id='42',hint=fingerprint(accounts[0].token),target={kind:'thread',id:'100'})=>{location.hash=target?'#/notice/'+id+'/'+hint+'/'+target.kind+'/'+target.id:'#/open/'+id+'/'+hint;context.id=id;context.hint=hint;context.target=target;return vm.runInContext('openNotif(id,hint,target)',context);}};
+ let launches=0;
+ return {context,accounts,calls,claims,waitForCalls:n=>calls.length>=n?Promise.resolve():new Promise(resolve=>waiters.push({n,resolve})),events,messages,navigations,saved,main,location,history,cache,run:s=>vm.runInContext(s,context),
+  start:(id='42',hint=fingerprint(accounts[0].token),target={kind:'thread',id:'100'},opts={})=>{location.hash=target?'#/notice/'+id+'/'+hint+'/'+target.kind+'/'+target.id+(opts.receipt===false?'':'/'+(++launches).toString(16).padStart(32,'0')):'#/open/'+id+'/'+hint;context.id=id;context.hint=hint;context.target=target;if(opts.handoff||!target&&opts.handoff!==false)vm.runInContext('notificationHandoffHash=location.hash',context);return vm.runInContext('openNotif(id,hint,target)',context);}};
 }
 test('system click resolves the exact notified post rather than its parent and pins the recipient account',async()=>{
  const f=fixture(async()=>notice());await f.start('42',fingerprint(f.accounts[1].token));
@@ -50,7 +53,7 @@ test('a duplicate delivery of the same open route shares one lookup',async()=>{
  const gate=defer(),f=fixture(()=>gate.promise),first=f.start();assert.equal(first,f.run('openNotif(id,hint)'));await f.waitForCalls(1);assert.equal(f.calls.length,1);gate.resolve(notice());await first;
 });
 test('missing or unmatched account hints do not query the current account for a coincidentally equal notification ID',async()=>{
- for(const hint of ['', '000000000000','invalid']){const f=fixture();await f.start('42',hint);assert.equal(f.calls.length,0);assert.equal(f.location.hash,'#/notifications');assert.equal(f.run('curIdx'),0);}
+ for(const hint of ['', '000000000000','invalid']){const f=fixture();await f.start('42',hint);assert.equal(f.calls.length,0);assert.equal(f.location.hash,hint==='invalid'?'#/home':'#/notifications');assert.equal(f.run('curIdx'),0);}
 });
 test('mismatched notification IDs are rejected without opening the returned unrelated post',async()=>{
  const f=fixture(async()=>notice('43','999'));await f.start();assert.equal(f.location.hash,'#/notifications');assert.match(f.messages[0],/일치하지/);
@@ -77,18 +80,18 @@ test('handoff is acknowledged only after accepted navigation, and invalid hashes
 test('click diagnostics contain only phases, flags, and destination kinds',async()=>{
  const f=fixture();await f.start();assert.doesNotMatch(JSON.stringify(f.events),/private|server\.test|\/open\/|\/thread\/|42|100/);
 });
-function workerFixture(clients=[]){
+function workerFixture(clients=[],storage=new Map()){
  const handlers=new Map(),opened=[],navigated=[],messages=[],shown=[];
  class Channel{
   constructor(){const port1={onmessage:null,close(){}};this.port1=port1;this.port2={postMessage:data=>queueMicrotask(()=>port1.onmessage?.({data}))};}
  }
  const self={crypto:webcrypto,registration:{scope:'https://app.test/todon/',showNotification:async(...x)=>shown.push(x)},
   addEventListener:(name,fn)=>handlers.set(name,fn),clients:{matchAll:async()=>clients,openWindow:async url=>opened.push(url)}};
- const context=vm.createContext({self,crypto:webcrypto,URL,TextEncoder,Uint8Array,AbortController,MessageChannel:Channel,Promise,Number,queueMicrotask,
+ const context=vm.createContext({self,crypto:webcrypto,URL,TextEncoder,Uint8Array,AbortController,MessageChannel:Channel,Promise,Number,queueMicrotask,Response,
   setTimeout:(fn,ms)=>setTimeout(fn,ms===1500?10:ms),clearTimeout,
-  caches:{open:async()=>({match:async()=>({json:async()=>[]})})}});
+  caches:{open:async()=>({match:async key=>storage.has(key)?new Response(storage.get(key)):undefined,put:async(key,response)=>storage.set(key,await response.text())})}});
  vm.runInContext(worker,context);
- return {opened,navigated,messages,shown,context,click:(id='42',hint=fingerprint('private-a'),target={kind:'thread',id:'100'})=>{let task;handlers.get('notificationclick')({notification:{data:{id,hint,...(target?{routeVersion:2,target}:{})},close(){}},waitUntil:p=>task=p});return task;},
+ return {opened,navigated,messages,shown,context,storage,claim:async(hash,url='https://app.test/todon/')=>{let task,accepted;handlers.get('message')({data:{type:'notification-open-claim',hash},source:{url},ports:[{postMessage:data=>accepted=data.accepted}],waitUntil:p=>task=p});await task;return accepted;},click:(id='42',hint=fingerprint('private-a'),target={kind:'thread',id:'100'})=>{let task;handlers.get('notificationclick')({notification:{data:{id,hint,...(target?{routeVersion:2,target}:{})},close(){}},waitUntil:p=>task=p});return task;},
   push:()=>{let task;handlers.get('push')({data:{json:()=>({notification_id:'42',notification_type:'mention'})},waitUntil:p=>task=p});return task;}};
 }
 test('an unrelated focused or visible app never receives this app notification clicks',async()=>{
@@ -156,8 +159,70 @@ test('the new target-bearing route validates each path component',()=>{
  for(const hash of ['#/notice/42/'+fingerprint('private-a')+'/thread/100/extra','#/notice/42/'+fingerprint('private-a')+'/bad/100','#/notice/42/'+fingerprint('private-a')+'/list/100']){f.context.hash=hash;assert.equal(f.run('notificationOpenTarget(hash)'),null);}
 });
 test('a worker click forwards the captured target in a route understood only by the new protocol',async()=>{
- const f=workerFixture();await f.click('42',fingerprint('private-a'),{kind:'thread',id:'987654321012345678'});assert.ok(f.opened[0].endsWith('/thread/987654321012345678'));assert.ok(f.opened[0].includes('#/notice/42/'));
+ const f=workerFixture();await f.click('42',fingerprint('private-a'),{kind:'thread',id:'987654321012345678'});assert.match(f.opened[0],/\/thread\/987654321012345678\/[a-f0-9]{32}$/);assert.ok(f.opened[0].includes('#/notice/42/'));
 });
 test('old OS notification data is converted to a list destination by a new worker',async()=>{
- const f=workerFixture();await f.click('42',fingerprint('private-a'),null);assert.ok(f.opened[0].endsWith('/list/-'));
+ const f=workerFixture();await f.click('42',fingerprint('private-a'),null);assert.match(f.opened[0],/\/list\/-\/[a-f0-9]{32}$/);
+});
+
+test('a restored legacy notification URL starts at home without a lookup or account switch',async()=>{
+ for(const target of [{kind:'thread',id:'100'},null]){
+  const f=fixture();await f.start('42',fingerprint('private-b'),target,{receipt:false,handoff:false});
+  assert.equal(f.location.hash,'#/home');assert.equal(f.calls.length,0);assert.equal(f.claims.length,0);assert.equal(f.run('curIdx'),0);assert.ok(f.events.some(e=>e.kind==='notification-launch'&&!e.verified&&e.source==='url'));
+ }
+});
+test('a made-up or expired click receipt cannot open a notification or select its recipient',async()=>{
+ const f=fixture(async()=>notice(),async()=>false);await f.start('42',fingerprint('private-b'));
+ assert.equal(f.location.hash,'#/home');assert.equal(f.calls.length,0);assert.equal(f.run('curIdx'),0);assert.equal(f.claims.length,1);
+});
+test('discarding a restored notification resets the home history depth',async()=>{
+ const f=fixture();f.history.state={d:3};await f.start('42',fingerprint('private-a'),{kind:'thread',id:'100'},{receipt:false,handoff:false});assert.equal(f.location.hash,'#/home');assert.equal(f.history.state.d,0);
+});
+test('an unavailable service worker cannot leave an unconfirmed launch waiting or open a post',async()=>{
+ const f=fixture();f.context.navigator.serviceWorker.getRegistration=async()=>{throw new Error('unavailable');};await f.start();assert.equal(f.location.hash,'#/home');assert.equal(f.calls.length,0);
+});
+test('reloading a consumed notification address does not replay its lookup',async()=>{
+ const f=fixture();let hash;const first=f.start();hash=f.location.hash;await first;assert.equal(f.calls.length,1);
+ f.location.hash=hash;await f.run('openNotif(id,hint,target)');assert.equal(f.location.hash,'#/home');assert.equal(f.calls.length,1);assert.equal(f.claims.length,2);
+});
+test('two actual clicks on the same notification have independent one-use receipts',async()=>{
+ const f=fixture();await f.start();await f.start();assert.equal(f.calls.length,2);assert.notEqual(f.claims[0],f.claims[1]);assert.equal(f.location.hash,'#/thread/100');
+});
+test('a live message from an old worker still opens its verified target but a restored URL does not',async()=>{
+ const f=fixture();await f.start('42',fingerprint('private-a'),{kind:'thread',id:'100'},{receipt:false,handoff:true});assert.equal(f.calls.length,1);assert.equal(f.location.hash,'#/thread/100');assert.equal(f.claims.length,0);
+});
+test('leaving while a click is being confirmed prevents its late lookup and navigation',async()=>{
+ const gate=defer(),f=fixture(async()=>notice(),()=>gate.promise),pending=f.start();await tick();f.run("nav('#/thread/999')");gate.resolve(true);await pending;
+ assert.equal(f.calls.length,0);assert.equal(f.location.hash,'#/thread/999');
+});
+test('a newer click wins while the older click receipt is still being confirmed',async()=>{
+ const gate=defer();let claims=0;const f=fixture(async()=>notice('43','200'),()=>++claims===1?gate.promise:Promise.resolve(true));
+ const first=f.start();await tick();await f.start('43',fingerprint('private-a'),{kind:'thread',id:'200'});gate.resolve(true);await first;
+ assert.equal(f.calls.length,1);assert.ok(f.calls[0].path.endsWith('/43'));assert.equal(f.location.hash,'#/thread/200');
+});
+test('a worker-issued click receipt can be consumed once even after that worker restarts',async()=>{
+ const f=workerFixture();await f.click();const hash=new URL(f.opened[0]).hash,restarted=workerFixture([],f.storage);
+ assert.equal(await restarted.claim(hash),true);assert.equal(await restarted.claim(hash),false);
+});
+test('simultaneous claims cannot both consume one click',async()=>{
+ const f=workerFixture();await f.click();const hash=new URL(f.opened[0]).hash,results=await Promise.all([f.claim(hash),f.claim(hash)]);assert.deepEqual(results,[true,false]);
+});
+test('unrelated apps and changed destinations cannot consume a valid receipt',async()=>{
+ const f=workerFixture();await f.click();const hash=new URL(f.opened[0]).hash;
+ assert.equal(await f.claim(hash,'https://app.test/tower/'),false);assert.equal(await f.claim(hash,'https://else.test/todon/'),false);assert.equal(await f.claim(hash.replace('/thread/100/','/thread/999/')),false);assert.equal(await f.claim(hash),true);
+});
+test('unclaimed click receipts expire rather than becoming reusable launch addresses',async()=>{
+ const f=workerFixture();f.context.now=1000;vm.runInContext('Date.now=()=>now',f.context);await f.click();const hash=new URL(f.opened[0]).hash;f.context.now=121001;
+ assert.equal(await f.claim(hash),false);assert.deepEqual(JSON.parse([...f.storage.values()][0]),[]);
+});
+test('pending click storage is bounded and contains no access tokens or status content',async()=>{
+ const f=workerFixture();for(let i=0;i<25;i++)await f.click(String(i+1));const entries=JSON.parse([...f.storage.values()][0]);assert.equal(entries.length,20);assert.doesNotMatch(JSON.stringify(entries),/private-a|private body|content|access_token/);
+});
+test('a receipt persistence error opens the notification list without an unverified post route',async()=>{
+ const storage=new Map();storage.set=()=>{throw new Error('storage unavailable');};const f=workerFixture([],storage);await f.click();assert.deepEqual(f.opened,['https://app.test/todon/#/notifications']);
+});
+test('the current route accepts a receipt only as an exact additional component',()=>{
+ const f=fixture(),base='#/notice/42/'+fingerprint('private-a')+'/thread/100',nonce='a'.repeat(32);f.context.hash=base+'/'+nonce;
+ assert.equal(f.run('notificationOpenRoute(hash).nonce'),nonce);assert.equal(f.run('notificationOpenTarget(hash).id'),'100');
+ for(const hash of [base+'/'+nonce+'/extra',base+'/short',base+'/'+'A'.repeat(32)]){f.context.hash=hash;assert.equal(f.run('notificationOpenRoute(hash)'),null);}
 });

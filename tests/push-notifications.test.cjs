@@ -89,8 +89,8 @@ test('other raw notification types preserve their badges when details are unavai
 
 test('notification preview and click target come from the same verified response',async()=>{
  const f=fixture();await f.push();const shown=f.shown[0];
- assert.equal(shown.data.routeVersion,2);assert.equal(shown.data.target.kind,'thread');assert.equal(shown.data.target.id,'100');assert.equal(shown.body,'답글 본문');
- assert.equal(shown.data.workerVersion,'2026-10-19.2');assert.ok(shown.tag.includes(hint));assert.doesNotMatch(JSON.stringify(shown.data),/fixture-token|content|본문/);
+ assert.equal(shown.data.routeVersion,3);assert.equal(shown.data.target.kind,'thread');assert.equal(shown.data.target.id,'100');assert.equal(shown.body,'답글 본문');
+ assert.equal(shown.data.workerVersion,'2026-10-20.5');assert.ok(shown.tag.includes(hint));assert.doesNotMatch(JSON.stringify(shown.data),/fixture-token|content|본문/);
 });
 test('failed detail lookup never attaches an unverified status to the fallback preview',async()=>{
  const f=fixture({fetchNotification:async()=>response(503,{})});await f.push();assert.equal(f.shown[0].data.target.kind,'list');assert.equal(f.shown[0].data.target.id,'-');
@@ -105,5 +105,5 @@ test('a boost wrapper previews and targets the original status together',async()
 });
 test('worker version handshake reports the running worker protocol without credentials',()=>{
  const f=fixture(),messages=[];f.events.get('message')({data:{type:'worker-info'},source:{postMessage:m=>messages.push(m)}});
- assert.equal(messages[0].version,'2026-10-19.2');assert.equal(messages[0].routeVersion,2);assert.doesNotMatch(JSON.stringify(messages),/token|server.test/);
+ assert.equal(messages[0].version,'2026-10-20.5');assert.equal(messages[0].routeVersion,3);assert.doesNotMatch(JSON.stringify(messages),/token|server.test/);
 });

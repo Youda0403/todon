@@ -332,6 +332,9 @@ details.gl p{margin:0;padding:0 16px 14px;color:var(--sub);font-size:14px}
 .quote{margin-top:10px;border:1px solid var(--line);border-radius:14px;padding:10px 12px;cursor:pointer;overflow:hidden;background:var(--bg);color:var(--fg)}
 .quote:active{background:var(--hover)}
 .qmeta{display:flex;align-items:center;gap:4px;min-width:0;white-space:nowrap;font-size:14px}
+.qmeta .name,.qmeta .handle{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.qmeta .name{max-width:45%;font-weight:700}
+.qmeta .handle{flex:1;color:var(--sub)}
 .qav{width:20px;height:20px;border-radius:50%;object-fit:cover;flex:none;background:var(--line)}
 .qcontent{margin-top:4px;font-size:14.5px;display:-webkit-box;-webkit-line-clamp:8;-webkit-box-orient:vertical;overflow:hidden}
 .qcontent .quote-inline{display:none}
@@ -340,8 +343,8 @@ details.gl p{margin:0;padding:0 16px 14px;color:var(--sub);font-size:14px}
 .qcw{margin-top:6px;display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600}
 .qcw span{flex:1;min-width:0}
 .qnest{margin-top:6px;color:var(--sub);font-size:13.5px}
-.quote.qmsg{cursor:default;display:flex;align-items:center;gap:8px;background:var(--hover);color:var(--sub);font-size:13.5px}
-.quote.qmsg span{flex:1}
+.quote.qmsg{cursor:default;display:flex;align-items:center;flex-wrap:wrap;gap:8px;background:var(--hover);color:var(--sub);font-size:13.5px}
+.quote.qmsg>span{flex:1;min-width:110px}
 
 /* 옆으로 밀기 */
 #main{touch-action:pan-y;overflow-x:clip}
@@ -1291,7 +1294,7 @@ function statusEl(s, o = {}){
   const md = mediaEl(st.media_attachments, st.sensitive && !st.spoiler_text);
   if (md) cb.append(md);
   if (st.poll) cb.append(pollEl(st.poll, st.emojis, st));
-  if (st.quote){ el.classList.add('has-quote'); cb.append(quoteEl(st.quote)); }
+  appendStatusQuote(st,c,cb,el,viewAcc);
   if (st.spoiler_text){
     const box = $('.cwbox', el); box.hidden = false;
     const t = $('.cwt', box); t.textContent = st.spoiler_text; emojifyNode(t, st.emojis);
@@ -1535,28 +1538,185 @@ function syncStatus(src){
 function updateTimes(root = document){ root.querySelectorAll('time.time[datetime]').forEach(t => { t.textContent = rel(t.dateTime); }); }
 /* 인용글 카드 */
 const QUOTE_MSG = {pending:'원글 작성자의 인용 승인을 기다리고 있어요', rejected:'원글 작성자가 인용을 허락하지 않았어요', revoked:'원글 작성자가 인용을 취소했어요', deleted:'원글이 삭제되었어요', unauthorized:'볼 수 없는 글이에요', blocked_account:'차단한 계정의 글이에요', blocked_domain:'차단한 서버의 글이에요', muted_account:'뮤트한 계정의 글이에요'};
-function quoteEl(q){
-  let state = 'accepted', qs = null;
-  if (q && q.account && q.id) qs = q;
-  else if (q){ state = q.state || 'unauthorized'; qs = q.quoted_status || null; }
+function quoteStatusURL(value){
+  try{
+    const u = new URL(value);
+    if (u.protocol !== 'https:' || u.username || u.password) return null;
+    const match = /^\/(?:@[^/]+\/|users\/[^/]+\/statuses\/|web\/statuses\/)(\d{1,40})\/?$/.exec(u.pathname);
+    return match ? {url:u.origin + u.pathname.replace(/\/$/,''),origin:u.origin,id:match[1]} : null;
+  }catch(e){ return null; }
+}
+function quoteId(value){
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value >= 0 ? String(value) : null;
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value) ? value : null;
+}
+function validQuoteStatus(s){ return !!(s && quoteId(s.id) && s.account && quoteId(s.account.id) && typeof s.content === 'string'); }
+function sameQuoteURL(a,b){
+  const x = quoteStatusURL(a), y = quoteStatusURL(b);
+  return !!x && !!y && x.origin === y.origin && x.id === y.id;
+}
+function quoteInfo(q){
+  if (validQuoteStatus(q)) return {state:'accepted',status:q,id:quoteId(q.id)};
+  return {state:q?.state || 'unauthorized',status:validQuoteStatus(q?.quoted_status) ? q.quoted_status : null,id:quoteId(q?.quoted_status_id)};
+}
+async function fetchQuotedStatus(target,acc){
+  let s, expected = null;
+  if (target.id){
+    expected = quoteId(target.id);
+    if (!expected) throw new Error('인용 툿 번호를 확인하지 못했어요.');
+    s = await api('/api/v1/statuses/' + encodeURIComponent(expected),{acc});
+  } else {
+    const url = quoteStatusURL(target.url);
+    if (!url) throw new Error('인용 툿 주소를 확인하지 못했어요.');
+    if (url.origin === 'https://' + acc.instance){
+      expected = url.id;
+      s = await api('/api/v1/statuses/' + encodeURIComponent(expected),{acc});
+    } else {
+      const result = await api('/api/v2/search?' + qs({q:url.url,type:'statuses',resolve:'true',limit:'1'}),{acc});
+      s = (Array.isArray(result?.statuses) ? result.statuses : []).find(x => sameQuoteURL(x.url,url.url) || sameQuoteURL(x.uri,url.url));
+    }
+  }
+  if (!validQuoteStatus(s) || expected && quoteId(s.id) !== expected) throw Object.assign(new Error('인용 툿을 찾지 못했거나 지금 계정에서 볼 수 없어요.'),{code:'quote_unavailable'});
+  return validQuoteStatus(s.reblog) ? s.reblog : s;
+}
+/* 보이는 인용만 요청하고, 같은 계정의 중복 조회를 합쳐 동시에 두 개까지만 불러온다. */
+const quoteLookups = new Map(), quoteLookupQueue = [];
+let activeQuoteLookups = 0;
+function loadQuotedStatus(target,acc,{retry = false} = {}){
+  const me = {...acc}, ref = quoteStatusURL(target.url);
+  const lookup = ref && ref.origin === 'https://' + me.instance ? {id:ref.id} : {...target};
+  const key = me.instance + ':' + me.id + ':' + (lookup.id ? 'id:' + lookup.id : 'url:' + (ref ? ref.origin + ':' + ref.id : target.url));
+  const old = quoteLookups.get(key);
+  if (old && (!old.done || !retry && Date.now() - old.at < (old.failed ? 10000 : 30000))) return old.promise;
+  const entry = {at:Date.now(),done:false,failed:false,promise:null};
+  entry.promise = new Promise((resolve,reject) => quoteLookupQueue.push({target:lookup,acc:me,entry,resolve,reject}));
+  quoteLookups.delete(key); quoteLookups.set(key,entry);
+  for (const [k,v] of quoteLookups){ if (quoteLookups.size <= 100) break; if (v.done) quoteLookups.delete(k); }
+  runQuoteLookups();
+  return entry.promise;
+}
+function runQuoteLookups(){
+  while (activeQuoteLookups < 2 && quoteLookupQueue.length){
+    const job = quoteLookupQueue.shift(); activeQuoteLookups++;
+    (async () => {
+      try{ job.resolve(await fetchQuotedStatus(job.target,job.acc)); }
+      catch(e){ job.entry.failed = true; job.reject(e); }
+      finally{
+        job.entry.done = true; job.entry.at = Date.now(); activeQuoteLookups--;
+        for (const [k,v] of quoteLookups){ if (quoteLookups.size <= 100) break; if (v.done) quoteLookups.delete(k); }
+        runQuoteLookups();
+      }
+    })();
+  }
+}
+function linkedQuote(st,content,acc){
+  const candidates = new Map();
+  for (const a of content.querySelectorAll('a[href]')){
+    const ref = quoteStatusURL(a.href);
+    if (!ref || sameQuoteURL(st.url,ref.url) || sameQuoteURL(st.uri,ref.url) || ref.origin === 'https://' + acc.instance && ref.id === String(st.id)) continue;
+    if (a.closest('.quote-inline')) return {link:a,url:ref.url};
+    const p = a.closest('p') || content, copy = p.cloneNode(true);
+    copy.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+    if (!copy.textContent.split('\n').some(line => line.trim() === a.textContent.trim())) continue;
+    candidates.set(ref.origin + ':' + ref.id,{link:a,url:ref.url});
+  }
+  return candidates.size === 1 ? [...candidates.values()][0] : null;
+}
+function hideQuotedLink(content,url){
+  for (const a of content.querySelectorAll('a[href]')){
+    if (!sameQuoteURL(a.href,url)) continue;
+    const p = a.closest('p');
+    if (p && p.textContent.trim() === a.textContent.trim() && !p.querySelector('img') && p.querySelectorAll('a').length === 1) p.hidden = true;
+    else if (a.closest('.quote-inline')) a.closest('.quote-inline').hidden = true;
+  }
+}
+function appendStatusQuote(st,content,container,owner,acc){
+  if (st.quote){
+    owner.classList.add('has-quote');
+    container.append(quoteEl(st.quote,{acc,onReady:s => { if (s.url) hideQuotedLink(content,s.url); if (s.uri) hideQuotedLink(content,s.uri); }}));
+    return;
+  }
+  const linked = linkedQuote(st,content,acc);
+  if (!linked) return;
+  container.append(loadingQuote({url:linked.url},acc,{source:'link',onReady:() => {
+    linked.link.hidden = true; hideQuotedLink(content,linked.url); owner.classList.add('has-quote');
+  }}));
+}
+function loadingQuote(target,acc,{onReady = null,source = 'native',auto = true} = {}){
+  const me = {...acc}, box = h('<div class="quote qmsg" role="status"><span>인용 툿을 불러오는 중이에요</span></div>');
+  const current = () => cur()?.instance === me.instance && String(cur().id) === String(me.id) && cur().token === me.token;
+  let busy = false, observer = null;
+  box.addEventListener('click',e => e.stopPropagation());
+  const load = async (retry = false) => {
+    if (busy || !box.isConnected || !current()) return;
+    busy = true; box.querySelectorAll('button').forEach(b => b.remove());
+    $('span',box).textContent = '인용 툿을 불러오는 중이에요';
+    try{
+      const s = await loadQuotedStatus(target,me,{retry});
+      if (!box.isConnected || !current()) return;
+      observer?.disconnect(); box.replaceWith(quoteBody(s,{acc:me})); onReady?.(s);
+      recordDiag('quote-content',{source,outcome:'ok'});
+    }catch(e){
+      if (!box.isConnected || !current()) return;
+      $('span',box).textContent = e.status === 404 || e.status === 410 || e.code === 'quote_unavailable' ? '인용 툿이 삭제되었거나 지금 계정에서 볼 수 없어요.' : e.status === 401 || e.status === 403 ? '이 계정에서는 인용 툿을 볼 수 없어요.' : '인용 툿을 불러오지 못했어요. 다시 시도해 주세요.';
+      const retryButton = h('<button class="cwbtn" type="button">다시 시도</button>');
+      retryButton.onclick = e => { e.stopPropagation(); load(true); }; box.append(retryButton);
+      recordDiag('quote-content',{source,outcome:'error',status:e.status || 0});
+    }finally{ busy = false; }
+  };
+  box._loadQuote = load;
+  if (auto){
+    if (typeof IntersectionObserver === 'function'){
+      observer = new IntersectionObserver(entries => {
+        if (entries.some(e => e.isIntersecting)) load();
+      },{rootMargin:'200px 0px'});
+      observer.observe(box);
+    } else queueMicrotask(() => load());
+  }
+  return box;
+}
+function quoteEl(q,{acc = cur(),onReady = null} = {}){
+  const {state,status:qs,id} = quoteInfo(q);
   const hiddenOk = ['blocked_account','blocked_domain','muted_account'].includes(state);
-  if (qs && state === 'accepted') return quoteBody(qs);
+  if (state === 'accepted'){
+    if (qs){ onReady?.(qs); return quoteBody(qs,{acc}); }
+    if (id) return loadingQuote({id},acc,{onReady});
+  }
   const box = h('<div class="quote qmsg"><span></span></div>');
   $('span', box).textContent = QUOTE_MSG[state] || QUOTE_MSG.unauthorized;
-  if (qs && hiddenOk){
+  if ((qs || id) && hiddenOk){
     const b = h('<button class="cwbtn" type="button">그래도 보기</button>');
-    b.onclick = e => { e.stopPropagation(); box.replaceWith(quoteBody(qs)); };
+    b.onclick = e => {
+      e.stopPropagation();
+      if (qs){ box.replaceWith(quoteBody(qs,{acc})); onReady?.(qs); }
+      else { const next = loadingQuote({id},acc,{onReady,auto:false}); box.replaceWith(next); next._loadQuote(); }
+    };
     box.append(b);
   }
   box.addEventListener('click', e => e.stopPropagation());
   return box;
 }
-function quoteBody(qs){
+function quoteBody(qs,{acc = cur(),reveal = false} = {}){
+  if (LS.get(unavailableKey(acc),{})[String(qs.id)]){
+    const box = h('<div class="quote qmsg"><span>인용 툿이 삭제되었거나 지금 계정에서 볼 수 없어요.</span></div>');
+    box.addEventListener('click',e => e.stopPropagation()); return box;
+  }
+  const filters = (qs.filtered || []).filter(f => f?.filter);
+  const hidden = filters.some(f => f.filter.filter_action === 'hide');
+  const warning = filters.some(f => !['hide','blur'].includes(f.filter.filter_action));
+  if (hidden || warning && !reveal){
+    const box = h('<div class="quote qmsg"><span>숨길 단어 설정으로 가려진 인용 툿이에요.</span></div>');
+    box.addEventListener('click',e => e.stopPropagation());
+    if (!hidden){ const b = h('<button class="cwbtn" type="button">그래도 보기</button>'); b.onclick = e => { e.stopPropagation(); box.replaceWith(quoteBody(qs,{acc,reveal:true})); }; box.append(b); }
+    return box;
+  }
   const box = document.createElement('div'); box.className = 'quote';
+  const current = () => cur()?.instance === acc.instance && String(cur().id) === String(acc.id) && cur().token === acc.token;
   box.innerHTML = '<div class="qmeta"><img class="qav" alt=""><span class="name"></span><span class="handle"></span><span class="dot">·</span><time class="time"></time></div><div class="qcw" hidden><span></span><button class="cwbtn" type="button">내용 보기</button></div><div class="qbody"><div class="qcontent content"></div></div>';
   $('.qav', box).src = avOf(qs.account);
   $('.name', box).append(richName(qs.account));
   $('.handle', box).textContent = '@' + qs.account.acct;
+  for (const target of ['.qav','.name','.handle']) $(target,box).onclick = e => { e.stopPropagation(); if (current()) nav('#/user/' + qs.account.id); };
   const tm = $('.time', box); tm.textContent = rel(qs.created_at); tm.dateTime = qs.created_at;
   const c = $('.qcontent', box), qb = $('.qbody', box);
   if (qs.content){ c.append(cleanHTML(qs.content)); emojifyNode(c, qs.emojis); } else c.remove();
@@ -1572,7 +1732,8 @@ function quoteBody(qs){
   box.addEventListener('click', e => {
     e.stopPropagation();
     if (e.target.closest('a,button,video,audio,.media')) return;
-    nav('#/thread/' + qs.id);
+    if (!current()) return;
+    rememberStatusData(qs,acc); nav('#/thread/' + qs.id);
   });
   return box;
 }
@@ -3001,7 +3162,7 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
     qb.append(card);
     const ap = quote.quote_approval && quote.quote_approval.current_user;
     if (ap === 'manual') qb.append(h('<p class="c-note">원글 작성자가 승인해야 인용이 보여요. 승인 전에는 ‘승인 대기 중’으로 보여요.</p>'));
-    if (quoteLink) qb.append(h('<p class="c-note">이 서버는 인용 기능을 지원하지 않아서, 원글 링크를 글에 붙여서 올려요.</p>'));
+    if (quoteLink) qb.append(h('<p class="c-note">이 앱에서는 인용 카드로 보여요. 다른 앱에서는 원글 링크로 보일 수 있어요.</p>'));
   }
 
   if (replyTo){
@@ -3676,7 +3837,7 @@ function chatView(key){
       if (m){ e.preventDefault(); nav('#/user/' + m.id); }
     });
     const md = mediaEl(s.media_attachments, s.sensitive && !s.spoiler_text); if (md) body.append(md);
-    if (s.quote) body.append(quoteEl(s.quote));
+    appendStatusQuote(s,c,body,body,me);
     if (s.poll) body.append(pollEl(s.poll, s.emojis));
     if (!body.childNodes.length) body.textContent = '(내용 없음)';
     if (s.spoiler_text){
@@ -4596,7 +4757,7 @@ function mainSettings(root){
   const s7 = secEl('그 밖의 설정', '여기 없는 설정은 마스토돈 웹사이트에서 바꿀 수 있어요.');
   s7.append(linkRow('globe', '마스토돈 웹에서 설정 열기', me.instance + '/settings', () => window.open(`https://${me.instance}/settings/preferences`, '_blank', 'noopener')));
   s7.append(linkRow('memo', '문제 확인용 기록 복사', '최근 요청 시간과 화면 이동만 복사해요. 글 내용과 로그인 정보는 포함하지 않아요.', async () => {
-    const text = JSON.stringify({version:'2026-10-20.2', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
+    const text = JSON.stringify({version:'2026-10-20.3', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
     try{ await navigator.clipboard.writeText(text); toast('문제 확인용 기록을 복사했어요'); }
     catch(e){ toast('복사하지 못했어요. 브라우저의 클립보드 권한을 확인해 주세요.'); }
   }));

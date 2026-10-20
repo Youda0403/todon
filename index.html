@@ -1536,6 +1536,14 @@ function syncStatus(src){
   }));
 }
 function updateTimes(root = document){ root.querySelectorAll('time.time[datetime]').forEach(t => { t.textContent = rel(t.dateTime); }); }
+/* 응답 객체의 순서나 버튼 숫자만 바뀌면 읽고 있는 카드를 다시 만들지 않는다. */
+function cardContentKey(data){
+  return JSON.stringify(data, (key,value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const status = value.account && typeof value.content === 'string';
+    return Object.fromEntries(Object.keys(value).sort().filter(k => !status || !SYNC_KEYS.includes(k) && k !== 'quotes_count').map(k => [k,value[k]]));
+  });
+}
 /* 인용글 카드 */
 const QUOTE_MSG = {pending:'원글 작성자의 인용 승인을 기다리고 있어요', rejected:'원글 작성자가 인용을 허락하지 않았어요', revoked:'원글 작성자가 인용을 취소했어요', deleted:'원글이 삭제되었어요', unauthorized:'볼 수 없는 글이에요', blocked_account:'차단한 계정의 글이에요', blocked_domain:'차단한 서버의 글이에요', muted_account:'뮤트한 계정의 글이에요'};
 function quoteStatusURL(value){
@@ -1645,23 +1653,35 @@ function appendStatusQuote(st,content,container,owner,acc){
 function loadingQuote(target,acc,{onReady = null,source = 'native',auto = true} = {}){
   const me = {...acc}, box = h('<div class="quote qmsg" role="status"><span>인용 툿을 불러오는 중이에요</span></div>');
   const current = () => cur()?.instance === me.instance && String(cur().id) === String(me.id) && cur().token === me.token;
-  let busy = false, observer = null;
+  let busy = false, observer = null, node = box, contentKey = null;
+  const adopt = next => { node = next; node._loadQuote = load; };
   box.addEventListener('click',e => e.stopPropagation());
   const load = async (retry = false) => {
-    if (busy || !box.isConnected || !current()) return;
-    busy = true; box.querySelectorAll('button').forEach(b => b.remove());
-    $('span',box).textContent = '인용 툿을 불러오는 중이에요';
+    if (busy || !node.isConnected || !current()) return;
+    busy = true;
+    if (contentKey === null){
+      box.querySelectorAll('button').forEach(b => b.remove());
+      $('span',box).textContent = '인용 툿을 불러오는 중이에요';
+    }
     try{
       const s = await loadQuotedStatus(target,me,{retry});
-      if (!box.isConnected || !current()) return;
-      observer?.disconnect(); box.replaceWith(quoteBody(s,{acc:me})); onReady?.(s);
+      if (!node.isConnected || !current()) return;
+      const key = cardContentKey(s) + ':' + !!LS.get(unavailableKey(me),{})[String(s.id)];
+      if (key !== contentKey){
+        const next = quoteBody(s,{acc:me,onReplace:adopt});
+        node.replaceWith(next); adopt(next); contentKey = key;
+      }
+      observer?.disconnect(); onReady?.(s);
       recordDiag('quote-content',{source,outcome:'ok'});
     }catch(e){
-      if (!box.isConnected || !current()) return;
+      if (!node.isConnected || !current()) return;
+      recordDiag('quote-content',{source,outcome:'error',status:e.status || 0});
+      /* 일시적인 갱신 실패에는 본문을 유지하되 삭제·권한 변경은 즉시 가린다. */
+      if (contentKey !== null && ![401,403,404,410].includes(e.status) && e.code !== 'quote_unavailable') return;
+      if (node !== box){ node.replaceWith(box); adopt(box); contentKey = null; }
       $('span',box).textContent = e.status === 404 || e.status === 410 || e.code === 'quote_unavailable' ? '인용 툿이 삭제되었거나 지금 계정에서 볼 수 없어요.' : e.status === 401 || e.status === 403 ? '이 계정에서는 인용 툿을 볼 수 없어요.' : '인용 툿을 불러오지 못했어요. 다시 시도해 주세요.';
       const retryButton = h('<button class="cwbtn" type="button">다시 시도</button>');
       retryButton.onclick = e => { e.stopPropagation(); load(true); }; box.append(retryButton);
-      recordDiag('quote-content',{source,outcome:'error',status:e.status || 0});
     }finally{ busy = false; }
   };
   box._loadQuote = load;
@@ -1696,7 +1716,7 @@ function quoteEl(q,{acc = cur(),onReady = null} = {}){
   box.addEventListener('click', e => e.stopPropagation());
   return box;
 }
-function quoteBody(qs,{acc = cur(),reveal = false} = {}){
+function quoteBody(qs,{acc = cur(),reveal = false,onReplace = null} = {}){
   if (LS.get(unavailableKey(acc),{})[String(qs.id)]){
     const box = h('<div class="quote qmsg"><span>인용 툿이 삭제되었거나 지금 계정에서 볼 수 없어요.</span></div>');
     box.addEventListener('click',e => e.stopPropagation()); return box;
@@ -1707,7 +1727,7 @@ function quoteBody(qs,{acc = cur(),reveal = false} = {}){
   if (hidden || warning && !reveal){
     const box = h('<div class="quote qmsg"><span>숨길 단어 설정으로 가려진 인용 툿이에요.</span></div>');
     box.addEventListener('click',e => e.stopPropagation());
-    if (!hidden){ const b = h('<button class="cwbtn" type="button">그래도 보기</button>'); b.onclick = e => { e.stopPropagation(); box.replaceWith(quoteBody(qs,{acc,reveal:true})); }; box.append(b); }
+    if (!hidden){ const b = h('<button class="cwbtn" type="button">그래도 보기</button>'); b.onclick = e => { e.stopPropagation(); const next = quoteBody(qs,{acc,reveal:true,onReplace}); box.replaceWith(next); onReplace?.(next); }; box.append(b); }
     return box;
   }
   const box = document.createElement('div'); box.className = 'quote';
@@ -1978,6 +1998,25 @@ function notifEl(n, acc = cur()){
   return identify(el);
 }
 
+/* 새 알림·바뀐 내용만 교체하고 기존 인용·내용 경고·미디어 상태는 보존한다. */
+function reconcileNotifications(list,items,acc){
+  const existing = new Map([...list.children].filter(el => el._notification).map(el => [String(el._notification.id),el]));
+  const nodes = filterNotifications(items,acc).map(n => {
+    const el = existing.get(String(n.id));
+    if (!el || cardContentKey(el._notification) !== cardContentKey(n)) return notifEl(n,acc);
+    if (el._st){ Object.assign(el._st,n.status.reblog || n.status); el._paint?.(); }
+    el._notification = n;
+    for (const q of el.querySelectorAll('.quote')){
+      const rect = q.getBoundingClientRect();
+      if (q.getClientRects().length && rect.bottom >= -200 && rect.top <= innerHeight + 200) q._loadQuote?.();
+    }
+    return el;
+  });
+  const wanted = new Set(nodes);
+  for (const el of [...list.children]) if (!wanted.has(el)) el.remove();
+  nodes.forEach((el,i) => { if (list.children[i] !== el) list.insertBefore(el,list.children[i] || null); });
+}
+
 /* ---------- 화면들 ---------- */
 function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글이 없어요', hint = null, filter = null, limit = 20, linkOnly = false} = {}){
   const root = document.createElement('div');
@@ -2023,14 +2062,17 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
     try{
       const {data: items, next} = await api(nextPath && !reset ? nextPath : firstPath(), {withLink:true});
       if (my !== gen) return;
-      if (reset){ list.replaceChildren(); seenIds.clear(); topId = null; }
+      if (reset){ if (kind !== 'notif') list.replaceChildren(); seenIds.clear(); topId = null; }
       bump(items);
       const local = reset && kind === 'status' ? [...postedItems.values()].filter(st => !items.some(it => String(it.id) === String(st.id))) : [];
       const page = local.length ? [...items, ...local].sort((a,b) => cmpId(b.id,a.id)) : items;
       const fresh = page.filter(it => !seenIds.has(String(it.id)));
       fresh.forEach(it => seenIds.add(String(it.id)));
       items.forEach(it => postedItems.delete(String(it.id)));
-      list.append(build(filter ? fresh.filter(filter) : fresh));
+      const shown = filter ? fresh.filter(filter) : fresh;
+      if (reset && kind === 'notif') reconcileNotifications(list,shown,viewAcc);
+      else list.append(build(shown));
+      updateTimes(list);
       if (kind === 'notif') verifyNotificationStatuses(items,viewAcc);
       /* 새 글이 하나도 없는 페이지 = 끝. 북마크·좋아요처럼 서버가 알려 준 다음 주소로만 넘길 수 있는 목록은 그 주소가 없으면 끝 */
       const nextGuess = next || (linkOnly ? null : endpoint + '?' + qs({limit:String(limit), ...params, max_id:items.length ? items[items.length - 1].id : ''}));
@@ -2048,7 +2090,7 @@ function feedView(endpoint, {params = {}, kind = 'status', empty = '아직 글�
       sent.append(b);
     }finally{ if (my === gen){ loading = false; hideSpin(); } }
     if (kind === 'notif' && my === gen && root.pruneNotifications) root.pruneNotifications();
-    if (refreshing && my === gen && list.animate) list.animate([{opacity:.35}, {opacity:1}], {duration:220, easing:'ease-out'});
+    if (refreshing && kind !== 'notif' && my === gen && list.animate) list.animate([{opacity:.35}, {opacity:1}], {duration:220, easing:'ease-out'});
     if (ok && root.isConnected && sent.getBoundingClientRect().top < innerHeight + 600) load(false);
   }
   /* 빠른 새로고침: 맨 위 글보다 새 글만 받아서 위에 붙이고, 숫자(좋아요 등)는 뒤에서 조용히 맞춤 */
@@ -4757,7 +4799,7 @@ function mainSettings(root){
   const s7 = secEl('그 밖의 설정', '여기 없는 설정은 마스토돈 웹사이트에서 바꿀 수 있어요.');
   s7.append(linkRow('globe', '마스토돈 웹에서 설정 열기', me.instance + '/settings', () => window.open(`https://${me.instance}/settings/preferences`, '_blank', 'noopener')));
   s7.append(linkRow('memo', '문제 확인용 기록 복사', '최근 요청 시간과 화면 이동만 복사해요. 글 내용과 로그인 정보는 포함하지 않아요.', async () => {
-    const text = JSON.stringify({version:'2026-10-20.3', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
+    const text = JSON.stringify({version:'2026-10-20.4', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
     try{ await navigator.clipboard.writeText(text); toast('문제 확인용 기록을 복사했어요'); }
     catch(e){ toast('복사하지 못했어요. 브라우저의 클립보드 권한을 확인해 주세요.'); }
   }));

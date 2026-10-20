@@ -2,9 +2,30 @@
   "name": "todon-ops",
   "main": "src/worker.mjs",
   "compatibility_date": "2026-10-20",
-  "assets": {"directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*", "/oauth/*"]},
-  "d1_databases": [{"binding": "DB", "database_name": "todon-ops-db", "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"}],
-  "triggers": {"crons": ["* * * * *"]},
-  "vars": {"MASTODON_HOST": "planet.moe"},
-  "observability": {"enabled": false}
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/api/*",
+      "/oauth/*"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "todon-ops-db",
+      "database_id": "96cc4951-5b29-4a96-842e-b9f3c70fb2fb"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "* * * * *"
+    ]
+  },
+  "vars": {
+    "MASTODON_HOST": "planet.moe"
+  },
+  "observability": {
+    "enabled": false
+  }
 }

@@ -1,4 +1,4 @@
-import {example,execute,validateRule,numericMap,cleanKey,matches,newId} from './engine.mjs';
+import {example,execute,validateRule,numericMap,cleanKey,matches,newId,diceBlock,diceRanges} from './engine.mjs';
 const $=(s,root=document)=>root.querySelector(s),$$=(s,root=document)=>[...root.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid=newId;
@@ -6,7 +6,7 @@ const read=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key))??fa
 const initial=()=>({config:{paused:true,rules:[example('check','practice'),example('dice','practice')],fields:{체력:100,관찰력:0,소지금:0},events:[],invites:{},dailyCap:1500,revision:0},accounts:[{id:'practice',label:'연습 계정',acct:'practice@planet.moe',active:1}],participants:[{id:'practice-runner',name:'연습 러너',acct:'runner@planet.moe',stats:{체력:100,관찰력:0,소지금:0},inventory:{회복약:2},revision:0}],audit:[],outbox:[],runtime:{}});
 let S=read('cc.practice.v1',null)||initial(),online=false,secret=sessionStorage.getItem('cc.admin')||'',active=localStorage.getItem('cc.account')||'',selected='',draft=null,dirty=false;
 let month=new Date(new Date().getFullYear(),new Date().getMonth(),1),story={title:'첫 번째 이야기',start:new Date(Date.now()+600000),scenes:[]};
-let simulation=null,toastTimer;
+let simulation=null,toastTimer,botDetail=false;
 const pages=[['home','◷','오늘의 운영'],['bots','▧','자동봇 제작소'],['story','▷','스토리 진행실'],['runners','♙','러너 기록부'],['calendar','▦','운영 캘린더'],['accounts','◎','운영 계정'],['settings','⚙','연결·설정']];
 const route=()=>location.hash.slice(1).split('?')[0]||'home';
 const dateTime=t=>new Date(Number(t)||t).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
@@ -56,12 +56,53 @@ function homePage(app){
   <p class="inline-help" style="margin-top:17px">마지막 자동 확인: ${S.runtime.lastTick?dateTime(S.runtime.lastTick):'아직 없음'} · 무료 구성은 분 단위로 확인하며, 몰릴 때 답글이 늦어질 수 있어요.</p>`);
   action('#toggleRun',async()=>{if(!online){toast('실제 봇 실행은 서버 연결 후 사용할 수 있어요. 연습창에서 먼저 시험해 주세요.');return;}S.config.paused=!S.config.paused;try{await saveConfig();render();}catch(e){S.config.paused=!S.config.paused;throw e;}});
 }
-const blockNames={reply:'대사 출력',random:'후보 중 랜덤 선택',roll:'주사위 굴리기',calculate:'계산 결과 저장',stat:'능력치 더하기·빼기',item:'물건 지급·사용',guard:'조건이 맞을 때 계속',status:'현재 능력치 출력',inventory:'현재 가방 출력',history:'최근 기록 출력'};
+const blockNames={reply:'대사 출력',random:'후보 중 랜덤 선택',roll:'주사위 굴리기',dice:'주사위와 범위별 판정',calculate:'계산 결과 저장',stat:'능력치 더하기·빼기',item:'물건 지급·사용',guard:'조건이 맞을 때 계속',status:'현재 능력치 출력',inventory:'현재 가방 출력',history:'최근 기록 출력'};
+function simpleRuleKind(rule){
+  const types=rule.blocks.map(b=>b.type).join(',');
+  if(types==='dice')return 'dice';
+  if(types==='roll,reply')return 'oldDice';
+  if(['status,inventory','status','inventory','history'].includes(types))return 'record';
+  return '';
+}
+function diceFields(b,index){
+  let from=b.count;
+  return `<div class="dice-settings" data-dice-index="${index}">
+    <div class="card-head"><h3>주사위와 판정표</h3><span class="tag">${esc(b.count)}d${esc(b.sides)}</span></div>
+    <div class="form-grid"><label>주사위 몇 개?<input data-dice="count" type="number" min="1" max="20" value="${esc(b.count)}"></label><label>몇 면체?<input data-dice="sides" type="number" min="2" max="1000" value="${esc(b.sides)}"></label></div>
+    <p class="inline-help">숫자 구간마다 어떤 결과를 보낼지 적어 주세요. 다음 구간의 시작 숫자는 자동으로 이어져요.</p>
+    <div class="dice-range-head" aria-hidden="true"><span>시작</span><span>끝 · 이하</span><span>보낼 결과</span><span></span></div>
+    <div class="dice-ranges">${b.ranges.map((r,i)=>{const start=from;from=r.max+1;return `<div class="dice-range" data-range-row="${i}"><span data-range-start>${esc(start)} ~</span><input data-range-max type="number" min="${b.count}" max="${b.count*b.sides}" value="${esc(r.max)}" aria-label="${i+1}번째 구간 끝 숫자" ${i===b.ranges.length-1?'readonly':''}><input data-range-label value="${esc(r.label)}" maxlength="100" aria-label="${i+1}번째 구간 결과"><button class="small" data-delete-range="${index}:${i}" aria-label="${i+1}번째 구간 삭제" ${b.ranges.length===1?'disabled':''}>×</button></div>`;}).join('')}</div>
+    <div class="actions"><button class="small" data-add-range="${index}">+ 구간 추가</button><button class="small" data-balance-ranges="${index}">범위 균등하게 나누기</button></div>
+    <div class="dice-preview"><small>이렇게 답장해요 · 예시</small><pre data-dice-preview></pre></div>
+    <details class="dice-message"><summary>답글 문장 꾸미기</summary><p class="inline-help">아래 버튼을 누르면 이름·숫자·판정이 들어갈 자리를 넣을 수 있어요.</p><div class="actions">${[['{닉네임}','러너 이름'],['{주사위식}','1d100 같은 주사위식'],['{주사위}','굴린 숫자'],['{판정}','성공·실패 결과']].map(([token,label])=>`<button class="small" data-dice-token="${token}">${label}</button>`).join('')}</div><label>답글 문장<textarea data-dice-text rows="3">${esc(b.text)}</textarea></label></details>
+  </div>`;
+}
+function refreshDiceFields(){
+  for(const root of $$('.dice-settings')){
+    const b=draft.blocks[Number(root.dataset.diceIndex)];let from=b.count;
+    for(const row of $$('[data-range-row]',root)){const i=Number(row.dataset.rangeRow);$('[data-range-start]',row).textContent=from+' ~';from=b.ranges[i].max+1;}
+    const preview=$('[data-dice-preview]',root);
+    try{
+      validateRule({...draft,name:'미리보기',keyword:'주사위',blocks:[b]});
+      const value=Math.max(b.count,Math.min(18,b.count*b.sides));
+      preview.textContent=execute({blocks:[b]},{name:'러너',stats:S.config.fields,inventory:{}},{diceTotal:value}).replies.join('\n');
+    }catch(error){preview.textContent=error.message;}
+  }
+}
+function simpleFields(kind){
+  if(kind==='dice')return diceFields(draft.blocks[0],0);
+  if(kind==='oldDice'){
+    const b=draft.blocks[0];
+    return `<div class="simple-summary"><h3>주사위 숫자를 답장해요</h3><p>성공·실패도 함께 보내고 싶다면 판정표를 추가해 주세요. 1d100은 25 / 50 / 75 / 100 기준이 미리 채워져요.</p><button id="upgradeDice" class="green">성공·실패 판정 추가</button></div><div class="form-grid legacy-dice"><label>주사위 몇 개?<input data-legacy-dice="count" type="number" min="1" max="20" value="${b.count}"></label><label>몇 면체?<input data-legacy-dice="sides" type="number" min="2" max="1000" value="${b.sides}"></label><label class="span2">답글 문장<textarea data-legacy-reply>${esc(draft.blocks[1].text)}</textarea></label></div>`;
+  }
+  return `<div class="simple-summary"><h3>${draft.blocks[0].type==='history'?'최근 획득·변경 기록을 답장해요':'러너의 기록을 답장해요'}</h3><p>${draft.blocks.map(b=>({status:'현재 능력치',inventory:'가진 물건',history:'최근 획득·변경 기록'})[b.type]).join(' · ')}을 자동으로 불러와 보내요. 위에서 계정과 키워드만 정하면 돼요.</p></div>`;
+}
 function blockFields(b){
   const label=(text,html)=>`<label>${text}${html}</label>`;
   const input=(field,value,type='text',extra='')=>`<input data-field="${field}" type="${type}" value="${esc(value)}" ${extra}>`;
   if(b.type==='reply'||b.type==='random')return label(b.type==='random'?'후보를 한 줄에 하나씩 · 확률 가중치 예: 30 | 단서 발견':'문장 · {닉네임}, {결과}, {체력}을 사용할 수 있어요.',`<textarea data-field="text">${esc(b.text||'')}</textarea>`);
   if(b.type==='roll')return `<div class="form-grid">${label('주사위 개수',input('count',b.count,'number','min="1" max="20"'))}${label('주사위 면수',input('sides',b.sides,'number','min="2" max="1000"'))}</div>`;
+  if(b.type==='dice')return diceFields(b,draft.blocks.indexOf(b));
   if(b.type==='calculate')return `<div class="form-grid">${label('결과를 저장할 능력치',input('key',b.key))}${label('계산식 · 예: {체력} + 5',input('expression',b.expression))}</div>`;
   if(b.type==='stat'||b.type==='item')return `<div class="form-grid">${label(b.type==='stat'?'능력치 이름':'물건 이름',input('key',b.key))}${label('변경량 · 사용하거나 줄일 때 음수',input('amount',b.amount,'number'))}</div>`;
   if(b.type==='guard')return `<div class="form-grid">${label('확인할 대상',`<select data-field="target"><option value="stat" ${b.target==='stat'?'selected':''}>능력치</option><option value="item" ${b.target==='item'?'selected':''}>물건 수량</option><option value="result" ${b.target==='result'?'selected':''}>직전 주사위·계산 결과</option></select>`)}${label('항목 이름',input('key',b.key))}${label('비교',`<select data-field="op">${['>=','<=','==','>','<'].map(op=>`<option ${b.op===op?'selected':''} value="${esc(op)}">${esc(op)} ${({'>=':'이상','<=':'이하','==':'같음','>':'초과','<':'미만'})[op]}</option>`).join('')}</select>`)}${label('기준 숫자',input('amount',b.amount,'number'))}<label class="span2">조건에 맞지 않을 때 답글<textarea data-field="text">${esc(b.text||'조건이 맞지 않아요.')}</textarea></label></div><div class="inline-help">조건에 맞지 않으면 앞 블록의 변경도 취소하고 이 규칙을 끝내요. 조건 블록은 앞쪽에 두면 이해하기 쉬워요.</div>`;
@@ -71,32 +112,56 @@ function collectDraft(){
   const form=$('#botEditor');if(!form||!draft)return;
   for(const el of $$('[data-rule]',form)){const k=el.dataset.rule;draft[k]=el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value;}
   for(const block of $$('.block',form)){const b=draft.blocks[Number(block.dataset.index)];for(const el of $$('[data-field]',block))b[el.dataset.field]=el.type==='number'?Number(el.value):el.value;}
+  for(const root of $$('.dice-settings',form)){
+    const b=draft.blocks[Number(root.dataset.diceIndex)];
+    for(const el of $$('[data-dice]',root))b[el.dataset.dice]=Number(el.value);
+    b.ranges=$$('[data-range-row]',root).map(row=>({max:Number($('[data-range-max]',row).value),label:$('[data-range-label]',row).value}));
+    b.text=$('[data-dice-text]',root).value;
+  }
+  for(const el of $$('[data-legacy-dice]',form))draft.blocks[0][el.dataset.legacyDice]=Number(el.value);
+  if($('[data-legacy-reply]',form))draft.blocks[1].text=$('[data-legacy-reply]',form).value;
 }
 function newRuleModal(){
-  modal(`<h2>어떤 봇부터 만들까요?</h2><p>기본 블록을 가져온 뒤 문장과 숫자를 바꿀 수 있어요.</p><div class="stack">${[['check','내 상태·가방 확인'],['dice','주사위 봇'],['search','확률로 단서를 얻는 조사봇'],['item','물건 사용과 체력 회복'],['history','최근 획득·변경 기록']].map(([kind,title])=>`<button data-template="${kind}">${title} ↗</button>`).join('')}</div>`);
-  action('[data-template]',(_e,b)=>{const r=example(b.dataset.template,activeAccount()?.id||'');S.config.rules.push(r);selected=r.id;draft=structuredClone(r);simulation=null;dirty=true;close();render();});
+  modal(`<h2>어떤 봇부터 만들까요?</h2><p>하고 싶은 일을 고르면 필요한 설정이 미리 채워져요.</p><div class="stack">${[['dice','주사위·성공 판정','1d100 숫자와 어려운 성공 / 성공 / 실패 / 대실패를 함께 답장'],['check','내 상태·가방 확인','키워드를 받으면 러너의 능력치와 가진 물건을 답장'],['history','최근 획득·변경 기록','러너의 최근 기록을 자동으로 불러와 답장'],['search','확률로 단서를 얻는 조사봇','주사위·조건·보상을 세부 편집'],['item','물건 사용과 체력 회복','소지품 조건과 능력치 변경을 세부 편집']].map(([kind,title,desc])=>`<button class="template-choice" data-template="${kind}"><strong>${title} ↗</strong><small>${desc}</small></button>`).join('')}</div>`);
+  action('[data-template]',(_e,b)=>{const r=example(b.dataset.template,activeAccount()?.id||'');S.config.rules.push(r);selected=r.id;draft=structuredClone(r);simulation=null;botDetail=false;dirty=true;close();render();});
 }
 function botsPage(app){
   if(!selected&&S.config.rules.length)selected=S.config.rules[0].id;
   const current=S.config.rules.find(r=>r.id===selected);if(current&&(!draft||draft.id!==selected))draft=structuredClone(current);
-  app.insertAdjacentHTML('beforeend',heading('BUILD WITHOUT CODE','자동봇 제작소','언제 반응할지 정하고, 아래로 블록을 이어 붙여요.',`<button id="newRule" class="primary">+ 새 자동봇</button>`)+`
+  const kind=draft?simpleRuleKind(draft):'',simple=!!kind&&!botDetail;
+  app.insertAdjacentHTML('beforeend',heading('MAKE IT YOURS','자동봇 제작소','하고 싶은 일을 고르고, 계정과 키워드를 정하면 돼요.',`<button id="newRule" class="primary">+ 새 자동봇</button>`)+`
   <div class="bot-layout"><aside class="bot-list">${S.config.rules.map(r=>`<button class="bot-choice ${r.id===selected?'selected':''}" data-pick="${esc(r.id)}"><span class="tag">${r.enabled?'켜짐':'꺼짐'}</span> ${esc(r.name)}<small>${esc(r.keyword)}</small></button>`).join('')}</aside><section class="card">${draft?`
-  <div id="botEditor"><div class="card-head"><h2>블록 편집</h2><label class="checkline"><input data-rule="enabled" type="checkbox" ${draft.enabled?'checked':''}> 이 규칙 켜기</label></div>
-  <div class="form-grid"><label>규칙 이름<input data-rule="name" value="${esc(draft.name)}" maxlength="80"></label><label>발신 계정<select data-rule="accountId">${accountOptions(draft.accountId)}</select></label><label>반응할 키워드<input data-rule="keyword" value="${esc(draft.keyword)}" maxlength="100"></label><label>인식 방식<select data-rule="match"><option value="contains" ${draft.match==='contains'?'selected':''}>문장에 포함되면</option><option value="exact" ${draft.match==='exact'?'selected':''}>명령 전체가 같으면</option></select></label><label>러너 1명당 하루 횟수 · 0은 무제한<input data-rule="dailyLimit" type="number" min="0" max="1000" value="${draft.dailyLimit}"></label><label>재사용 대기시간 · 초<input data-rule="cooldown" type="number" min="0" max="86400" value="${draft.cooldown}"></label></div>
+  <div id="botEditor"><div class="card-head bot-editor-head"><h2>${simple?'간단 설정':'세부 편집'}</h2><div class="actions">${kind?`<button id="toggleBotDetail" class="small">${simple?'세부 편집 열기':'간단 설정으로'}</button>`:''}<label class="checkline"><input data-rule="enabled" type="checkbox" ${draft.enabled?'checked':''}> 이 규칙 켜기</label></div></div>
+  <div class="form-grid"><label>봇 설정 이름<input data-rule="name" value="${esc(draft.name)}" maxlength="80"></label><label>어느 계정이 답할까?<select data-rule="accountId">${accountOptions(draft.accountId)}</select></label><label class="span2">어떤 말을 받으면 답할까?<input data-rule="keyword" value="${esc(draft.keyword)}" maxlength="100"></label></div>
+  <details class="bot-limits"><summary>키워드 인식·횟수·대기시간 설정</summary><div class="form-grid"><label>인식 방식<select data-rule="match"><option value="contains" ${draft.match==='contains'?'selected':''}>문장에 포함되면</option><option value="exact" ${draft.match==='exact'?'selected':''}>명령 전체가 같으면</option></select></label><label>러너 1명당 하루 횟수 · 0은 무제한<input data-rule="dailyLimit" type="number" min="0" max="1000" value="${draft.dailyLimit}"></label><label>재사용 대기시간 · 초<input data-rule="cooldown" type="number" min="0" max="86400" value="${draft.cooldown}"></label></div></details>
   <p class="inline-help">등록한 러너가 발신 계정에 보낸 새 멘션에만 반응해요. 하루는 한국 시간 자정에 바뀌어요.</p>
-  <div style="margin-top:22px">${draft.blocks.map((b,i)=>`<section class="block" data-kind="${b.type}" data-index="${i}"><div class="block-head"><span class="tag">${String(i+1).padStart(2,'0')}</span>${blockNames[b.type]}<div class="actions"><button data-move="-1" data-index="${i}" aria-label="위로 이동">↑</button><button data-move="1" data-index="${i}" aria-label="아래로 이동">↓</button><button data-remove="${i}" aria-label="블록 삭제">×</button></div></div>${blockFields(b)}</section>`).join('')}</div>
-  <button id="addBlock" class="add-block">+ 다음 블록 추가</button><div class="editor-foot"><button id="saveRule" class="primary">규칙 저장</button><button id="copyRule">복제</button><button id="deleteRule" class="danger">삭제</button><span class="counter">${draft.blocks.length} / 30 블록</span></div></div>
-  <section class="practice"><div class="card-head"><h2>작은 연습창</h2><button id="resetPractice" class="small">기록 초기화</button></div><p class="inline-help">실제로 게시하지 않아요. 선택한 규칙 하나의 키워드와 블록을 시험하며, 횟수·대기시간 제한은 적용하지 않아요.</p><div class="row" style="margin-top:12px"><input id="practiceText" aria-label="연습 명령" value="${esc(draft.keyword)}"><button id="practiceRun" class="green">보내기</button></div><div id="practiceResult"></div></section>`:empty('새 자동봇을 만들어 첫 블록을 추가해 주세요.')}</section></div>`);
+  <div style="margin-top:22px">${simple?simpleFields(kind):draft.blocks.map((b,i)=>`<section class="block" data-kind="${b.type}" data-index="${i}"><div class="block-head"><span class="tag">${String(i+1).padStart(2,'0')}</span>${blockNames[b.type]}<div class="actions"><button data-move="-1" data-index="${i}" aria-label="위로 이동">↑</button><button data-move="1" data-index="${i}" aria-label="아래로 이동">↓</button><button data-remove="${i}" aria-label="블록 삭제">×</button></div></div>${blockFields(b)}</section>`).join('')}</div>
+  ${simple?'':'<button id="addBlock" class="add-block">+ 다음 블록 추가</button>'}<div class="editor-foot"><button id="saveRule" class="primary">규칙 저장</button><button id="copyRule">복제</button><button id="deleteRule" class="danger">삭제</button>${simple?'':`<span class="counter">${draft.blocks.length} / 30 블록</span>`}</div></div>
+  <section class="practice"><div class="card-head"><h2>작은 연습창</h2><button id="resetPractice" class="small">기록 초기화</button></div><p class="inline-help">저장 전에도 시험할 수 있어요. 실제 툿과 러너 기록에는 영향을 주지 않아요. 횟수·대기시간은 시험하지 않아요.</p>${kind==='dice'?`<label class="dice-test-value">시험할 주사위 값 · 비우면 무작위<input id="practiceDice" type="number" min="${draft.blocks[0].count}" max="${draft.blocks[0].count*draft.blocks[0].sides}" placeholder="예: 25, 26, 50, 51"></label>`:''}<div class="row" style="margin-top:12px"><input id="practiceText" aria-label="연습 명령" value="${esc(draft.keyword)}"><button id="practiceRun" class="green">시험하기</button></div><div id="practiceResult" aria-live="polite"></div></section>`:empty('새 자동봇에서 하고 싶은 일을 골라 주세요.')}</section></div>`);
   action('#newRule',newRuleModal);
-  action('[data-pick]',(_e,b)=>{if(dirty&&draft&&!confirm('현재 규칙의 저장하지 않은 편집을 버릴까요?'))return;selected=b.dataset.pick;draft=null;simulation=null;dirty=false;render();});
-  for(const el of $$('[data-rule], [data-field]'))el.addEventListener('input',()=>{dirty=true;collectDraft();});
+  action('[data-pick]',(_e,b)=>{if(dirty&&draft&&!confirm('현재 규칙의 저장하지 않은 편집을 버릴까요?'))return;selected=b.dataset.pick;draft=null;simulation=null;botDetail=false;dirty=false;render();});
+  for(const el of $$('[data-rule], [data-field], [data-dice], [data-range-max], [data-range-label], [data-dice-text], [data-legacy-dice], [data-legacy-reply]'))el.addEventListener('input',()=>{dirty=true;collectDraft();refreshDiceFields();});
+  action('#toggleBotDetail',()=>{collectDraft();botDetail=!botDetail;render();});
+  action('#upgradeDice',()=>{collectDraft();draft.blocks=[diceBlock(draft.blocks[0].count,draft.blocks[0].sides)];dirty=true;render();toast('판정표를 추가했어요. 숫자와 결과를 함께 답장해요.');});
+  for(const el of $$('[data-dice]'))el.addEventListener('change',()=>{
+    try{collectDraft();const b=draft.blocks[Number(el.closest('.dice-settings').dataset.diceIndex)];b.ranges=diceRanges(b.count,b.sides,b.ranges.map(r=>r.label));dirty=true;render();toast('판정표를 새 주사위 범위에 맞췄어요.');}catch(error){toast(error.message);}
+  });
+  action('[data-balance-ranges]',(_e,button)=>{collectDraft();const b=draft.blocks[Number(button.dataset.balanceRanges)];b.ranges=diceRanges(b.count,b.sides,b.ranges.map(r=>r.label));dirty=true;render();});
+  action('[data-add-range]',(_e,button)=>{
+    collectDraft();const b=draft.blocks[Number(button.dataset.addRange)];if(b.ranges.length>=20)throw Error('판정 구간은 최대 20개예요.');
+    const i=b.ranges.findIndex((r,i)=>r.max-(i?b.ranges[i-1].max:b.count-1)>1);if(i<0)throw Error('더 나눌 수 있는 주사위 값이 없어요.');
+    const before=i?b.ranges[i-1].max:b.count-1,r=b.ranges[i];b.ranges.splice(i,1,{max:Math.floor((before+r.max)/2),label:r.label},{max:r.max,label:'새 결과'});dirty=true;render();
+  });
+  action('[data-delete-range]',(_e,button)=>{collectDraft();const [index,row]=button.dataset.deleteRange.split(':').map(Number),b=draft.blocks[index];if(b.ranges.length<2)return;b.ranges.splice(row,1);b.ranges.at(-1).max=b.count*b.sides;dirty=true;render();});
+  action('[data-dice-token]',(_e,button)=>{const text=$('[data-dice-text]',button.closest('.dice-settings'));text.setRangeText(button.dataset.diceToken,text.selectionStart,text.selectionEnd,'end');text.focus();dirty=true;collectDraft();refreshDiceFields();});
+  refreshDiceFields();
   action('[data-move]',(_e,b)=>{collectDraft();const i=Number(b.dataset.index),j=i+Number(b.dataset.move);if(j<0||j>=draft.blocks.length)return;[draft.blocks[i],draft.blocks[j]]=[draft.blocks[j],draft.blocks[i]];dirty=true;render();});
   action('[data-remove]',(_e,b)=>{collectDraft();draft.blocks.splice(Number(b.dataset.remove),1);dirty=true;render();});
-  action('#addBlock',()=>{collectDraft();modal(`<h2>다음에 무엇을 할까요?</h2><p>선택하면 맨 아래에 블록이 붙어요.</p><div class="stack">${Object.entries(blockNames).map(([type,name])=>`<button data-block="${type}">${name}</button>`).join('')}</div>`);action('[data-block]',(_e,b)=>{if(draft.blocks.length>=30)throw Error('블록은 최대 30개예요.');draft.blocks.push({type:b.dataset.block,key:'체력',amount:1,text:'{닉네임}, 반가워요.',count:1,sides:100,target:'stat',op:'>=',expression:'{체력} + 5'});dirty=true;close();render();});});
+  action('#addBlock',()=>{collectDraft();modal(`<h2>다음에 무엇을 할까요?</h2><p>선택하면 맨 아래에 블록이 붙어요.</p><div class="stack">${Object.entries(blockNames).map(([type,name])=>`<button data-block="${type}">${name}</button>`).join('')}</div>`);action('[data-block]',(_e,b)=>{if(draft.blocks.length>=30)throw Error('블록은 최대 30개예요.');draft.blocks.push(b.dataset.block==='dice'?diceBlock():{type:b.dataset.block,key:'체력',amount:1,text:'{닉네임}, 반가워요.',count:1,sides:100,target:'stat',op:'>=',expression:'{체력} + 5'});dirty=true;close();render();});});
   action('#saveRule',async()=>{collectDraft();validateRule(draft);const i=S.config.rules.findIndex(r=>r.id===draft.id);S.config.rules[i]=structuredClone(draft);await saveConfig();render();});
   action('#copyRule',async()=>{collectDraft();const r={...structuredClone(draft),id:uid(),name:draft.name+' 복사',enabled:false};S.config.rules.push(r);selected=r.id;draft=r;dirty=true;render();});
   action('#deleteRule',async()=>{S.config.rules=S.config.rules.filter(r=>r.id!==selected);await saveConfig();draft=null;selected='';render();});
-  action('#practiceRun',()=>{collectDraft();validateRule(draft);const text=$('#practiceText').value;const target=$('#practiceResult');if(!matches(draft,text)){target.innerHTML='<div class="chat"><div class="bubble">키워드가 맞지 않아 반응하지 않아요.</div></div>';return;}simulation??=structuredClone(S.participants[0]||{name:'연습 러너',stats:S.config.fields,inventory:{}});const result=execute(draft,simulation);simulation={...simulation,stats:result.stats,inventory:result.inventory};target.innerHTML=`<div class="chat"><div class="bubble me">${esc(text)}</div>${result.replies.map(r=>`<div class="bubble">${esc(r)}</div>`).join('')}${!result.replies.length?'<div class="bubble">출력 블록이 없어요. 기록 변경만 처리했어요.</div>':''}<small>${esc(result.changes.join(' / ')||'기록 변경 없음')}</small></div>`;});
+  action('#practiceRun',()=>{collectDraft();validateRule(draft);const text=$('#practiceText').value;const target=$('#practiceResult');if(!matches(draft,text)){target.innerHTML='<div class="chat"><div class="bubble">키워드가 맞지 않아 반응하지 않아요.</div></div>';return;}simulation??=structuredClone(S.participants[0]||{name:'연습 러너',stats:S.config.fields,inventory:{}});const value=$('#practiceDice')?.value;const result=execute(draft,simulation,value?{diceTotal:Number(value)}:{});simulation={...simulation,stats:result.stats,inventory:result.inventory};target.innerHTML=`<div class="chat"><div class="bubble me">${esc(text)}</div>${result.replies.map(r=>`<div class="bubble">${esc(r)}</div>`).join('')}${!result.replies.length?'<div class="bubble">출력 없이 기록만 변경했어요.</div>':''}<small>${esc(result.changes.join(' / ')||'기록 변경 없음')}</small></div>`;});
   action('#resetPractice',()=>{simulation=null;$('#practiceResult').innerHTML='';toast('연습 기록을 초기화했어요.');});
 }
 function sceneCollect(){

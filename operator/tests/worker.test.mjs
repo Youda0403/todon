@@ -26,6 +26,28 @@ test('config revision prevents overwriting newer settings',async()=>{
   assert.equal((await worker.fetch(request('/api/config','PUT',state.config),e)).status,200);
   assert.equal((await worker.fetch(request('/api/config','PUT',state.config),e)).status,409);
 });
+test('a saved dice verdict rule posts both the number and matching result through the bot queue',async()=>{
+  const e=env();await account(e);
+  e.DB.sql.prepare('INSERT INTO participants(id,acct,name,stats) VALUES(?,?,?,?)').run('runner','runner@planet.moe','루시아','{}');
+  const state=await(await worker.fetch(request('/api/state'),e)).json();
+  state.config.paused=false;state.config.rules=[{...example('dice','bot'),enabled:true}];
+  assert.equal((await worker.fetch(request('/api/config','PUT',state.config),e)).status,200);
+  const original=globalThis.fetch,posts=[];
+  globalThis.fetch=async(url,opt)=>{
+    if(url.includes('/notifications'))return Response.json([{id:'101',type:'mention',account:{id:'runner'},created_at:new Date().toISOString(),status:{id:'dice-command',content:'<p>@bot [주사위]</p>',visibility:'direct'}}]);
+    posts.push(JSON.parse(opt.body));return Response.json({id:'posted-dice'});
+  };
+  try{
+    await tick(e);
+    assert.equal(posts.length,1);
+    const match=posts[0].status.match(/루시아 · 1d100\n(\d+) \/ (어려운 성공|성공|실패|대실패)/);
+    assert.ok(match);
+    const value=Number(match[1]);assert.ok(value>=1&&value<=100);
+    assert.equal(match[2],value<=25?'어려운 성공':value<=50?'성공':value<=75?'실패':'대실패');
+    assert.equal(posts[0].visibility,'direct');
+    assert.equal(posts[0].in_reply_to_id,'dice-command');
+  }finally{globalThis.fetch=original;}
+});
 test('account OAuth completes with Workers-compatible fetch options and encrypted credentials',async()=>{
   const e=env(),original=globalThis.fetch,calls=[];
   const clientSecret='test-oauth-client-secret',accessToken='test-oauth-access-token';

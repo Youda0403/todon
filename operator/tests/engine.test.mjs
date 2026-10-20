@@ -55,3 +55,33 @@ test('dice verdict tables reject missing, overlapping, reversed, and unnamed ran
   const small=diceRanges(1,2);assert.deepEqual(small.map(r=>r.max),[1,2]);
   assert.throws(()=>diceRanges(0,100));
 });
+test('all condition comparisons work for stats, items and rolled results at boundaries',()=>{
+  const actor={name:'러너',stats:{체력:50},inventory:{열쇠:2}};
+  for(const target of ['stat','item','result'])for(const [op,expected] of [['>=',[false,true,true]],['<=',[true,true,false]],['==',[false,true,false]],['>',[false,false,true]],['<',[true,false,false]]]){
+    const value=target==='stat'?50:target==='item'?2:25;
+    for(const [i,n] of [value+1,value,value-1].entries()){
+      const rule={...example('check'),blocks:[...(target==='result'?[{type:'roll',count:1,sides:100}]:[]),{type:'guard',target,key:target==='item'?'열쇠':'체력',op,amount:n,text:'실패'},{type:'item',key:'보상',amount:1},{type:'reply',text:'통과'}]};
+      validateRule(rule);const out=execute(rule,actor,{diceTotal:25});assert.equal(!out.rejected,expected[i],`${target} ${op} ${n}`);assert.equal(out.inventory.보상,expected[i]?1:undefined);
+    }
+  }
+});
+test('two conditions both apply, failed conditions roll back earlier replies and mutations',()=>{
+  const rule={...example('check'),blocks:[{type:'stat',key:'체력',amount:5},{type:'reply',text:'이 답장은 취소되어야 해요'},{type:'guard',target:'stat',key:'체력',op:'>=',amount:50,text:'체력 부족'},{type:'guard',target:'item',key:'열쇠',op:'>=',amount:1,text:'열쇠 부족'}]};
+  const out=execute(rule,{name:'러너',stats:{체력:50},inventory:{}});assert.equal(out.stats.체력,50);assert.deepEqual(out.replies,['열쇠 부족']);assert.deepEqual(out.changes,[]);assert.equal(out.trace.length,3);
+});
+test('calculation validation checks syntax without rejecting valid variable denominators',()=>{
+  const r={...example('calculate'),blocks:[{type:'calculate',key:'계산값',expression:'100 / ({체력} - {관찰력})'},{type:'reply',text:'{계산값} / {결과}'}]};
+  validateRule(r);const out=execute(r,{name:'러너',stats:{체력:50,관찰력:30},inventory:{}});assert.equal(out.stats.계산값,5);assert.deepEqual(out.replies,['5 / 5']);
+  assert.throws(()=>execute(r,{stats:{체력:30,관찰력:30},inventory:{}}));
+});
+test('every ready-made form executes, weighted direct replies preserve old selection-only behavior',()=>{
+  for(const kind of ['reply','random','award','calculate','dice','check','history','search','item']){const r=example(kind);validateRule(r);const out=execute(r,{name:'러너',stats:{체력:50,관찰력:0},inventory:{회복약:1}},{random:()=>0.1,history:[{message:'열쇠 +1'}]});assert.ok(out.replies.length>0,kind);}
+  const r=example('random');r.blocks[0].text='0 | 제외\n30 | A\n70 | B';
+  assert.deepEqual(execute(r,{stats:{},inventory:{}},{random:()=>0}).replies,['A']);
+  assert.deepEqual(execute(r,{stats:{},inventory:{}},{random:()=>0.3}).replies,['B']);
+  r.blocks[0].emit=false;assert.deepEqual(execute(r,{stats:{},inventory:{}}).replies,[]);
+  r.blocks[0].text='0 | 없음';assert.throws(()=>validateRule(r));
+});
+test('negative or empty weighted candidates cannot silently become a reply',()=>{
+  const r=example('random');for(const text of ['-1 | 잘못된 비중','2 | ']){r.blocks[0].text=text;assert.throws(()=>validateRule(r));}
+});

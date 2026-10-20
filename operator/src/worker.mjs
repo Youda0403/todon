@@ -56,10 +56,13 @@ async function acquire(db,name='work'){
 async function locked(db,fn){const release=await acquire(db);try{return await fn();}finally{await release();}}
 const actorView=r=>({...r,stats:JSON.parse(r.stats),inventory:JSON.parse(r.inventory)});
 async function state(db){
-  const [config,accounts,participants,audit,outbox,runtime]=await Promise.all([
+  const [config,accounts,participants,audit,outbox,runtime,stories]=await Promise.all([
     settings(db),all(db,'SELECT id,label,acct,active,error,max_chars FROM accounts'),all(db,'SELECT * FROM participants ORDER BY name'),
-    all(db,'SELECT * FROM audit ORDER BY id DESC LIMIT 100'),all(db,'SELECT id,title,state,due,last_error,group_id,account_id FROM outbox ORDER BY due DESC LIMIT 100'),all(db,'SELECT * FROM runtime')]);
-  return {config,accounts,participants:participants.map(actorView),audit,outbox,runtime:Object.fromEntries(runtime.map(r=>[r.key,r.value]))};
+    all(db,'SELECT * FROM audit ORDER BY id DESC LIMIT 100'),all(db,`SELECT id,title,state,due,last_error,group_id,account_id,first_attempt FROM outbox WHERE state NOT IN ('sent','cancelled') OR id IN (SELECT id FROM outbox WHERE state IN ('sent','cancelled') ORDER BY due DESC LIMIT 100) ORDER BY due,id`),all(db,'SELECT * FROM runtime'),all(db,`SELECT group_id,MIN(title) AS title,MIN(due) AS due,COUNT(*) AS total,
+    SUM(state='pending') AS pending,SUM(state='held') AS held,SUM(state='sent') AS sent,SUM(state='cancelled') AS cancelled,SUM(state='review') AS review,
+    SUM(state='pending' AND first_attempt IS NULL) AS pausable,SUM(state IN ('pending','held') AND first_attempt IS NULL) AS cancellable
+    FROM outbox WHERE group_id<>'' GROUP BY group_id ORDER BY MIN(due) DESC`)]);
+  return {config,accounts,participants:participants.map(actorView),audit,outbox,stories,runtime:Object.fromEntries(runtime.map(r=>[r.key,r.value]))};
 }
 function validateConfig(c){
   assert(typeof c.paused==='boolean'&&Array.isArray(c.rules)&&c.rules.length<=60,'설정을 확인해 주세요. 규칙은 최대 60개예요.');
@@ -146,9 +149,9 @@ async function pollAccount(a,env,connectedIds){
   await env.DB.batch(rows);
 }
 async function sendOutbox(env,limit=4){
-  const rows=await all(env.DB,"SELECT o.*,a.token,a.active FROM outbox o JOIN accounts a ON a.id=o.account_id WHERE o.state='pending' AND o.due<=? AND a.active=1 AND (o.group_id='' OR NOT EXISTS (SELECT 1 FROM outbox earlier WHERE earlier.group_id=o.group_id AND earlier.state NOT IN ('sent','cancelled') AND (earlier.due<o.due OR (earlier.due=o.due AND earlier.id<o.id)))) ORDER BY o.due,o.id LIMIT ?",now(),limit);
+  const rows=await all(env.DB,"SELECT o.*,a.token,a.active FROM outbox o JOIN accounts a ON a.id=o.account_id WHERE o.state='pending' AND o.due<=? AND a.active=1 AND (o.group_id='' OR NOT EXISTS (SELECT 1 FROM outbox earlier WHERE earlier.group_id=o.group_id AND earlier.state NOT IN ('sent','cancelled') AND earlier.id<o.id)) ORDER BY o.due,o.id LIMIT ?",now(),limit);
   for(const o of rows){
-    if(env.DB.remaining&&env.DB.remaining()<3)break;
+    if(env.DB.remaining&&env.DB.remaining()<6)break;
     // Mastodon only retains Idempotency-Key for one hour. Stop uncertain older retries.
     if(o.first_attempt&&now()-o.first_attempt>3300000){await run(env.DB,"UPDATE outbox SET state='review',last_error='최초 전송 후 55분이 지나 중복 방지를 위해 자동 재전송을 멈췄어요. 계정에서 게시 여부를 확인해 주세요.' WHERE id=?",o.id);continue;}
     await run(env.DB,'UPDATE outbox SET attempts=attempts+1,first_attempt=COALESCE(first_attempt,?) WHERE id=?',now(),o.id);
@@ -162,13 +165,16 @@ async function sendOutbox(env,limit=4){
     }
   }
 }
-export async function tick(env){
+export async function tick(env,{scheduled=false}={}){
   if(!env.DB||!env.ADMIN_KEY||env.ADMIN_KEY.length<24)return;
   env={...env,DB:budgetDB(env.DB)};
   let release;try{release=await acquire(env.DB);}catch(e){if(e.status===409)return;throw e;}
   try{
     const config=await settings(env.DB);await run(env.DB,"INSERT INTO runtime(key,value) VALUES('lastTick',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",String(now()));
+    if(scheduled)await run(env.DB,"INSERT INTO runtime(key,value) VALUES('lastCron',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",String(now()));
     if(config.paused)return;
+    // Due announcements must not starve behind mention polling and bot jobs.
+    await sendOutbox(env,3);
     const accounts=await all(env.DB,'SELECT * FROM accounts WHERE active=1 ORDER BY id');
     const offset=Number((await one(env.DB,"SELECT value FROM runtime WHERE key='pollOffset'"))?.value||0);
     for(let i=0;i<Math.min(1,accounts.length);i++){
@@ -179,6 +185,10 @@ export async function tick(env){
     const jobs=await all(env.DB,"SELECT j.* FROM jobs j JOIN accounts a ON a.id=j.account_id WHERE j.state='pending' AND a.scan='' AND a.active=1 ORDER BY j.created,j.id LIMIT 6");
     for(const job of jobs){if(env.DB.remaining()<16)break;const a=accounts.find(a=>a.id===job.account_id);if(!a)continue;try{await processJob(job,a,config,env);}catch(e){await run(env.DB,"UPDATE jobs SET state='error',error=? WHERE id=?",e.message,job.id);await run(env.DB,'UPDATE accounts SET error=? WHERE id=?',e.message,a.id);}}
     await sendOutbox(env,6);
+    await run(env.DB,"INSERT INTO runtime(key,value) VALUES('tickError','') ON CONFLICT(key) DO UPDATE SET value=excluded.value");
+  }catch(e){
+    if(env.DB.remaining()>=2)await run(env.DB,"INSERT INTO runtime(key,value) VALUES('tickError',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",e.status?e.message:'처리 중 오류가 발생했어요. 잠시 후 다시 확인해 주세요.');
+    throw e;
   }finally{await release();}
 }
 async function apiRoute(request,env,url){
@@ -223,6 +233,8 @@ async function apiRoute(request,env,url){
   }
   if(path==='/api/story/control'&&method==='POST'){
     const b=await readBody(request);assert(['pause','resume','cancel'].includes(b.action),'진행 명령을 확인해 주세요.');return locked(env.DB,async()=>{
+      const allowed=await one(env.DB,"SELECT COUNT(*) AS n FROM outbox WHERE group_id=? AND first_attempt IS NULL AND ((?='pause' AND state='pending') OR (?='resume' AND state='held') OR (?='cancel' AND state IN ('pending','held')))",b.group,b.action,b.action,b.action);
+      assert(allowed.n>0,'지금 이 동작을 할 수 있는 장면이 없어요. 목록을 새로고침해 주세요.');
       if(b.action==='pause')await run(env.DB,"UPDATE outbox SET state='held' WHERE group_id=? AND state='pending' AND first_attempt IS NULL",b.group);
       if(b.action==='cancel')await run(env.DB,"UPDATE outbox SET state='cancelled' WHERE group_id=? AND state IN ('held','pending') AND first_attempt IS NULL",b.group);
       if(b.action==='resume'){
@@ -248,5 +260,5 @@ export default {
       headers.set('Referrer-Policy','no-referrer');headers.set('X-Content-Type-Options','nosniff');return new Response(response.body,{status:response.status,headers});
     }catch(e){return json({error:e.status?e.message:'처리하지 못했어요. DB 초기화와 설정을 확인해 주세요.'},e.status||500);}
   },
-  async scheduled(_event,env,ctx){ctx.waitUntil(tick(env));}
+  async scheduled(_event,env,ctx){ctx.waitUntil(tick(env,{scheduled:true}));}
 };

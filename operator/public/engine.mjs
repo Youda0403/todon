@@ -10,7 +10,7 @@ export function numericMap(value) {
   }
   return result;
 }
-export function calculate(expression, stats = {}) {
+export function calculate(expression, stats = {}, {validateOnly=false}={}) {
   const source = String(expression).replace(/\{([^{}]+)\}/g, (_,key) => {
     if (!Object.hasOwn(stats,key)) throw Error('없는 능력치예요: ' + key);
     return '(' + Number(stats[key]) + ')';
@@ -28,7 +28,7 @@ export function calculate(expression, stats = {}) {
   const product=()=>{let n=atom();while(tokens[i]==='*'||tokens[i]==='/'){const op=tokens[i++],b=atom();n=op==='*'?n*b:n/b;}return n;};
   const sum=()=>{let n=product();while(tokens[i]==='+'||tokens[i]==='-'){const op=tokens[i++],b=product();n=op==='+'?n+b:n-b;}return n;};
   const result=sum();
-  if(i!==tokens.length || !Number.isFinite(result) || Math.abs(result)>1e9) throw Error('계산 결과가 허용 범위를 벗어났어요.');
+  if(i!==tokens.length || !validateOnly&&(!Number.isFinite(result) || Math.abs(result)>1e9)) throw Error('계산 결과가 허용 범위를 벗어났어요.');
   return Math.round(result*1000)/1000;
 }
 export function plainText(html) {
@@ -56,6 +56,11 @@ export function diceRanges(count=1,sides=100,labels=['어려운 성공','성공'
   return Array.from({length:n},(_,i)=>({max:count-1+Math.floor((i+1)*span/n),label:labels[i]}));
 }
 export const diceBlock=(count=1,sides=100)=>({type:'dice',count,sides,ranges:diceRanges(count,sides),text:'{닉네임} · {주사위식}\n{주사위} / {판정}'});
+export function randomChoices(text){
+  const choices=String(text||'').split('\n').map(s=>s.trim()).filter(Boolean).map(s=>{const m=/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*\|\s*(.*)$/.exec(s);if(m&&!m[2].trim())throw Error('후보 문장을 적어 주세요.');return {weight:m?Number(m[1]):1,text:m?m[2]:s};});
+  if(!choices.length||!choices.some(c=>c.weight>0)||choices.some(c=>!Number.isFinite(c.weight)||c.weight<0)||!Number.isFinite(choices.reduce((n,c)=>n+c.weight,0)))throw Error('랜덤 후보와 0보다 큰 뽑힐 비중을 하나 이상 넣어 주세요.');
+  return choices;
+}
 export function validateRule(rule) {
   if(!rule || !cleanKey(rule.id) || !String(rule.name||'').trim() || String(rule.name).length>80)throw Error('봇 이름을 확인해 주세요.');
   if(!rule.keyword || rule.keyword.length>100 || !['exact','contains'].includes(rule.match))throw Error('반응할 키워드를 입력해 주세요.');
@@ -64,7 +69,8 @@ export function validateRule(rule) {
   for(const b of rule.blocks){
     if(!['reply','random','roll','dice','calculate','stat','item','guard','status','inventory','history'].includes(b.type))throw Error('지원하지 않는 블록이에요.');
     if(['stat','item','calculate','guard'].includes(b.type)&&!cleanKey(b.key))throw Error('블록의 항목 이름을 확인해 주세요.');
-    if(b.type==='calculate')calculate(b.expression,Object.fromEntries([...String(b.expression).matchAll(/\{([^{}]+)\}/g)].map(m=>[m[1],1])));
+    if(b.type==='random')randomChoices(b.text);
+    if(b.type==='calculate')calculate(b.expression,Object.fromEntries([...String(b.expression).matchAll(/\{([^{}]+)\}/g)].map(m=>[m[1],1])),{validateOnly:true});
     if(['roll','dice'].includes(b.type)&&(!Number.isInteger(b.count)||b.count<1||b.count>20||!Number.isInteger(b.sides)||b.sides<2||b.sides>1000))throw Error('주사위 개수는 1~20, 면수는 2~1000이에요.');
     if(b.type==='dice'){
       if(!Array.isArray(b.ranges)||!b.ranges.length||b.ranges.length>20)throw Error('판정 구간은 1~20개로 정해 주세요.');
@@ -85,23 +91,25 @@ export function validateRule(rule) {
   return rule;
 }
 export function execute(rule, actor, {random=Math.random,history=[],diceTotal}={}) {
-  const stats=numericMap(actor.stats), inventory=numericMap(actor.inventory), changes=[], replies=[];
+  const stats=numericMap(actor.stats), inventory=numericMap(actor.inventory), changes=[], replies=[],trace=[];
   let result='',diceValue='',verdict='',notation='';
   const format=text=>String(text||'').replace(/\{([^{}]+)\}/g,(_,key)=>key==='닉네임'?actor.name:key==='결과'?String(result):key==='주사위'?String(diceValue):key==='판정'?verdict:key==='주사위식'?notation:Object.hasOwn(stats,key)?String(stats[key]):'{'+key+'}');
   for(const b of rule.blocks){
     if(b.type==='guard'){
       const a=b.target==='result'?Number(result):Number((b.target==='item'?inventory:stats)[b.key]||0),n=Number(b.amount);
       const ok={'>=':a>=n,'<=':a<=n,'==':a===n,'>':a>n,'<':a<n}[b.op];
-      if(!ok)return {stats:numericMap(actor.stats),inventory:numericMap(actor.inventory),changes:[],replies:b.text?[format(b.text)]:[],rejected:true};
+      trace.push(`조건: ${b.target==='result'?'직전 결과':b.key} ${a} ${b.op} ${n} → ${ok?'통과':'불충족 · 변경을 모두 취소'}`);
+      if(!ok)return {stats:numericMap(actor.stats),inventory:numericMap(actor.inventory),changes:[],replies:b.text?[format(b.text)]:[],rejected:true,trace};
     }
     if(b.type==='random'){
-      const choices=String(b.text).split('\n').map(s=>s.trim()).filter(Boolean).map(s=>{const m=/^(\d+(?:\.\d+)?)\s*\|\s*(.+)$/.exec(s);return {weight:m?Number(m[1]):1,text:m?m[2]:s};}).filter(c=>c.weight>0);
+      const choices=randomChoices(b.text).filter(c=>c.weight>0);
       const total=choices.reduce((n,c)=>n+c.weight,0); if(!total)throw Error('랜덤 후보를 한 줄에 하나씩 넣어 주세요.');
       let pick=random()*total; result=choices[choices.length-1].text;
       for(const c of choices)if((pick-=c.weight)<0){result=c.text;break;}
+      if(b.emit)replies.push(format(result));
     }
     if(b.type==='roll'||b.type==='dice'){
-      const total=b.type==='dice'&&diceTotal!==undefined?diceTotal:Array.from({length:b.count},()=>1+Math.floor(random()*b.sides)).reduce((a,b)=>a+b,0);
+      const total=diceTotal!==undefined?diceTotal:Array.from({length:b.count},()=>1+Math.floor(random()*b.sides)).reduce((a,b)=>a+b,0);
       if(!Number.isInteger(total)||total<b.count||total>b.count*b.sides)throw Error(`시험할 주사위 값은 ${b.count}~${b.count*b.sides}의 정수로 적어 주세요.`);
       result=diceValue=total;notation=`${b.count}d${b.sides}`;verdict='';
       if(b.type==='dice'){
@@ -116,16 +124,24 @@ export function execute(rule, actor, {random=Math.random,history=[],diceTotal}={
       if(!Number.isFinite(next)||Math.abs(next)>1e9||b.type==='item'&&next<0)throw Error('수치 범위를 벗어났거나 물건이 부족해요.');
       map[b.key]=next;changes.push(`${b.key} ${Number(b.amount)>=0?'+':''}${Number(b.amount)} → ${next}`);
     }
+    if(b.type==='roll'||b.type==='dice')trace.push(`주사위: ${notation} → ${result}${verdict?' / '+verdict:''}`);
+    if(b.type==='random')trace.push('랜덤 선택: '+result);
+    if(['calculate','stat','item'].includes(b.type))trace.push(changes.at(-1));
     if(b.type==='reply')replies.push(format(b.text));
     if(b.type==='status')replies.push(`${actor.name}의 상태\n`+Object.entries(stats).map(([k,v])=>`${k}: ${v}`).join('\n'));
     if(b.type==='inventory')replies.push(`${actor.name}의 가방\n`+(Object.entries(inventory).filter(([,v])=>v>0).map(([k,v])=>`${k} ×${v}`).join('\n')||'아직 가진 물건이 없어요.'));
     if(b.type==='history')replies.push(`${actor.name}의 최근 기록\n`+(history.slice(0,10).map(h=>h.message).join('\n')||'아직 기록이 없어요.'));
   }
-  return {stats,inventory,changes,replies,rejected:false};
+  return {stats,inventory,changes,replies,rejected:false,trace};
 }
 export function example(kind,accountId='') {
   const base={id:newId(),accountId,enabled:false,name:'',keyword:'',match:'contains',dailyLimit:0,cooldown:30,blocks:[]};
   const templates={
+    reply:{name:'키워드 답장',keyword:'[안내]',blocks:[{type:'reply',text:'{닉네임}님, 안내 문장을 여기에 적어 주세요.'}]},
+    random:{name:'랜덤 답장',keyword:'[운세]',blocks:[{type:'random',emit:true,text:'1 | 좋은 일이 생길 거예요.\n1 | 조심해서 나아가세요.'}]},
+    award:{name:'물건 지급',keyword:'[획득]',blocks:[{type:'item',key:'열쇠',amount:1},{type:'reply',text:'열쇠를 받았어요.'},{type:'inventory'}]},
+    calculate:{name:'능력치 계산',keyword:'[계산]',blocks:[{type:'calculate',key:'계산값',expression:'{체력} + 5'},{type:'reply',text:'계산 결과: {결과}'}]},
+
     check:{name:'내 상태와 가방 확인',keyword:'확인',blocks:[{type:'status'},{type:'inventory'}]},
     dice:{name:'주사위·성공 판정',keyword:'[주사위]',blocks:[diceBlock()]},
     search:{name:'도서관 조사',keyword:'[도서관 조사]',dailyLimit:3,blocks:[{type:'roll',count:1,sides:100},{type:'guard',target:'result',key:'결과',op:'<=',amount:30,text:'먼지 쌓인 책들뿐입니다. (주사위: {결과})'},{type:'item',key:'낡은 쪽지',amount:1},{type:'stat',key:'관찰력',amount:1},{type:'reply',text:'낡은 쪽지를 발견했습니다. 가방에 기록했어요.\n관찰력: {관찰력}'}]},

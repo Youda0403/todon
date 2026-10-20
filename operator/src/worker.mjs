@@ -41,7 +41,9 @@ async function mastodon(env,token,path,{method='GET',body,idem}={}){
   const headers={};if(token)headers.Authorization='Bearer '+token;if(idem)headers['Idempotency-Key']=idem;
   if(body)headers['Content-Type']='application/json';
   let response;
-  try{response=await fetch('https://'+host(env)+path,{method,headers,body:body?JSON.stringify(body):undefined,redirect:'error',signal:AbortSignal.timeout(12000)});}catch{throw Object.assign(err('마스토돈 응답을 확인하지 못했어요. 전송 결과를 확인해 주세요.',502),{ambiguous:method==='POST'});}
+  // Workers supports manual/follow only. Handle redirects here so credentials stay on this host.
+  try{response=await fetch('https://'+host(env)+path,{method,headers,body:body?JSON.stringify(body):undefined,redirect:'manual',signal:AbortSignal.timeout(12000)});}catch{throw Object.assign(err('마스토돈 응답을 확인하지 못했어요. 전송 결과를 확인해 주세요.',502),{ambiguous:method==='POST'});}
+  if(response.status>=300&&response.status<400)throw err('마스토돈 API가 다른 주소로 이동을 요청했어요. 서버 주소를 확인해 주세요.',502);
   if(!response.ok){const e=err(response.status===429?'서버 요청 제한으로 잠시 기다리고 있어요.':`마스토돈 요청 실패 (${response.status})`,response.status);e.retryAfter=Number(response.headers.get('Retry-After'))||60;throw e;}
   return {data:await response.json(),headers:response.headers};
 }

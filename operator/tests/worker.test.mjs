@@ -26,6 +26,81 @@ test('config revision prevents overwriting newer settings',async()=>{
   assert.equal((await worker.fetch(request('/api/config','PUT',state.config),e)).status,200);
   assert.equal((await worker.fetch(request('/api/config','PUT',state.config),e)).status,409);
 });
+test('account OAuth completes with Workers-compatible fetch options and encrypted credentials',async()=>{
+  const e=env(),original=globalThis.fetch,calls=[];
+  const clientSecret='test-oauth-client-secret',accessToken='test-oauth-access-token';
+  globalThis.fetch=async(url,opt)=>{
+    // Workers rejects this mode before sending a request; Node's fetch accepts it.
+    if(opt.redirect==='error')throw new TypeError('Unsupported redirect mode: error');
+    assert.equal(opt.redirect,'manual');
+    assert.equal(new URL(url).origin,'https://planet.moe');
+    calls.push(new URL(url).pathname);
+    if(url.endsWith('/api/v1/apps')){
+      const body=JSON.parse(opt.body);
+      assert.equal(body.redirect_uris,'https://ops.example/oauth/callback');
+      assert.equal(body.scopes,'read:accounts read:notifications write:statuses');
+      return Response.json({client_id:'test-client',client_secret:clientSecret});
+    }
+    if(url.endsWith('/oauth/token')){
+      assert.equal(JSON.parse(opt.body).client_secret,clientSecret);
+      return Response.json({access_token:accessToken});
+    }
+    assert.equal(opt.headers.Authorization,url.endsWith('/api/v2/instance')?undefined:'Bearer '+accessToken);
+    if(url.endsWith('/verify_credentials'))return Response.json({id:'bot',username:'bot',acct:'bot',display_name:'총괄'});
+    if(url.includes('/notifications'))return Response.json([{id:'100'}]);
+    if(url.endsWith('/api/v2/instance'))return Response.json({configuration:{statuses:{max_characters:500}}});
+    throw Error('Unexpected request');
+  };
+  try{
+    const start=await worker.fetch(request('/api/oauth/start','POST'),e);
+    assert.equal(start.status,200);
+    const auth=new URL((await start.json()).url),state=auth.searchParams.get('state');
+    assert.equal(auth.origin,'https://planet.moe');
+    assert.equal(auth.pathname,'/oauth/authorize');
+    assert.ok(state);
+    assert.ok(!e.DB.sql.prepare('SELECT payload FROM oauth').get().payload.includes(clientSecret));
+    const callback='/oauth/callback?'+new URLSearchParams({state,code:'test-code'});
+    const connected=await worker.fetch(request(callback),e);
+    assert.equal(connected.status,303);
+    assert.equal(connected.headers.get('Location'),'https://ops.example/?connected=1#accounts');
+    const saved=e.DB.sql.prepare('SELECT * FROM accounts').get();
+    assert.equal(saved.acct,'bot@planet.moe');
+    assert.equal(saved.cursor,'100');
+    assert.ok(!saved.token.includes(accessToken));
+    assert.equal(e.DB.sql.prepare('SELECT COUNT(*) AS n FROM oauth').get().n,0);
+    assert.equal(calls.length,5);
+    assert.equal((await worker.fetch(request(callback),e)).status,400);
+    assert.equal(calls.length,5);
+  }finally{globalThis.fetch=original;}
+});
+test('Mastodon redirects are rejected without forwarding OAuth credentials to another host',async()=>{
+  const original=globalThis.fetch;
+  try{
+    for(const redirectAt of ['registration','token'])for(const status of [301,302,303,307,308]){
+      const e=env(),calls=[];
+      globalThis.fetch=async(url,opt)=>{
+        assert.equal(opt.redirect,'manual');
+        assert.equal(new URL(url).origin,'https://planet.moe');
+        calls.push(url);
+        if(redirectAt==='token'&&url.endsWith('/api/v1/apps'))return Response.json({client_id:'test-client',client_secret:'private-client-secret'});
+        return new Response(null,{status,headers:{Location:'https://other.example/collect?secret=never-show-this'}});
+      };
+      let response=await worker.fetch(request('/api/oauth/start','POST'),e);
+      if(redirectAt==='token'){
+        assert.equal(response.status,200);
+        const state=new URL((await response.json()).url).searchParams.get('state');
+        response=await worker.fetch(request('/oauth/callback?'+new URLSearchParams({state,code:'private-code'})),e);
+      }
+      assert.equal(response.status,502);
+      const body=await response.text();
+      assert.match(body,/다른 주소/);
+      assert.ok(!body.includes('never-show-this'));
+      assert.ok(!body.includes('private-client-secret'));
+      assert.equal(calls.length,redirectAt==='token'?2:1);
+      assert.equal(e.DB.sql.prepare('SELECT COUNT(*) AS n FROM accounts').get().n,0);
+    }
+  }finally{globalThis.fetch=original;}
+});
 test('repeated polling cannot award an item twice, and unregistered people are ignored',async()=>{
   const e=env();await account(e);e.DB.sql.prepare('INSERT INTO participants(id,acct,name,stats) VALUES(?,?,?,?)').run('runner','runner@planet.moe','러너','{"체력":50}');
   const rule={...example('check','bot'),enabled:true,keyword:'지급',blocks:[{type:'item',key:'열쇠',amount:1},{type:'reply',text:'열쇠 지급 완료'}]};config(e,[rule]);

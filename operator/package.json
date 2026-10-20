@@ -1,0 +1,8 @@
+{
+  "name": "todon-community-ops",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {"test": "node --test tests/*.test.mjs", "dev": "npx wrangler dev", "deploy": "npx wrangler deploy", "db:init": "npx wrangler d1 execute todon-ops-db --remote --file=schema.sql"},
+  "engines": {"node": ">=22"}
+}

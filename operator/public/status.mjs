@@ -2,10 +2,10 @@
 export const stateNames={pending:'예약 대기',held:'일시정지',sent:'전송 완료',review:'게시 여부 확인 필요',cancelled:'취소 완료'};
 export function queueReason(row,state,time=Date.now()){
   if(row.state!=='pending')return stateNames[row.state]||row.state;
-  if(state.config.paused)return '전체 일시정지 중 · 전체 실행을 눌러 주세요';
+  if(!row.group_id&&state.config.paused)return '자동봇이 꺼져 있어요';
   const a=state.accounts.find(a=>a.id===row.account_id);
   if(!a)return '발신 계정 연결이 필요해요';
-  if(!a.active)return '발신 계정의 자동 확인이 꺼져 있어요 · 운영 계정에서 켜 주세요';
+  if(!row.group_id&&!a.active)return '발신 계정의 자동 확인이 꺼져 있어요 · 운영 계정에서 켜 주세요';
   if(row.last_error)return '재시도 대기 · '+row.last_error;
   const earlier=state.outbox.find(o=>o.group_id===row.group_id&&row.group_id&&!['sent','cancelled'].includes(o.state)&&o.id<row.id);
   if(earlier)return '앞 장면이 끝나기를 기다리고 있어요';

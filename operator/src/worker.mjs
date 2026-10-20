@@ -55,6 +55,18 @@ async function acquire(db,name='work'){
 }
 async function locked(db,fn){const release=await acquire(db);try{return await fn();}finally{await release();}}
 const actorView=r=>({...r,stats:JSON.parse(r.stats),inventory:JSON.parse(r.inventory)});
+// One-time migration preserves the previous stop state without tying future stories to bots.
+async function migrateExecution(db,c){
+  if(c.executionVersion===2)return c;
+  const next={...c,executionVersion:2};delete next.revision;
+  const qs=[];
+  if(c.paused)qs.push(statement(db,`UPDATE outbox SET state=CASE WHEN first_attempt IS NULL THEN 'held' ELSE 'review' END,last_error=CASE WHEN first_attempt IS NULL THEN last_error ELSE '기존 전체 정지 상태를 유지했어요. 실제 게시 여부를 확인해 주세요.' END WHERE group_id<>'' AND state='pending'`));
+  qs.push(statement(db,'UPDATE settings SET value=?,revision=revision+1 WHERE id=1',JSON.stringify(next)));
+  await db.batch(qs);return {...next,revision:c.revision+1};
+}
+async function ensureExecution(db){
+  const c=await settings(db);if(c.executionVersion!==2)await locked(db,async()=>migrateExecution(db,await settings(db)));
+}
 async function state(db){
   const [config,accounts,participants,audit,outbox,runtime,stories]=await Promise.all([
     settings(db),all(db,'SELECT id,label,acct,active,error,max_chars FROM accounts'),all(db,'SELECT * FROM participants ORDER BY name'),
@@ -148,8 +160,8 @@ async function pollAccount(a,env,connectedIds){
   rows.push(next?statement(env.DB,'UPDATE accounts SET scan=?,error=\'\' WHERE id=?',JSON.stringify({next,newest}),a.id):statement(env.DB,'UPDATE accounts SET cursor=?,scan=\'\',error=\'\' WHERE id=?',newest,a.id));
   await env.DB.batch(rows);
 }
-async function sendOutbox(env,limit=4){
-  const rows=await all(env.DB,"SELECT o.*,a.token,a.active FROM outbox o JOIN accounts a ON a.id=o.account_id WHERE o.state='pending' AND o.due<=? AND a.active=1 AND (o.group_id='' OR NOT EXISTS (SELECT 1 FROM outbox earlier WHERE earlier.group_id=o.group_id AND earlier.state NOT IN ('sent','cancelled') AND earlier.id<o.id)) ORDER BY o.due,o.id LIMIT ?",now(),limit);
+async function sendOutbox(env,limit=4,{bots=true,group=null,onlyBots=false}={}){
+  const rows=await all(env.DB,"SELECT o.*,a.token,a.active FROM outbox o JOIN accounts a ON a.id=o.account_id WHERE o.state='pending' AND o.due<=? AND ((o.group_id='' AND a.active=1 AND ?=1) OR (o.group_id<>'' AND ?=0)) AND (? IS NULL OR o.group_id=?) AND (o.group_id='' OR NOT EXISTS (SELECT 1 FROM outbox earlier WHERE earlier.group_id=o.group_id AND earlier.state NOT IN ('sent','cancelled') AND earlier.id<o.id)) ORDER BY o.due,o.id LIMIT ?",now(),bots?1:0,onlyBots?1:0,group,group,limit);
   for(const o of rows){
     if(env.DB.remaining&&env.DB.remaining()<6)break;
     // Mastodon only retains Idempotency-Key for one hour. Stop uncertain older retries.
@@ -165,16 +177,16 @@ async function sendOutbox(env,limit=4){
     }
   }
 }
-export async function tick(env,{scheduled=false}={}){
+export async function tick(env,{scheduled=false,onlyBots=false}={}){
   if(!env.DB||!env.ADMIN_KEY||env.ADMIN_KEY.length<24)return;
   env={...env,DB:budgetDB(env.DB)};
   let release;try{release=await acquire(env.DB);}catch(e){if(e.status===409)return;throw e;}
   try{
-    const config=await settings(env.DB);await run(env.DB,"INSERT INTO runtime(key,value) VALUES('lastTick',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",String(now()));
+    const config=await migrateExecution(env.DB,await settings(env.DB));await run(env.DB,"INSERT INTO runtime(key,value) VALUES('lastTick',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",String(now()));
     if(scheduled)await run(env.DB,"INSERT INTO runtime(key,value) VALUES('lastCron',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",String(now()));
-    if(config.paused)return;
-    // Due announcements must not starve behind mention polling and bot jobs.
-    await sendOutbox(env,3);
+    // Posting a notice never enables bots or other story groups.
+    await sendOutbox(env,3,{bots:!config.paused,onlyBots});
+    if(!config.paused){
     const accounts=await all(env.DB,'SELECT * FROM accounts WHERE active=1 ORDER BY id');
     const offset=Number((await one(env.DB,"SELECT value FROM runtime WHERE key='pollOffset'"))?.value||0);
     for(let i=0;i<Math.min(1,accounts.length);i++){
@@ -184,7 +196,8 @@ export async function tick(env,{scheduled=false}={}){
     await run(env.DB,"INSERT INTO runtime(key,value) VALUES('pollOffset',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",String(offset+1));
     const jobs=await all(env.DB,"SELECT j.* FROM jobs j JOIN accounts a ON a.id=j.account_id WHERE j.state='pending' AND a.scan='' AND a.active=1 ORDER BY j.created,j.id LIMIT 6");
     for(const job of jobs){if(env.DB.remaining()<16)break;const a=accounts.find(a=>a.id===job.account_id);if(!a)continue;try{await processJob(job,a,config,env);}catch(e){await run(env.DB,"UPDATE jobs SET state='error',error=? WHERE id=?",e.message,job.id);await run(env.DB,'UPDATE accounts SET error=? WHERE id=?',e.message,a.id);}}
-    await sendOutbox(env,6);
+    }
+    await sendOutbox(env,6,{bots:!config.paused,onlyBots});
     await run(env.DB,"INSERT INTO runtime(key,value) VALUES('tickError','') ON CONFLICT(key) DO UPDATE SET value=excluded.value");
   }catch(e){
     if(env.DB.remaining()>=2)await run(env.DB,"INSERT INTO runtime(key,value) VALUES('tickError',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",e.status?e.message:'처리 중 오류가 발생했어요. 잠시 후 다시 확인해 주세요.');
@@ -193,12 +206,14 @@ export async function tick(env,{scheduled=false}={}){
 }
 async function apiRoute(request,env,url){
   await authorized(request,env);assert(env.DB,'DB라는 이름으로 D1 저장소를 연결해 주세요.');
+  await ensureExecution(env.DB);
   const path=url.pathname,method=request.method;
   if(path==='/api/state'&&method==='GET')return json(await state(env.DB));
   if(path==='/api/oauth/start'&&method==='POST')return startOAuth(request,env);
   if(path==='/api/participants/import'&&method==='POST')return addParticipants(await readBody(request),env);
   if(path==='/api/config'&&method==='PUT'){
-    const c=validateConfig(await readBody(request));
+    let c;try{c=validateConfig(await readBody(request));}catch(e){throw err(e.message);}
+    c.executionVersion=2;
     return locked(env.DB,async()=>{
       const existing=await settings(env.DB);if(c.revision!==existing.revision)throw err('다른 화면에서 설정이 바뀌었어요. 새로 불러온 뒤 수정해 주세요.',409);
       const accountIds=new Set((await all(env.DB,'SELECT id FROM accounts')).map(a=>a.id));
@@ -218,6 +233,32 @@ async function apiRoute(request,env,url){
   if(path==='/api/account'&&method==='PUT'){
     const b=await readBody(request);return locked(env.DB,async()=>{assert(String(b.label||'').trim()&&b.label.length<=80,'계정 별명을 입력해 주세요.');await run(env.DB,'UPDATE accounts SET label=?,active=? WHERE id=?',b.label,b.active?1:0,b.id);return json({ok:true});});
   }
+  if(path==='/api/bots/control'&&method==='POST'){
+    const b=await readBody(request);assert(typeof b.paused==='boolean','자동봇 실행 상태를 확인해 주세요.');
+    return locked(env.DB,async()=>{const c=await settings(env.DB);c.paused=b.paused;delete c.revision;await run(env.DB,'UPDATE settings SET value=?,revision=revision+1 WHERE id=1',JSON.stringify(c));return json({ok:true});});
+  }
+  if(path==='/api/announcement'&&method==='POST'){
+    const b=await readBody(request);assert(typeof b.requestId==='string'&&/^[a-zA-Z0-9-]{16,60}$/.test(b.requestId),'전송 요청 번호를 확인해 주세요.');
+    return locked(env.DB,async()=>{
+      const a=await one(env.DB,'SELECT id,max_chars FROM accounts WHERE id=?',b.accountId);assert(a,'발신 계정을 선택해 주세요.');
+      assert(typeof b.text==='string'&&b.text.trim()&&Array.from(b.text).length<=a.max_chars,'본문과 글자 수를 확인해 주세요.');
+      const visibility=b.visibility||'private';assert(['private','unlisted','public'].includes(visibility),'공개 범위를 확인해 주세요.');
+      const group='notice-'+b.requestId,body=JSON.stringify({status:b.text,visibility});
+      const previous=await one(env.DB,'SELECT * FROM outbox WHERE id=?',group+':0000');
+      if(previous)assert(previous.account_id===a.id&&previous.body===body,'이미 사용한 요청 번호예요. 본문을 확인하고 새 요청으로 보내 주세요.');
+      else{
+        const due=b.at?Date.parse(b.at):now();assert(Number.isFinite(due)&&(!b.at||due>now()+30000),'예약 시각은 현재보다 30초 이상 뒤로 정해 주세요.');
+        await run(env.DB,'INSERT INTO outbox(id,account_id,body,due,group_id,title) VALUES(?,?,?,?,?,?)',group+':0000',a.id,body,due,group,'운영 공지');
+      }
+      if(!b.at)await sendOutbox(env,1,{bots:false,group});
+      const row=await one(env.DB,'SELECT state,due,last_error,posted_id FROM outbox WHERE id=?',group+':0000');
+      return json({ok:true,group,...row});
+    });
+  }
+  if(path==='/api/group/check'&&method==='POST'){
+    const b=await readBody(request);assert(typeof b.group==='string'&&b.group,'예약을 선택해 주세요.');
+    return locked(env.DB,async()=>{await sendOutbox(env,1,{bots:false,group:b.group});return json({ok:true});});
+  }
   if(path==='/api/story'&&method==='POST'){
     const b=await readBody(request);assert(Array.isArray(b.scenes)&&b.scenes.length&&b.scenes.length<=30,'한 대본은 1~30장면까지 등록할 수 있어요.');
     return locked(env.DB,async()=>{
@@ -225,7 +266,7 @@ async function apiRoute(request,env,url){
       let due=Date.parse(b.start);assert(Number.isFinite(due)&&due>now()+30000,'시작 시각을 지금보다 30초 이상 뒤로 정해 주세요.');
       for(const [i,s] of b.scenes.entries()){
         const account=accounts.find(a=>a.id===s.accountId);assert(account,'장면마다 발신 계정을 선택해 주세요.');assert(Number.isInteger(s.delay)&&s.delay>=(i?60:0)&&s.delay<=86400,'장면 간격은 첫 장면 이후 최소 60초로 정해 주세요.');if(i)due+=s.delay*1000;
-        assert(String(s.text||'').trim()&&Array.from(s.text).length<=account.max_chars,'장면 본문 또는 글자 수를 확인해 주세요.');assert(['public','unlisted','private'].includes(s.visibility),'공개 범위를 확인해 주세요.');
+        assert(String(s.text||'').trim()&&Array.from(s.text).length<=account.max_chars,'장면 본문 또는 글자 수를 확인해 주세요.');s.visibility=s.visibility||'private';assert(['public','unlisted','private'].includes(s.visibility),'공개 범위를 확인해 주세요.');
         sqls.push(statement(env.DB,'INSERT INTO outbox(id,account_id,body,due,group_id,title) VALUES(?,?,?,?,?,?)',group+':'+String(i).padStart(4,'0'),s.accountId,JSON.stringify({status:s.text,visibility:s.visibility}),due,group,String(b.title||'스토리 진행').slice(0,100)+' '+(i+1)+'장'));
       }
       await env.DB.batch(sqls);return json({ok:true,group});
@@ -243,7 +284,7 @@ async function apiRoute(request,env,url){
       }return json({ok:true});
     });
   }
-  if(path==='/api/tick'&&method==='POST'){await tick(env);return json({ok:true});}
+  if(path==='/api/tick'&&method==='POST'){await tick(env,{onlyBots:true});return json({ok:true});}
   if(path==='/api/export'&&method==='GET'){
     const snapshot=await state(env.DB);return json({...snapshot,exportedAt:new Date().toISOString(),jobs:await all(env.DB,'SELECT id,account_id,actor_id,created,state,error FROM jobs ORDER BY created DESC LIMIT 1000'),note:'마스토돈 토큰과 운영 암호는 포함하지 않습니다. 게시 대기열은 요약이며 전체 재해 복구 백업이 아닙니다. 전체 백업은 Cloudflare D1 Export를 사용하세요.'});
   }

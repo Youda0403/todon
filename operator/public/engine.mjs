@@ -67,8 +67,17 @@ export function validateRule(rule) {
   if(!Number.isInteger(rule.dailyLimit)||rule.dailyLimit<0||rule.dailyLimit>1000||!Number.isInteger(rule.cooldown)||rule.cooldown<0||rule.cooldown>86400)throw Error('횟수·대기시간을 확인해 주세요.');
   if(!Array.isArray(rule.blocks)||!rule.blocks.length||rule.blocks.length>30)throw Error('블록은 1~30개까지 넣을 수 있어요.');
   for(const b of rule.blocks){
-    if(!['reply','random','roll','dice','calculate','stat','item','guard','status','inventory','history'].includes(b.type))throw Error('지원하지 않는 블록이에요.');
+    if(!['reply','random','roll','dice','calculate','stat','item','guard','status','inventory','history','gather','recipe'].includes(b.type))throw Error('지원하지 않는 블록이에요.');
     if(['stat','item','calculate','guard'].includes(b.type)&&!cleanKey(b.key))throw Error('블록의 항목 이름을 확인해 주세요.');
+    if(['gather','recipe'].includes(b.type)){
+      if(!Number.isFinite(b.chance)||b.chance<0||b.chance>100)throw Error('성공 확률은 0~100%로 적어 주세요.');
+      const list=b.type==='gather'?b.loot:b.ingredients;
+      if(!Array.isArray(list)||!list.length||list.length>20)throw Error('재료·획득 후보는 1~20개로 정해 주세요.');
+      if(new Set(list.map(r=>r.key)).size!==list.length)throw Error('같은 물건은 한 줄에 수량을 합쳐 적어 주세요.');
+      for(const r of list){if(!cleanKey(r.key)||!Number.isInteger(r.amount)||r.amount<1||r.amount>10000)throw Error('물건 이름과 수량(1~10000)을 확인해 주세요.');if(b.type==='gather'&&(!Number.isFinite(r.weight)||r.weight<=0||r.weight>10000))throw Error('후보의 비중은 0보다 크고 10000 이하여야 해요.');}
+      if(b.type==='recipe'&&(!cleanKey(b.key)||!Number.isInteger(b.amount)||b.amount<1||b.amount>10000||typeof b.consumeOnFail!=='boolean'))throw Error('완성품 이름·수량과 실패 시 재료 처리를 확인해 주세요.');
+      for(const k of ['successText','failureText'])if(typeof b[k]!=='string'||!b[k].trim()||b[k].length>2000)throw Error('성공·실패 안내 문장을 적어 주세요.');
+    }
     if(b.type==='random')randomChoices(b.text);
     if(b.type==='calculate')calculate(b.expression,Object.fromEntries([...String(b.expression).matchAll(/\{([^{}]+)\}/g)].map(m=>[m[1],1])),{validateOnly:true});
     if(['roll','dice'].includes(b.type)&&(!Number.isInteger(b.count)||b.count<1||b.count>20||!Number.isInteger(b.sides)||b.sides<2||b.sides>1000))throw Error('주사위 개수는 1~20, 면수는 2~1000이에요.');
@@ -92,9 +101,31 @@ export function validateRule(rule) {
 }
 export function execute(rule, actor, {random=Math.random,history=[],diceTotal}={}) {
   const stats=numericMap(actor.stats), inventory=numericMap(actor.inventory), changes=[], replies=[],trace=[];
-  let result='',diceValue='',verdict='',notation='';
-  const format=text=>String(text||'').replace(/\{([^{}]+)\}/g,(_,key)=>key==='닉네임'?actor.name:key==='결과'?String(result):key==='주사위'?String(diceValue):key==='판정'?verdict:key==='주사위식'?notation:Object.hasOwn(stats,key)?String(stats[key]):'{'+key+'}');
+  let result='',diceValue='',verdict='',notation='',itemName='',itemCount=0;
+  const format=text=>String(text||'').replace(/\{([^{}]+)\}/g,(_,key)=>key==='획득물건'?itemName:key==='획득수량'?String(itemCount):key==='닉네임'?actor.name:key==='결과'?String(result):key==='주사위'?String(diceValue):key==='판정'?verdict:key==='주사위식'?notation:Object.hasOwn(stats,key)?String(stats[key]):'{'+key+'}');
   for(const b of rule.blocks){
+    if(b.type==='gather'||b.type==='recipe'){
+      if(b.type==='recipe'){
+        const missing=b.ingredients.filter(r=>(inventory[r.key]||0)<r.amount);
+        if(missing.length)return {stats:numericMap(actor.stats),inventory:numericMap(actor.inventory),changes:[],replies:['재료가 부족해요.\n'+missing.map(r=>`${r.key}: ${inventory[r.key]||0} / 필요 ${r.amount}`).join('\n')],rejected:true,trace:[...trace,'재료 부족 · 소모하지 않음']};
+      }
+      const success=random()*100<b.chance;
+      trace.push(`성공 확률 ${b.chance}% → ${success?'성공':'실패'}`);
+      const change=(key,amount)=>{const next=(inventory[key]||0)+amount;if(!Number.isSafeInteger(next)||next<0||next>1e9)throw Error('물건 수량의 허용 범위를 벗어났어요.');inventory[key]=next;changes.push(`${key} ${amount>=0?'+':''}${amount} → ${next}`);};
+      if(b.type==='recipe'&&(success||b.consumeOnFail))for(const r of b.ingredients)change(r.key,-r.amount);
+      itemName='';itemCount=0;
+      if(success){
+        if(b.type==='gather'){
+          let pick=random()*b.loot.reduce((n,r)=>n+r.weight,0),chosen=b.loot.at(-1);
+          for(const r of b.loot)if((pick-=r.weight)<0){chosen=r;break;}
+          itemName=chosen.key;itemCount=chosen.amount;
+        }else{itemName=b.key;itemCount=b.amount;}
+        change(itemName,itemCount);
+      }
+      result=success?`${itemName} ×${itemCount}`:'실패';
+      trace.push(b.type==='recipe'?(success||b.consumeOnFail?'필요 재료 소모':'재료 보존'):'성공할 때만 후보 중 한 종류를 획득');
+      replies.push(format(success?b.successText:b.failureText));
+    }
     if(b.type==='guard'){
       const a=b.target==='result'?Number(result):Number((b.target==='item'?inventory:stats)[b.key]||0),n=Number(b.amount);
       const ok={'>=':a>=n,'<=':a<=n,'==':a===n,'>':a>n,'<':a<n}[b.op];
@@ -140,6 +171,9 @@ export function example(kind,accountId='') {
     reply:{name:'키워드 답장',keyword:'[안내]',blocks:[{type:'reply',text:'{닉네임}님, 안내 문장을 여기에 적어 주세요.'}]},
     random:{name:'랜덤 답장',keyword:'[운세]',blocks:[{type:'random',emit:true,text:'1 | 좋은 일이 생길 거예요.\n1 | 조심해서 나아가세요.'}]},
     award:{name:'물건 지급',keyword:'[획득]',blocks:[{type:'item',key:'열쇠',amount:1},{type:'reply',text:'열쇠를 받았어요.'},{type:'inventory'}]},
+    gather:{name:'숲에서 채집',keyword:'[채집]',dailyLimit:3,cooldown:60,blocks:[{type:'gather',chance:70,loot:[{key:'약초',amount:1,weight:70},{key:'반짝이는 돌',amount:1,weight:30}],successText:'{닉네임}, {획득물건} ×{획득수량}을 찾았어요.',failureText:'이번에는 아무것도 찾지 못했어요.'}]},
+    craft:{name:'회복약 제작',keyword:'[회복약 제작]',blocks:[{type:'recipe',chance:100,ingredients:[{key:'약초',amount:2},{key:'물',amount:1}],key:'회복약',amount:1,consumeOnFail:false,successText:'{획득물건} ×{획득수량} 제작 완료!',failureText:'제작에 실패했어요.'}]},
+    combine:{name:'재료 조합',keyword:'[조합]',blocks:[{type:'recipe',chance:50,ingredients:[{key:'반짝이는 돌',amount:2},{key:'약초',amount:1}],key:'빛나는 부적',amount:1,consumeOnFail:false,successText:'조합 성공! {획득물건} ×{획득수량}',failureText:'조합에 실패했어요.'}]},
     calculate:{name:'능력치 계산',keyword:'[계산]',blocks:[{type:'calculate',key:'계산값',expression:'{체력} + 5'},{type:'reply',text:'계산 결과: {결과}'}]},
 
     check:{name:'내 상태와 가방 확인',keyword:'확인',blocks:[{type:'status'},{type:'inventory'}]},

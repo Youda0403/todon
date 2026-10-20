@@ -85,3 +85,19 @@ test('every ready-made form executes, weighted direct replies preserve old selec
 test('negative or empty weighted candidates cannot silently become a reply',()=>{
   const r=example('random');for(const text of ['-1 | 잘못된 비중','2 | ']){r.blocks[0].text=text;assert.throws(()=>validateRule(r));}
 });
+test('gathering rolls success first, chooses one weighted material and never awards on failure',()=>{
+  const r=example('gather'),a={name:'러너',stats:{},inventory:{}};validateRule(r);
+  let rolls=[0.69,0.7];let out=execute(r,a,{random:()=>rolls.shift()});assert.equal(out.inventory['반짝이는 돌'],1);assert.equal(out.inventory.약초,undefined);assert.match(out.replies[0],/반짝이는 돌/);
+  out=execute(r,a,{random:()=>0.7});assert.deepEqual(Object.keys(out.inventory),[]);assert.equal(out.changes.length,0);
+});
+test('recipes require every material and consume exact quantities only on configured outcomes',()=>{
+  const r=example('craft'),a={name:'러너',stats:{},inventory:{약초:4,물:1}};validateRule(r);
+  let out=execute(r,a);assert.equal(out.inventory.약초,2);assert.equal(out.inventory.물,0);assert.equal(out.inventory.회복약,1);assert.equal(a.inventory.약초,4);
+  out=execute(r,{...a,inventory:{약초:1,물:100}});assert.equal(out.rejected,true);assert.equal(out.inventory.약초,1);assert.equal(out.inventory.물,100);assert.match(out.replies[0],/재료가 부족/);
+  r.blocks[0].chance=0;out=execute(r,a);assert.equal(out.inventory.약초,4);assert.equal(out.inventory.회복약,undefined);
+  r.blocks[0].consumeOnFail=true;out=execute(r,a);assert.equal(out.inventory.약초,2);assert.equal(out.inventory.물,0);assert.equal(out.inventory.회복약,undefined);
+});
+test('recipes reject duplicate or negative materials and later unmet conditions roll back crafting',()=>{
+  const r=example('craft');r.blocks[0].ingredients.push({key:'약초',amount:2});assert.throws(()=>validateRule(r));r.blocks[0].ingredients.pop();r.blocks[0].ingredients[0].amount=-1;assert.throws(()=>validateRule(r));
+  const valid=example('craft');valid.blocks.push({type:'guard',target:'stat',key:'체력',op:'>=',amount:50,text:'체력 부족'});const out=execute(valid,{name:'러너',stats:{체력:10},inventory:{약초:2,물:1}});assert.equal(out.inventory.약초,2);assert.equal(out.inventory.회복약,undefined);assert.deepEqual(out.changes,[]);
+});

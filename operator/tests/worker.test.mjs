@@ -158,13 +158,12 @@ test('a failed story scene blocks later scenes and a paused app sends nothing',a
   const original=globalThis.fetch,posts=[];globalThis.fetch=async(url,opt)=>{if(url.includes('/notifications'))return Response.json([]);posts.push(JSON.parse(opt.body).status);return new Response('{}',{status:503});};
   try{await tick(e);assert.deepEqual(posts,['scene0']);const c=JSON.parse(e.DB.sql.prepare('SELECT value FROM settings').get().value);c.paused=true;e.DB.sql.prepare('UPDATE settings SET value=?').run(JSON.stringify(c));await tick(e);assert.deepEqual(posts,['scene0']);}finally{globalThis.fetch=original;}
 });
-test('announcement lifecycle reports paused, held, resumed, sent and cancelled accurately',async()=>{
+test('story lifecycle is independent of the bot switch and reports pause, resume and cancellation',async()=>{
   const e=env();await account(e);const original=globalThis.fetch,posts=[];
   globalThis.fetch=async(url,opt)=>url.includes('/notifications')?Response.json([]):(posts.push(JSON.parse(opt.body)),Response.json({id:'p'+posts.length}));
   try{
     const scheduled=await worker.fetch(request('/api/story','POST',{title:'공지',start:new Date(Date.now()+60000).toISOString(),scenes:[{accountId:'bot',delay:0,text:'공지 본문',visibility:'unlisted'}]}),e);
     assert.equal(scheduled.status,200);const {group}=await scheduled.json();
-    e.DB.sql.prepare('UPDATE outbox SET due=?').run(Date.now()-1000);
     await tick(e,{scheduled:true});assert.equal(posts.length,0);
     let state=await(await worker.fetch(request('/api/state'),e)).json();assert.ok(state.runtime.lastCron);assert.equal(state.config.paused,true);assert.equal(state.stories[0].pausable,1);
     assert.equal((await worker.fetch(request('/api/story/control','POST',{group,action:'pause'}),e)).status,200);
@@ -179,11 +178,11 @@ test('announcement lifecycle reports paused, held, resumed, sent and cancelled a
     e.DB.sql.prepare('UPDATE outbox SET due=?').run(Date.now()-1000);await tick(e);assert.equal(posts.length,1);
   }finally{globalThis.fetch=original;}
 });
-test('due announcements have priority over a full mention page and inactive accounts do not send',async()=>{
+test('scheduled stories send even when mention polling is disabled for their account',async()=>{
   const e=env();await account(e);config(e,[]);
   e.DB.sql.prepare('INSERT INTO outbox(id,account_id,body,due,group_id) VALUES(?,?,?,?,?)').run('g:0000','bot','{"status":"공지"}',Date.now()-1000,'g');
   const original=globalThis.fetch,calls=[];globalThis.fetch=async(url)=>{calls.push(url.includes('/notifications')?'poll':'post');return Response.json(url.includes('/notifications')?[]:{id:'p'});};
-  try{e.DB.sql.prepare('UPDATE accounts SET active=0').run();await tick(e);assert.equal(calls.length,0);e.DB.sql.prepare('UPDATE accounts SET active=1').run();await tick(e);assert.equal(calls[0],'post');}finally{globalThis.fetch=original;}
+  try{e.DB.sql.prepare('UPDATE accounts SET active=0').run();await tick(e);assert.deepEqual(calls,['post']);e.DB.sql.prepare('UPDATE accounts SET active=1').run();await tick(e);assert.deepEqual(calls,['post','poll']);}finally{globalThis.fetch=original;}
 });
 test('retry timing cannot reorder scenes and uncertain sends keep the idempotency key',async()=>{
   const e=env();await account(e);config(e,[]);
@@ -196,4 +195,35 @@ test('queue state keeps old pending items and complete group counts beyond the r
   const put=e.DB.sql.prepare('INSERT INTO outbox(id,account_id,body,due,group_id,state) VALUES(?,?,?,?,?,?)');
   put.run('old:0000','bot','{}',1,'old','pending');for(let i=0;i<120;i++)put.run('done:'+i,'bot','{}',1000+i,'done','sent');
   const s=await(await worker.fetch(request('/api/state'),e)).json();assert.ok(s.outbox.find(o=>o.id==='old:0000'));assert.equal(s.stories.find(g=>g.group_id==='done').sent,120);
+});
+test('sending one announcement is immediate, private by default, idempotent and cannot drain other work',async()=>{
+  const e=env();await account(e);await worker.fetch(request('/api/state'),e);
+  e.DB.sql.prepare('INSERT INTO outbox(id,account_id,body,due,group_id) VALUES(?,?,?,?,?)').run('other:0000','bot','{"status":"other story"}',Date.now()-1000,'other');
+  e.DB.sql.prepare('INSERT INTO outbox(id,account_id,body,due) VALUES(?,?,?,?)').run('reply','bot','{"status":"bot reply"}',Date.now()-1000);
+  e.DB.sql.prepare('UPDATE accounts SET active=0').run();
+  const original=globalThis.fetch,calls=[];globalThis.fetch=async(url,opt)=>{calls.push({url,body:JSON.parse(opt.body)});return Response.json({id:'posted'});};
+  try{
+    const body={requestId:crypto.randomUUID(),accountId:'bot',text:'지금 보낼 공지'};
+    let response=await worker.fetch(request('/api/announcement','POST',body),e);assert.equal(response.status,200);assert.equal((await response.json()).state,'sent');
+    await worker.fetch(request('/api/announcement','POST',body),e);assert.equal(calls.length,1);assert.equal(calls[0].body.visibility,'private');assert.equal(calls[0].body.status,'지금 보낼 공지');
+    assert.equal(e.DB.sql.prepare("SELECT state FROM outbox WHERE id='other:0000'").get().state,'pending');assert.equal(e.DB.sql.prepare("SELECT state FROM outbox WHERE id='reply'").get().state,'pending');assert.equal(JSON.parse(e.DB.sql.prepare('SELECT value FROM settings').get().value).paused,true);
+  }finally{globalThis.fetch=original;}
+});
+test('a scheduled announcement waits for its explicit time, and checking a group never sends other groups',async()=>{
+  const e=env();await account(e);const original=globalThis.fetch,posts=[];globalThis.fetch=async(_url,opt)=>{posts.push(JSON.parse(opt.body));return Response.json({id:'p'});};
+  try{const body={requestId:crypto.randomUUID(),accountId:'bot',text:'나중 공지',at:new Date(Date.now()+3600000).toISOString()};const {group}=await(await worker.fetch(request('/api/announcement','POST',body),e)).json();assert.equal(posts.length,0);
+    await worker.fetch(request('/api/group/check','POST',{group}),e);assert.equal(posts.length,0);
+    e.DB.sql.prepare('UPDATE outbox SET due=?').run(Date.now()-1000);await worker.fetch(request('/api/tick','POST'),e);assert.equal(posts.length,0);
+    await worker.fetch(request('/api/group/check','POST',{group}),e);assert.equal(posts.length,1);
+  }finally{globalThis.fetch=original;}
+});
+test('migration retains stopped legacy schedules; enabling bots does not resume them',async()=>{
+  const e=env();await account(e);e.DB.sql.prepare('INSERT INTO outbox(id,account_id,body,due,group_id) VALUES(?,?,?,?,?)').run('old:0000','bot','{"status":"old"}',Date.now()-1000,'old');
+  const original=globalThis.fetch,posts=[];globalThis.fetch=async(url,opt)=>url.includes('/notifications')?Response.json([]):(posts.push(opt.body),Response.json({id:'p'}));
+  try{let s=await(await worker.fetch(request('/api/state'),e)).json();assert.equal(s.outbox[0].state,'held');assert.equal(s.config.executionVersion,2);assert.equal((await worker.fetch(request('/api/bots/control','POST',{paused:false}),e)).status,200);await tick(e);assert.equal(posts.length,0);assert.equal(e.DB.sql.prepare('SELECT state FROM outbox').get().state,'held');}finally{globalThis.fetch=original;}
+});
+test('recipe awards and deductions are atomic and a repeated mention cannot craft twice',async()=>{
+  const e=env();await account(e);const r={...example('craft','bot'),enabled:true,cooldown:0};config(e,[r]);e.DB.sql.prepare('INSERT INTO participants(id,acct,name,inventory,stats) VALUES(?,?,?,?,?)').run('runner','runner@planet.moe','러너','{"약초":4,"물":2}','{}');
+  const original=globalThis.fetch;globalThis.fetch=async url=>url.includes('/notifications')?Response.json([{id:'101',type:'mention',account:{id:'runner'},created_at:new Date().toISOString(),status:{id:'recipe-command',content:'[회복약 제작]',visibility:'private'}}]):Response.json({id:'p'});
+  try{await tick(e);await tick(e);const inv=JSON.parse(e.DB.sql.prepare('SELECT inventory FROM participants').get().inventory);assert.equal(inv.회복약,1);assert.equal(inv.약초,2);assert.equal(inv.물,1);assert.equal(e.DB.sql.prepare('SELECT COUNT(*) AS n FROM audit').get().n,1);}finally{globalThis.fetch=original;}
 });

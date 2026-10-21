@@ -227,3 +227,65 @@ test('recipe awards and deductions are atomic and a repeated mention cannot craf
   const original=globalThis.fetch;globalThis.fetch=async url=>url.includes('/notifications')?Response.json([{id:'101',type:'mention',account:{id:'runner'},created_at:new Date().toISOString(),status:{id:'recipe-command',content:'[회복약 제작]',visibility:'private'}}]):Response.json({id:'p'});
   try{await tick(e);await tick(e);const inv=JSON.parse(e.DB.sql.prepare('SELECT inventory FROM participants').get().inventory);assert.equal(inv.회복약,1);assert.equal(inv.약초,2);assert.equal(inv.물,1);assert.equal(e.DB.sql.prepare('SELECT COUNT(*) AS n FROM audit').get().n,1);}finally{globalThis.fetch=original;}
 });
+
+test('investigations persist separately per runner; ordinary commands and pause/resume preserve progress and start-only limits',async()=>{
+  const e=env();await account(e);
+  for(const runner of ['a','b'])e.DB.sql.prepare('INSERT INTO participants(id,acct,name,stats) VALUES(?,?,?,?)').run(runner,runner+'@planet.moe',runner,'{"체력":50}');
+  const r={...example('dialogue','bot'),enabled:true,dailyLimit:1,cooldown:86400},check={...example('check','bot'),enabled:true,cooldown:0};
+  config(e,[r,check]);let sequence=0;const original=globalThis.fetch,posts=[];
+  const step=async(actor,text)=>{const n=++sequence;e.DB.sql.prepare('INSERT INTO jobs(id,account_id,actor_id,payload,created) VALUES(?,?,?,?,?)').run('dialog-job-'+n,'bot',actor,JSON.stringify({text:'<p>@bot '+text+'</p>',statusId:'status-'+n,visibility:'public'}),Date.now()+n);await tick({...e});};
+  const session=actor=>JSON.parse(e.DB.sql.prepare('SELECT value FROM runtime WHERE key=?').get('dialog:bot:'+actor).value);
+  globalThis.fetch=async(url,opt)=>{if(url.includes('/notifications'))return Response.json([]);posts.push(JSON.parse(opt.body));return Response.json({id:'posted-'+posts.length});};
+  try{
+    await step('a',r.keyword);await step('b',r.keyword);
+    await step('a','벌집');assert.equal(session('a').sceneId,'start');
+    await step('a','숲으로 가겠습니다.');await step('b','3번');
+    assert.equal(session('a').sceneId,'forest');assert.equal(session('b').sceneId,'sea');
+    await step('a','확인');assert.equal(session('a').sceneId,'forest');assert.match(posts.at(-1).status,/가방/);
+    await step('a',r.dialogue.stopKeyword);await step('a','풀숲');assert.equal(session('a').status,'paused');assert.equal(session('a').sceneId,'forest');
+    await step('a',r.dialogue.resumeKeyword);await step('a','2');
+    assert.equal(session('a').status,'ended');assert.equal(session('a').sceneId,'grass');
+    assert.equal(JSON.parse(e.DB.sql.prepare('SELECT inventory FROM participants WHERE id=?').get('a').inventory).약초,1);
+    const usage=e.DB.sql.prepare('SELECT count FROM usage WHERE rule_id=? AND actor_id=?').get(r.id,'a');assert.equal(usage.count,1);
+    await step('a','풀숲');await step('a',r.keyword);
+    assert.equal(session('a').sceneId,'grass');assert.match(posts.at(-1).status,/시작할 수 있는 조사 횟수/);
+    assert.equal(JSON.parse(e.DB.sql.prepare('SELECT inventory FROM participants WHERE id=?').get('a').inventory).약초,1);
+    assert.ok(posts.every(p=>p.visibility==='private'));
+    const state=await(await worker.fetch(request('/api/state'),e)).json();assert.equal(JSON.parse(state.runtime['dialog:bot:a']).sceneId,'grass');
+    const before=posts.length;await tick(e);assert.equal(posts.length,before);
+  }finally{globalThis.fetch=original;}
+});
+test('scene progress, rewards, job completion and replies commit atomically',async()=>{
+  const e=env();await account(e);e.DB.sql.prepare('INSERT INTO participants(id,acct,name,stats) VALUES(?,?,?,?)').run('runner','runner@planet.moe','러너','{}');
+  const r={...example('dialogue','bot'),enabled:true};config(e,[r]);
+  e.DB.sql.prepare('INSERT INTO runtime(key,value) VALUES(?,?)').run('dialog:bot:runner',JSON.stringify({ruleId:r.id,sceneId:'forest',status:'active',visited:['start','forest']}));
+  e.DB.sql.prepare('INSERT INTO jobs(id,account_id,actor_id,payload,created) VALUES(?,?,?,?,?)').run('atomic-dialog','bot','runner',JSON.stringify({text:'풀숲',statusId:'command',visibility:'private'}),Date.now());
+  e.DB.sql.exec("CREATE TRIGGER fail_dialog BEFORE INSERT ON runtime WHEN NEW.key='dialog:bot:runner' BEGIN SELECT RAISE(ABORT,'test failure'); END");
+  const original=globalThis.fetch,posts=[];globalThis.fetch=async(url,opt)=>{if(url.includes('/notifications'))return Response.json([]);posts.push(JSON.parse(opt.body));return Response.json({id:'posted'});};
+  try{
+    await tick(e);assert.equal(posts.length,0);
+    assert.equal(JSON.parse(e.DB.sql.prepare('SELECT inventory FROM participants').get().inventory).약초,undefined);
+    assert.equal(JSON.parse(e.DB.sql.prepare("SELECT value FROM runtime WHERE key='dialog:bot:runner'").get().value).sceneId,'forest');
+    assert.equal(e.DB.sql.prepare('SELECT state FROM jobs').get().state,'error');assert.equal(e.DB.sql.prepare('SELECT COUNT(*) AS n FROM audit').get().n,0);
+    e.DB.sql.exec("DROP TRIGGER fail_dialog; UPDATE jobs SET state='pending'");
+    await tick(e);await tick(e);
+    assert.equal(JSON.parse(e.DB.sql.prepare('SELECT inventory FROM participants').get().inventory).약초,1);
+    assert.equal(posts.length,1);assert.equal(e.DB.sql.prepare('SELECT COUNT(*) AS n FROM audit').get().n,1);
+  }finally{globalThis.fetch=original;}
+});
+test('26 runner investigations drain within the query budget and keep exactly one reward per run',async()=>{
+  const e=env();await account(e);const r={...example('dialogue','bot'),enabled:true};config(e,[r]);
+  for(let i=0;i<26;i++){
+    const who='runner-'+i;e.DB.sql.prepare('INSERT INTO participants(id,acct,name,stats) VALUES(?,?,?,?)').run(who,who+'@planet.moe',who,'{}');
+    e.DB.sql.prepare('INSERT INTO runtime(key,value) VALUES(?,?)').run('dialog:bot:'+who,JSON.stringify({ruleId:r.id,sceneId:'forest',status:'active',visited:['start','forest']}));
+    for(let j=0;j<2;j++)e.DB.sql.prepare('INSERT INTO jobs(id,account_id,actor_id,payload,created) VALUES(?,?,?,?,?)').run(`choice-${i}-${j}`,'bot',who,JSON.stringify({text:'풀숲',statusId:`status-${i}-${j}`,visibility:'private'}),Date.now()+i*2+j);
+  }
+  const original=globalThis.fetch,posts=[];globalThis.fetch=async(url,opt)=>{if(url.includes('/notifications'))return Response.json([]);posts.push(JSON.parse(opt.body));return Response.json({id:'post-'+posts.length});};
+  try{
+    for(let i=0;i<45;i++)await tick(e);
+    assert.equal(e.DB.sql.prepare("SELECT COUNT(*) AS n FROM jobs WHERE state='pending' OR state='error'").get().n,0);
+    for(const row of e.DB.sql.prepare('SELECT inventory FROM participants').all())assert.equal(JSON.parse(row.inventory).약초,1);
+    assert.equal(posts.length,26);assert.equal(e.DB.sql.prepare('SELECT COUNT(*) AS n FROM audit').get().n,26);
+    assert.equal(e.DB.sql.prepare("SELECT value FROM runtime WHERE key='tickError'").get().value,'');
+  }finally{globalThis.fetch=original;}
+});

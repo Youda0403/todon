@@ -65,6 +65,7 @@ export function validateRule(rule) {
   if(!rule || !cleanKey(rule.id) || !String(rule.name||'').trim() || String(rule.name).length>80)throw Error('봇 이름을 확인해 주세요.');
   if(!rule.keyword || rule.keyword.length>100 || !['exact','contains'].includes(rule.match))throw Error('반응할 키워드를 입력해 주세요.');
   if(!Number.isInteger(rule.dailyLimit)||rule.dailyLimit<0||rule.dailyLimit>1000||!Number.isInteger(rule.cooldown)||rule.cooldown<0||rule.cooldown>86400)throw Error('횟수·대기시간을 확인해 주세요.');
+  if(rule.kind==='dialogue')return validateDialogue(rule);
   if(!Array.isArray(rule.blocks)||!rule.blocks.length||rule.blocks.length>30)throw Error('블록은 1~30개까지 넣을 수 있어요.');
   for(const b of rule.blocks){
     if(!['reply','random','roll','dice','calculate','stat','item','guard','status','inventory','history','gather','recipe'].includes(b.type))throw Error('지원하지 않는 블록이에요.');
@@ -167,6 +168,7 @@ export function execute(rule, actor, {random=Math.random,history=[],diceTotal}={
 }
 export function example(kind,accountId='') {
   const base={id:newId(),accountId,enabled:false,name:'',keyword:'',match:'contains',dailyLimit:0,cooldown:30,blocks:[]};
+  if(kind==='dialogue')return {...base,name:'선택지형 조사',keyword:'조사를 시작한다',cooldown:0,dailyLimit:3,kind:'dialogue',dialogue:dialogueExample()};
   const templates={
     reply:{name:'키워드 답장',keyword:'[안내]',blocks:[{type:'reply',text:'{닉네임}님, 안내 문장을 여기에 적어 주세요.'}]},
     random:{name:'랜덤 답장',keyword:'[운세]',blocks:[{type:'random',emit:true,text:'1 | 좋은 일이 생길 거예요.\n1 | 조심해서 나아가세요.'}]},
@@ -183,4 +185,91 @@ export function example(kind,accountId='') {
     history:{name:'획득·변경 기록',keyword:'[기록]',blocks:[{type:'history'}]}
   };
   return {...base,...structuredClone(templates[kind]||templates.check)};
+}
+
+
+// A single active investigation per runner and sending account; scene effects run once per run.
+export function dialogueExample(){
+  return {start:'start',stopKeyword:'조사 중단',resumeKeyword:'조사 계속',endKeyword:'조사 종료',scenes:[
+    {id:'start',title:'조사 시작',text:'조사를 시작했습니다. 어디로 가시겠습니까?',end:false,actions:[],choices:[{keyword:'숲',next:'forest'},{keyword:'동굴',next:'cave'},{keyword:'바다',next:'sea'}]},
+    {id:'forest',title:'숲',text:'숲에 도착했습니다. 어디부터 조사해볼까요?',end:false,actions:[],choices:[{keyword:'나무',next:'tree'},{keyword:'풀숲',next:'grass'},{keyword:'벌집',next:'hive'}]},
+    {id:'cave',title:'동굴',text:'동굴 벽에 낡은 표식이 있습니다. 오늘의 조사를 마칩니다.',end:true,actions:[],choices:[]},
+    {id:'sea',title:'바다',text:'파도가 밀려옵니다. 바닷가를 살펴보고 조사를 마칩니다.',end:true,actions:[],choices:[]},
+    {id:'tree',title:'나무 조사',text:'나무껍질 사이에서 작은 흔적을 발견했습니다. 조사를 마칩니다.',end:true,actions:[],choices:[]},
+    {id:'grass',title:'풀숲 조사',text:'풀숲을 살피니 약초가 자라고 있습니다. 조사를 마칩니다.',end:true,actions:[{type:'item',key:'약초',amount:1}],choices:[]},
+    {id:'hive',title:'벌집 조사',text:'벌들이 윙윙거립니다. 조심히 물러나 조사를 마칩니다.',end:true,actions:[],choices:[]}
+  ]};
+}
+export function validateDialogue(rule){
+  const d=rule.dialogue;
+  if(!d||!Array.isArray(d.scenes)||!d.scenes.length||d.scenes.length>60)throw Error('조사 장면은 1~60개로 만들어 주세요.');
+  const ids=new Set(d.scenes.map(s=>s.id));
+  if(ids.size!==d.scenes.length||d.scenes.some(s=>!cleanKey(s.id))||!ids.has(d.start))throw Error('장면 이름과 시작 장면을 확인해 주세요.');
+  const controls=[d.stopKeyword,d.resumeKeyword,d.endKeyword];
+  if(controls.some(k=>typeof k!=='string'||!k.trim()||k!==k.trim()||k.length>100)||new Set(controls).size!==3||controls.some(k=>matches(rule,k)))throw Error('중단·계속·종료 명령은 서로 다르고 시작 키워드와 겹치지 않게 적어 주세요.');
+  for(const scene of d.scenes){
+    if(typeof scene.title!=='string'||!scene.title.trim()||scene.title.length>80||typeof scene.text!=='string'||!scene.text.trim()||scene.text.length>1500||typeof scene.end!=='boolean')throw Error('각 장면의 이름과 이야기(1500자 이내)를 적어 주세요.');
+    if(!Array.isArray(scene.actions)||scene.actions.length>10)throw Error('장면 결과는 최대 10개까지 추가할 수 있어요.');
+    if(scene.actions.length)validateRule({...rule,kind:undefined,dialogue:undefined,blocks:scene.actions});
+    if(!Array.isArray(scene.choices)||scene.choices.length>9||!scene.end&&!scene.choices.length)throw Error('이어지는 장면에는 선택지 1~9개가 필요해요. 마지막 장면이면 ‘여기서 조사 끝내기’를 켜 주세요.');
+    if(scene.end)continue;
+    if(new Set(scene.choices.map(c=>c.keyword?.trim())).size!==scene.choices.length)throw Error(scene.title+': 선택지 키워드가 중복됐어요.');
+    for(const c of scene.choices){
+      if(typeof c.keyword!=='string'||!c.keyword.trim()||c.keyword!==c.keyword.trim()||c.keyword.length>80||/^\d+(?:번)?$/.test(c.keyword)||controls.some(k=>c.keyword.includes(k)||k.includes(c.keyword))||matches(rule,c.keyword))throw Error(scene.title+': 선택지 키워드는 번호·시작·중단 명령과 겹치지 않게 적어 주세요.');
+      if(!ids.has(c.next))throw Error(scene.title+': 각 선택지에 다음 장면을 골라 주세요.');
+    }
+  }
+  return rule;
+}
+export function dialogueChoices(scene,text){
+  if(!scene||scene.end)return [];
+  const numbered=/^(\d+)(?:번)?[.!。]?\s*$/.exec(text.trim());
+  if(numbered)return scene.choices[Number(numbered[1])-1]?[scene.choices[Number(numbered[1])-1]]:[];
+  return scene.choices.filter(c=>text.includes(c.keyword));
+}
+export function dialoguePrompt(rule,scene,actor){
+  const text=scene.text.replace(/\{닉네임\}/g,actor.name);
+  return text+(scene.end?'\n\n조사가 끝났어요.': '\n\n'+scene.choices.map((c,i)=>`${i+1}. ${c.keyword}`).join('\n')+`\n\n선택지 단어나 번호로 답해 주세요.\n중단: ${rule.dialogue.stopKeyword} · 다시 보기/계속: ${rule.dialogue.resumeKeyword} · 끝내기: ${rule.dialogue.endKeyword}`);
+}
+export function selectBotRule(rules,text,session){
+  const current=session&&rules.find(r=>r.id===session.ruleId&&r.kind==='dialogue');
+  if(current&&['active','paused'].includes(session.status)){
+    const d=current.dialogue,scene=d.scenes.find(s=>s.id===session.sceneId);
+    if([d.stopKeyword,d.resumeKeyword,d.endKeyword].includes(text.trim())||matches(current,text)||session.status==='active'&&dialogueChoices(scene,text).length)return current;
+    // Ordinary commands (such as checking the bag) may run without losing the investigation.
+    const other=rules.find(r=>matches(r,text));if(other&&other.kind!=='dialogue')return other;
+    return current;
+  }
+  return rules.find(r=>r.kind==='dialogue'&&matches(r,text))||rules.find(r=>matches(r,text));
+}
+export function advanceDialogue(rule,actor,text,previous=null,options={}){
+  const d=rule.dialogue,session=previous?.ruleId===rule.id?structuredClone(previous):null;
+  const out={stats:numericMap(actor.stats),inventory:numericMap(actor.inventory),changes:[],replies:[],trace:[],rejected:false,session,started:false};
+  const current=session&&d.scenes.find(s=>s.id===session.sceneId);
+  const respond=(message,scene=current)=>{out.replies=[message,...(scene?[dialoguePrompt(rule,scene,actor)]:[])].filter(Boolean);return out;};
+  const live=session&&['active','paused'].includes(session.status);
+  if(live&&!current){out.session={...session,status:'ended'};return respond('진행하던 장면이 수정되었어요. 시작 키워드로 새 조사를 시작해 주세요.',null);}
+  if(live&&text.trim()===d.endKeyword){out.session.status='ended';return respond('조사를 종료했어요. 다시 시작하려면 '+rule.keyword+' 키워드를 보내 주세요.',null);}
+  if(live&&text.trim()===d.stopKeyword){out.session.status='paused';return respond('조사를 중단하고 진행 상황을 저장했어요. '+d.resumeKeyword+' 명령으로 이어갈 수 있어요.',null);}
+  if(live&&text.trim()===d.resumeKeyword){out.session.status='active';return respond('현재 장면에서 이어갑니다. 장면의 보상은 다시 지급하지 않아요.');}
+  if(live&&matches(rule,text))return respond('이미 진행 중인 조사예요. '+(session.status==='paused'?d.resumeKeyword+' 명령으로 이어가거나 ':'')+d.endKeyword+' 명령으로 끝낸 뒤 새로 시작할 수 있어요.');
+  if(live&&session.status==='paused')return respond('지금은 조사를 중단한 상태예요. '+d.resumeKeyword+' 명령을 보내면 이어갈 수 있어요.',null);
+  let target;
+  if(!live){
+    if(!matches(rule,text))return respond('진행 중인 조사가 없어요. '+rule.keyword+' 키워드로 시작해 주세요.',null);
+    target=d.scenes.find(s=>s.id===d.start);
+  }else{
+    const choices=dialogueChoices(current,text);
+    if(choices.length!==1)return respond(choices.length?'여러 선택지가 함께 들어 있어요. 하나만 골라 주세요.':'지금 장면의 선택지 중 하나를 골라 주세요.');
+    target=d.scenes.find(s=>s.id===choices[0].next);
+  }
+  if(!target)throw Error('다음 조사 장면을 찾지 못했어요. 운영자에게 알려 주세요.');
+  const visited=live?session.visited||[]:[];
+  const effect=visited.includes(target.id)?{...out,replies:[],trace:['이미 방문한 장면 · 결과를 다시 적용하지 않음']}:execute({blocks:target.actions},actor,options);
+  if(effect.rejected){out.rejected=true;out.replies=[...effect.replies,...(current?[dialoguePrompt(rule,current,actor)]:[])];out.trace=effect.trace;return out;}
+  Object.assign(out,{stats:effect.stats,inventory:effect.inventory,changes:effect.changes,trace:[...effect.trace,'장면 이동: '+target.title],started:!live});
+  out.session={ruleId:rule.id,sceneId:target.id,status:target.end?'ended':'active',visited:[...new Set([...visited,target.id])]};
+  const menu=dialoguePrompt(rule,{...target,text:''},actor).trim();
+  out.replies=[target.text.replace(/\{닉네임\}/g,actor.name),...effect.replies,...(effect.changes.length?['기록 변경: '+effect.changes.join(' · ')]:[]),menu].filter(Boolean);
+  return out;
 }

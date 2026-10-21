@@ -1,4 +1,4 @@
-import {execute,validateRule,numericMap,commandText,matches,cleanKey} from '../public/engine.mjs';
+import {execute,validateRule,numericMap,commandText,matches,cleanKey,selectBotRule,advanceDialogue} from '../public/engine.mjs';
 const json=(value,status=200)=>Response.json(value,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
 const err=(text,status=400)=>Object.assign(Error(text),{status});
 const now=()=>Date.now();
@@ -125,19 +125,25 @@ function splitReply(text,max,prefix=''){
 }
 async function processJob(job,account,config,env){
   const payload=JSON.parse(job.payload),text=commandText(payload.text,[account.acct,account.acct.split('@')[0]]);
-  const rule=config.rules.find(r=>r.enabled&&r.accountId===account.id&&matches(r,text));
-  if(!rule){await run(env.DB,"UPDATE jobs SET state='ignored' WHERE id=?",job.id);return;}
-  const d=day(),actorRow=await one(env.DB,"SELECT p.*,u.count AS use_count,u.last_at AS use_last_at,(SELECT value FROM runtime WHERE key=?) AS used,(SELECT json_group_array(json_object('message',message)) FROM (SELECT message FROM audit WHERE actor_id=p.id ORDER BY id DESC LIMIT 10)) AS history_json FROM participants p LEFT JOIN usage u ON u.actor_id=p.id AND u.rule_id=? AND u.day=? WHERE p.id=?",'used:'+d,rule.id,d,job.actor_id);
+  const sessionKey='dialog:'+account.id+':'+job.actor_id,d=day();
+  const actorRow=await one(env.DB,"SELECT p.*,(SELECT value FROM runtime WHERE key=?) AS used,(SELECT value FROM runtime WHERE key=?) AS session_json,(SELECT json_group_array(json_object('rule_id',rule_id,'count',count,'last_at',last_at)) FROM usage WHERE actor_id=p.id AND day=?) AS usage_json,(SELECT json_group_array(json_object('message',message)) FROM (SELECT message FROM audit WHERE actor_id=p.id ORDER BY id DESC LIMIT 10)) AS history_json FROM participants p WHERE p.id=?",'used:'+d,sessionKey,d,job.actor_id);
   if(!actorRow||config.paused){await run(env.DB,"UPDATE jobs SET state='ignored' WHERE id=?",job.id);return;}
-  const actor=actorView(actorRow);
-  if(actorRow.use_last_at&&now()-actorRow.use_last_at<rule.cooldown*1000){await run(env.DB,"UPDATE jobs SET state='cooldown' WHERE id=?",job.id);return;}
-  const used=Number(actorRow.used||0);
-  if(used>=config.dailyCap)return;
+  const actor=actorView(actorRow),session=actorRow.session_json?JSON.parse(actorRow.session_json):null;
+  const rule=selectBotRule(config.rules.filter(r=>r.enabled&&r.accountId===account.id),text,session);
+  if(!rule){await run(env.DB,"UPDATE jobs SET state='ignored' WHERE id=?",job.id);return;}
+  const usage=JSON.parse(actorRow.usage_json||'[]').find(u=>u.rule_id===rule.id)||{};
+  const dialogue=rule.kind==='dialogue',starting=dialogue&&!(session?.ruleId===rule.id&&['active','paused'].includes(session.status));
+  const limited=rule.dailyLimit>0&&usage.count>=rule.dailyLimit;
+  const cooldown=usage.last_at&&now()-usage.last_at<rule.cooldown*1000;
+  if(!dialogue&&cooldown){await run(env.DB,"UPDATE jobs SET state='cooldown' WHERE id=?",job.id);return;}
+  const used=Number(actorRow.used||0);if(used>=config.dailyCap)return;
   let output;
-  if(rule.dailyLimit>0&&actorRow.use_count>=rule.dailyLimit)output={stats:actor.stats,inventory:actor.inventory,changes:[],replies:['오늘 사용할 수 있는 횟수를 모두 사용했어요.'],limited:true};
-  else output=execute(rule,actor,{history:JSON.parse(actorRow.history_json||'[]')});
+  if((!dialogue||starting)&&limited)output={stats:actor.stats,inventory:actor.inventory,changes:[],replies:[dialogue?'오늘 새로 시작할 수 있는 조사 횟수를 모두 사용했어요.':'오늘 사용할 수 있는 횟수를 모두 사용했어요.'],limited:true};
+  else if(starting&&cooldown)output={stats:actor.stats,inventory:actor.inventory,changes:[],replies:[`새 조사는 ${Math.ceil((rule.cooldown*1000-now()+usage.last_at)/1000)}초 뒤에 시작할 수 있어요.`],limited:true};
+  else output=dialogue?advanceDialogue(rule,actor,text,session,{history:JSON.parse(actorRow.history_json||'[]')}):execute(rule,actor,{history:JSON.parse(actorRow.history_json||'[]')});
   const queries=[statement(env.DB,'UPDATE participants SET stats=?,inventory=?,revision=revision+1 WHERE id=?',JSON.stringify(output.stats),JSON.stringify(output.inventory),actor.id),statement(env.DB,"UPDATE jobs SET state='done' WHERE id=?",job.id),statement(env.DB,'INSERT INTO runtime(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value','used:'+d,String(used+1))];
-  queries.push(statement(env.DB,'INSERT INTO usage(rule_id,actor_id,day,count,last_at) VALUES(?,?,?,?,?) ON CONFLICT(rule_id,actor_id,day) DO UPDATE SET count=count+excluded.count,last_at=excluded.last_at',rule.id,actor.id,d,output.limited?0:1,now()));
+  if(!output.limited&&(!dialogue||output.started))queries.push(statement(env.DB,'INSERT INTO usage(rule_id,actor_id,day,count,last_at) VALUES(?,?,?,?,?) ON CONFLICT(rule_id,actor_id,day) DO UPDATE SET count=count+excluded.count,last_at=excluded.last_at',rule.id,actor.id,d,1,now()));
+  if(dialogue&&output.session)queries.push(statement(env.DB,'INSERT INTO runtime(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',sessionKey,JSON.stringify(output.session)));
   if(output.changes.length)queries.push(statement(env.DB,'INSERT INTO audit(actor_id,created,message,source) VALUES(?,?,?,?)',actor.id,now(),output.changes.join(' / '),rule.name));
   const combined=output.replies.join('\n\n');
   if(combined){

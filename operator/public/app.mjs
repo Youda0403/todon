@@ -1,3 +1,4 @@
+import {mountDialogueEditor} from './dialogue-editor.mjs';
 import {stateNames,queueReason,groupStatus,storyGroups} from './status.mjs';
 import {example,execute,validateRule,numericMap,cleanKey,matches,newId,diceBlock,diceRanges,randomChoices} from './engine.mjs';
 const $=(s,root=document)=>root.querySelector(s),$$=(s,root=document)=>[...root.querySelectorAll(s)];
@@ -169,12 +170,13 @@ function collectDraft(){
   if($('[data-legacy-reply]',form))draft.blocks[1].text=$('[data-legacy-reply]',form).value;
 }
 function newRuleModal(){
-  modal(`<h2>어떤 봇부터 만들까요?</h2><p>하고 싶은 일을 고르면 필요한 설정이 미리 채워져요.</p><div class="stack">${[['reply','키워드 답장','정해 둔 문장을 답장'],['random','랜덤 답장','후보 문장과 뽑힐 비중만 입력'],['gather','조사·채집','성공 확률과 획득 재료를 설정'],['craft','제작','필요 재료를 소모해서 완성품 만들기'],['combine','조합 시도','조합 확률과 실패 시 재료 처리 설정'],['calculate','능력치 계산','능력치와 숫자로 계산 후 저장'],['dice','주사위·성공 판정','1d100 숫자와 어려운 성공 / 성공 / 실패 / 대실패를 함께 답장'],['check','내 상태·가방 확인','키워드를 받으면 러너의 능력치와 가진 물건을 답장'],['history','최근 획득·변경 기록','러너의 최근 기록을 자동으로 불러와 답장'],['search','확률로 단서를 얻는 조사봇','성공 조건과 획득 물건을 입력'],['item','물건 사용과 체력 회복','소지품 조건과 능력치 변경을 입력']].map(([kind,title,desc])=>`<button class="template-choice" data-template="${kind}"><strong>${title} ↗</strong><small>${desc}</small></button>`).join('')}</div>`);
+  modal(`<h2>어떤 봇부터 만들까요?</h2><p>하고 싶은 일을 고르면 필요한 설정이 미리 채워져요.</p><div class="stack">${[['dialogue','선택지형 조사','러너마다 진행 상황을 기억하고 다음 장면으로 연결'],['reply','키워드 답장','정해 둔 문장을 답장'],['random','랜덤 답장','후보 문장과 뽑힐 비중만 입력'],['gather','조사·채집','성공 확률과 획득 재료를 설정'],['craft','제작','필요 재료를 소모해서 완성품 만들기'],['combine','조합 시도','조합 확률과 실패 시 재료 처리 설정'],['calculate','능력치 계산','능력치와 숫자로 계산 후 저장'],['dice','주사위·성공 판정','1d100 숫자와 어려운 성공 / 성공 / 실패 / 대실패를 함께 답장'],['check','내 상태·가방 확인','키워드를 받으면 러너의 능력치와 가진 물건을 답장'],['history','최근 획득·변경 기록','러너의 최근 기록을 자동으로 불러와 답장'],['search','확률로 단서를 얻는 조사봇','성공 조건과 획득 물건을 입력'],['item','물건 사용과 체력 회복','소지품 조건과 능력치 변경을 입력']].map(([kind,title,desc])=>`<button class="template-choice" data-template="${kind}"><strong>${title} ↗</strong><small>${desc}</small></button>`).join('')}</div>`);
   action('[data-template]',(_e,b)=>{const r=example(b.dataset.template,activeAccount()?.id||'');S.config.rules.push(r);selected=r.id;draft=structuredClone(r);simulation=null;botDetail=false;dirty=true;close();render();});
 }
 function botsPage(app){
   if(!selected&&S.config.rules.length)selected=S.config.rules[0].id;
   const current=S.config.rules.find(r=>r.id===selected);if(current&&(!draft||draft.id!==selected))draft=structuredClone(current);
+  if(draft?.kind==='dialogue')return dialoguePage(app);
   const kind=draft?simpleRuleKind(draft):'',simple=!!kind&&!botDetail;
   app.insertAdjacentHTML('beforeend',heading('MAKE IT YOURS','자동봇 제작소','하고 싶은 일을 고르고, 계정과 키워드를 정하면 돼요.',`<button id="newRule" class="primary">+ 새 자동봇</button>`)+`
   <div class="bot-layout"><aside class="bot-list">${S.config.rules.map(r=>`<button class="bot-choice ${r.id===selected?'selected':''}" data-pick="${esc(r.id)}"><span class="tag">${r.enabled?'켜짐':'꺼짐'}</span> ${esc(r.name)}<small>${esc(r.keyword)}</small></button>`).join('')}</aside><section class="card">${draft?`
@@ -220,6 +222,16 @@ function botsPage(app){
   action('#practiceRun',()=>{collectDraft();validateRule(draft);const text=$('#practiceText').value;const target=$('#practiceResult');if(!matches(draft,text)){target.innerHTML='<div class="chat"><div class="bubble">키워드가 맞지 않아 반응하지 않아요.</div></div>';return;}simulation={name:'연습 러너',stats:kvRead('practiceStats'),inventory:kvRead('practiceItems')};if(Object.values(simulation.inventory).some(v=>v<0||!Number.isInteger(v)))throw Error('시험용 물건 수량은 0 이상의 정수로 적어 주세요.');const value=$('#practiceDice')?.value;const result=execute(draft,simulation,{...(value?{diceTotal:Number(value)}:{}),history:S.audit.filter(a=>a.actor_id===S.participants[0]?.id)});simulation={...simulation,stats:result.stats,inventory:result.inventory};target.innerHTML=`<div class="chat"><div class="bubble me">${esc(text)}</div>${result.replies.map(r=>`<div class="bubble">${esc(r)}</div>`).join('')}${!result.replies.length?`<div class="bubble">${result.rejected?'조건이 맞지 않아 멈췄어요. 실패 답장을 설정하면 안내할 수 있어요.':result.changes.length?'답장 없이 기록만 변경했어요.':'답장이나 기록 변경이 없어요. 답장 작업을 추가해 주세요.'}</div>`:''}<small>${esc(result.changes.join(' / ')||'기록 변경 없음')}</small><details open><summary>어떻게 처리됐나요?</summary>${(result.trace||[]).map(t=>`<p>${esc(t)}</p>`).join('')}<p>시험 후 능력치: ${esc(JSON.stringify(result.stats))}</p><p>시험 후 물건: ${esc(JSON.stringify(result.inventory))}</p><p>다시 시험하면 위 시험용 시작값부터 실행해요.</p></details></div>`;});
   action('#resetPractice',()=>{simulation=null;render();toast('시험용 시작값을 초기화했어요.');});
 }
+function dialoguePage(app){
+  app.insertAdjacentHTML('beforeend',heading('MAKE IT YOURS','자동봇 제작소','하고 싶은 일을 고르고, 계정과 키워드를 정하면 돼요.',`<button id="newRule" class="primary">+ 새 자동봇</button>`)+`<div class="bot-layout dialogue-layout"><aside class="bot-list">${S.config.rules.map(r=>`<button class="bot-choice ${r.id===selected?'selected':''}" data-pick="${esc(r.id)}"><span class="tag">${r.enabled?'켜짐':'꺼짐'}</span> ${esc(r.name)}<small>${esc(r.keyword)}</small></button>`).join('')}</aside><div id="dialogueRoot"></div></div>`);
+  action('#newRule',newRuleModal);
+  action('[data-pick]',(_e,b)=>{if(dirty&&draft&&!confirm('현재 규칙의 저장하지 않은 편집을 버릴까요?'))return;selected=b.dataset.pick;draft=null;simulation=null;botDetail=false;dirty=false;render();});
+  mountDialogueEditor($('#dialogueRoot'),{rule:draft,fields:S.config.fields,accountOptions,onChange:()=>{dirty=true;},onError:toast,
+    onSave:async()=>{const i=S.config.rules.findIndex(r=>r.id===draft.id);S.config.rules[i]=structuredClone(draft);await saveConfig();render();},
+    onCopy:async()=>{const r={...structuredClone(draft),id:uid(),name:draft.name+' 복사',enabled:false};S.config.rules.push(r);selected=r.id;draft=r;dirty=true;render();},
+    onDelete:async()=>{S.config.rules=S.config.rules.filter(r=>r.id!==selected);await saveConfig();draft=null;selected='';render();}
+  });
+}
 function sceneCollect(){
   if($('#storyTitle'))story.title=$('#storyTitle').value;
   if($('#storyStartDate')?.value&&$('#storyStartTime')?.value)story.start=readSchedule('storyStart');
@@ -250,7 +262,8 @@ function kvRead(kind){
   const result=Object.create(null);for(const row of $$(`[data-kv="${kind}"] .kv-row`)){const key=$('[data-key]',row).value.trim(),value=Number($('[data-value]',row).value);if(!cleanKey(key)||Object.hasOwn(result,key))throw Error('항목 이름이 비었거나 중복됐어요.');result[key]=value;}return numericMap(result);
 }
 function runnerModal(p){
-  modal(`<h2>${esc(p.name)}의 기록</h2><p>@${esc(p.acct)} · 운영자가 직접 수정할 수 있어요.</p><div class="stack"><section><h3>능력치</h3>${kvEditor(p.stats,'stats')}</section><section><h3>현재 소지품</h3>${kvEditor(p.inventory,'inventory')}</section><button id="saveRunner" class="primary">변경 기록 남기고 저장</button><details><summary>최근 획득·변경 이력</summary>${S.audit.filter(a=>a.actor_id===p.id).map(a=>`<div class="audit-line">${esc(a.message)}<small>${dateTime(a.created)} · ${esc(a.source)}</small></div>`).join('')||empty('아직 기록이 없어요.')}</details></div>`);
+  const progress=S.accounts.map(a=>{try{const v=JSON.parse(S.runtime['dialog:'+a.id+':'+p.id]||'null'),r=v&&S.config.rules.find(r=>r.id===v.ruleId),scene=r?.dialogue?.scenes.find(s=>s.id===v.sceneId);return r?`${a.label} · ${r.name}: ${scene?.title||'변경된 장면'} (${{active:'진행 중',paused:'중단',ended:'종료'}[v.status]||v.status})`:'';}catch{return '';}}).filter(Boolean);
+  modal(`<h2>${esc(p.name)}의 기록</h2><p>@${esc(p.acct)} · 운영자가 직접 수정할 수 있어요.</p>${progress.length?`<section class="notice"><strong>조사 진행 상황</strong>${progress.map(t=>`<p>${esc(t)}</p>`).join('')}</section>`:''}<div class="stack"><section><h3>능력치</h3>${kvEditor(p.stats,'stats')}</section><section><h3>현재 소지품</h3>${kvEditor(p.inventory,'inventory')}</section><button id="saveRunner" class="primary">변경 기록 남기고 저장</button><details><summary>최근 획득·변경 이력</summary>${S.audit.filter(a=>a.actor_id===p.id).map(a=>`<div class="audit-line">${esc(a.message)}<small>${dateTime(a.created)} · ${esc(a.source)}</small></div>`).join('')||empty('아직 기록이 없어요.')}</details></div>`);
   kvBindings();action('#saveRunner',async()=>{
     const next={...p,stats:kvRead('stats'),inventory:kvRead('inventory')};if(Object.values(next.inventory).some(v=>v<0||!Number.isInteger(v)))throw Error('물건 수량은 0 이상의 정수여야 해요.');
     if(online){await api('/api/participant','PUT',next);await reload();}else{S.participants[S.participants.findIndex(r=>r.id===p.id)]=next;S.audit.unshift({actor_id:p.id,message:'운영자가 연습 기록을 수정했어요.',created:Date.now(),source:'연습 수정'});persist();render();}close();toast('변경 내용을 저장했어요.');

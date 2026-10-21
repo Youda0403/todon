@@ -1,15 +1,17 @@
+import {mountCatalog} from './catalog-editor.mjs';
+import {mountFlexibleBot} from './flexible-bot.mjs';
 import {mountDialogueEditor} from './dialogue-editor.mjs';
 import {stateNames,queueReason,groupStatus,storyGroups} from './status.mjs';
-import {example,execute,validateRule,numericMap,cleanKey,matches,newId,diceBlock,diceRanges,randomChoices} from './engine.mjs';
+import {example,execute,validateRule,numericMap,cleanKey,matches,newId,diceBlock,diceRanges,randomChoices,upgradeActions} from './engine.mjs';
 const $=(s,root=document)=>root.querySelector(s),$$=(s,root=document)=>[...root.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid=newId;
 const read=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key))??fallback;}catch{return fallback;}};
-const initial=()=>({config:{paused:true,rules:[example('check','practice'),example('dice','practice')],fields:{체력:100,관찰력:0,소지금:0},events:[],invites:{},dailyCap:1500,revision:0},accounts:[{id:'practice',label:'연습 계정',acct:'practice@planet.moe',active:1}],participants:[{id:'practice-runner',name:'연습 러너',acct:'runner@planet.moe',stats:{체력:100,관찰력:0,소지금:0},inventory:{회복약:2},revision:0}],audit:[],outbox:[],runtime:{}});
+const initial=()=>({config:{paused:true,rules:[example('check','practice'),example('dice','practice')],fields:{체력:100,관찰력:0,소지금:0},items:[],events:[],invites:{},dailyCap:1500,revision:0},accounts:[{id:'practice',label:'연습 계정',acct:'practice@planet.moe',active:1}],participants:[{id:'practice-runner',name:'연습 러너',acct:'runner@planet.moe',stats:{체력:100,관찰력:0,소지금:0},inventory:{회복약:2},revision:0}],audit:[],outbox:[],runtime:{}});
 let S=read('cc.practice.v1',null)||initial(),online=false,secret=sessionStorage.getItem('cc.admin')||'',active=localStorage.getItem('cc.account')||'',selected='',draft=null,dirty=false;
 let month=new Date(new Date().getFullYear(),new Date().getMonth(),1),story={title:'첫 번째 이야기',start:new Date(Date.now()+600000),scenes:[]};
-let simulation=null,toastTimer,botDetail=false;
-const pages=[['home','◷','오늘의 운영'],['bots','▧','자동봇 제작소'],['compose','✎','툿·공지 작성'],['story','▷','스토리 진행실'],['runners','♙','러너 기록부'],['calendar','▦','운영 캘린더'],['accounts','◎','운영 계정'],['settings','⚙','연결·설정']];
+let simulation=null,toastTimer,botDetail=false,catalogDraft=null;
+const pages=[['home','◷','오늘의 운영'],['bots','▧','자동봇 제작소'],['compose','✎','툿·공지 작성'],['story','▷','스토리 진행실'],['runners','♙','러너 기록부'],['catalog','◇','아이템·능력치'],['calendar','▦','운영 캘린더'],['accounts','◎','운영 계정'],['settings','⚙','연결·설정']];
 const route=()=>location.hash.slice(1).split('?')[0]||'home';
 const dateTime=t=>new Date(Number(t)||t).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
 const inputDate=t=>{const d=new Date(t);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);};
@@ -29,7 +31,12 @@ function action(selector,fn,root=document){for(const element of $$(selector,root
 function modal(html){$('#modalBody').innerHTML=html;$('#modal').showModal();}
 function close(){ $('#modal').close(); }
 $('#closeModal').onclick=close;
-async function reload(){S=await api('/api/state');online=true;sessionStorage.setItem('cc.admin',secret);dirty=false;draft=null;selected='';render();}
+document.addEventListener('click',e=>{
+  const b=e.target.closest('button');if(!b)return;
+  if(b.matches('#deleteRule,[data-remove],[data-delete-range],[data-resource-remove],[data-remove-choice],[data-scene-delete],[data-delete-row],[data-delete-event],[data-control="cancel"]')&&!confirm('선택한 항목을 삭제하거나 취소할까요?')){e.preventDefault();e.stopImmediatePropagation();}
+},true);
+
+async function reload(){S=await api('/api/state');online=true;sessionStorage.setItem('cc.admin',secret);dirty=false;draft=null;selected='';catalogDraft=null;render();}
 async function saveConfig(){if(online){const result=await api('/api/config','PUT',S.config);S.config.revision=result.revision;}else persist();dirty=false;toast(online?'서버에 저장했어요.':'이 기기의 연습 설정에 저장했어요.');}
 async function connect(){
   modal(`<h2>운영실 연결</h2><p>Cloudflare에 등록한 운영 암호를 입력해 주세요. 이 암호는 이 탭이 열린 동안만 기억해요.</p><label>운영 암호<input id="adminSecret" type="password" autocomplete="current-password" minlength="24"></label><div class="actions" style="margin-top:20px"><button id="doConnect" class="primary">연결하기</button><button id="demoMode">연습 모드로</button></div>`);
@@ -49,7 +56,7 @@ function render(){
   $('#activeAccount').innerHTML=accountOptions(activeAccount()?.id);$('#connect').textContent=online?'연결 관리':'서버 연결';
   const app=$('#app');app.innerHTML=(!online?'<div class="notice">지금은 연습 모드예요. 계정에 툿을 보내지 않으며, 연습 데이터는 이 브라우저에만 저장돼요.</div>':'');
   if(online)app.insertAdjacentHTML('beforeend','<div id="executionPanel"></div>');
-  ({home:homePage,bots:botsPage,compose:composePage,story:storyPage,runners:runnersPage,calendar:calendarPage,accounts:accountsPage,settings:settingsPage}[current]||homePage)(app);
+  ({home:homePage,bots:botsPage,compose:composePage,story:storyPage,runners:runnersPage,catalog:catalogPage,calendar:calendarPage,accounts:accountsPage,settings:settingsPage}[current]||homePage)(app);
   executionPanel();
 }
 function executionPanel(){
@@ -170,13 +177,14 @@ function collectDraft(){
   if($('[data-legacy-reply]',form))draft.blocks[1].text=$('[data-legacy-reply]',form).value;
 }
 function newRuleModal(){
-  modal(`<h2>어떤 봇부터 만들까요?</h2><p>하고 싶은 일을 고르면 필요한 설정이 미리 채워져요.</p><div class="stack">${[['dialogue','선택지형 조사','러너마다 진행 상황을 기억하고 다음 장면으로 연결'],['reply','키워드 답장','정해 둔 문장을 답장'],['random','랜덤 답장','후보 문장과 뽑힐 비중만 입력'],['gather','조사·채집','성공 확률과 획득 재료를 설정'],['craft','제작','필요 재료를 소모해서 완성품 만들기'],['combine','조합 시도','조합 확률과 실패 시 재료 처리 설정'],['calculate','능력치 계산','능력치와 숫자로 계산 후 저장'],['dice','주사위·성공 판정','1d100 숫자와 어려운 성공 / 성공 / 실패 / 대실패를 함께 답장'],['check','내 상태·가방 확인','키워드를 받으면 러너의 능력치와 가진 물건을 답장'],['history','최근 획득·변경 기록','러너의 최근 기록을 자동으로 불러와 답장'],['search','확률로 단서를 얻는 조사봇','성공 조건과 획득 물건을 입력'],['item','물건 사용과 체력 회복','소지품 조건과 능력치 변경을 입력']].map(([kind,title,desc])=>`<button class="template-choice" data-template="${kind}"><strong>${title} ↗</strong><small>${desc}</small></button>`).join('')}</div>`);
+  modal(`<h2>어떤 봇부터 만들까요?</h2><p>하고 싶은 일을 고르면 필요한 설정이 미리 채워져요.</p><div class="stack">${[['outcome','확률별 결과','25% 약초 · 25% 돌 · 50% 실패처럼 결과와 작업을 설정'],['dialogue','선택지형 조사','러너마다 진행 상황을 기억하고 다음 장면으로 연결'],['reply','키워드 답장','정해 둔 문장을 답장'],['random','랜덤 답장','후보 문장과 뽑힐 비중만 입력'],['gather','조사·채집','성공 확률과 획득 재료를 설정'],['craft','제작','필요 재료를 소모해서 완성품 만들기'],['combine','조합 시도','조합 확률과 실패 시 재료 처리 설정'],['calculate','능력치 계산','능력치와 숫자로 계산 후 저장'],['dice','주사위·성공 판정','1d100 숫자와 어려운 성공 / 성공 / 실패 / 대실패를 함께 답장'],['check','내 상태·가방 확인','키워드를 받으면 러너의 능력치와 가진 물건을 답장'],['history','최근 획득·변경 기록','러너의 최근 기록을 자동으로 불러와 답장'],['search','확률로 단서를 얻는 조사봇','성공 조건과 획득 물건을 입력'],['item','물건 사용과 체력 회복','소지품 조건과 능력치 변경을 입력']].map(([kind,title,desc])=>`<button class="template-choice" data-template="${kind}"><strong>${title} ↗</strong><small>${desc}</small></button>`).join('')}</div>`);
   action('[data-template]',(_e,b)=>{const r=example(b.dataset.template,activeAccount()?.id||'');S.config.rules.push(r);selected=r.id;draft=structuredClone(r);simulation=null;botDetail=false;dirty=true;close();render();});
 }
 function botsPage(app){
   if(!selected&&S.config.rules.length)selected=S.config.rules[0].id;
   const current=S.config.rules.find(r=>r.id===selected);if(current&&(!draft||draft.id!==selected))draft=structuredClone(current);
   if(draft?.kind==='dialogue')return dialoguePage(app);
+  if(draft?.blocks.some(b=>['gather','outcome','randomStat','useItem'].includes(b.type))){upgradeActions(draft.blocks);return flexiblePage(app);}
   const kind=draft?simpleRuleKind(draft):'',simple=!!kind&&!botDetail;
   app.insertAdjacentHTML('beforeend',heading('MAKE IT YOURS','자동봇 제작소','하고 싶은 일을 고르고, 계정과 키워드를 정하면 돼요.',`<button id="newRule" class="primary">+ 새 자동봇</button>`)+`
   <div class="bot-layout"><aside class="bot-list">${S.config.rules.map(r=>`<button class="bot-choice ${r.id===selected?'selected':''}" data-pick="${esc(r.id)}"><span class="tag">${r.enabled?'켜짐':'꺼짐'}</span> ${esc(r.name)}<small>${esc(r.keyword)}</small></button>`).join('')}</aside><section class="card">${draft?`
@@ -226,11 +234,28 @@ function dialoguePage(app){
   app.insertAdjacentHTML('beforeend',heading('MAKE IT YOURS','자동봇 제작소','하고 싶은 일을 고르고, 계정과 키워드를 정하면 돼요.',`<button id="newRule" class="primary">+ 새 자동봇</button>`)+`<div class="bot-layout dialogue-layout"><aside class="bot-list">${S.config.rules.map(r=>`<button class="bot-choice ${r.id===selected?'selected':''}" data-pick="${esc(r.id)}"><span class="tag">${r.enabled?'켜짐':'꺼짐'}</span> ${esc(r.name)}<small>${esc(r.keyword)}</small></button>`).join('')}</aside><div id="dialogueRoot"></div></div>`);
   action('#newRule',newRuleModal);
   action('[data-pick]',(_e,b)=>{if(dirty&&draft&&!confirm('현재 규칙의 저장하지 않은 편집을 버릴까요?'))return;selected=b.dataset.pick;draft=null;simulation=null;botDetail=false;dirty=false;render();});
-  mountDialogueEditor($('#dialogueRoot'),{rule:draft,fields:S.config.fields,accountOptions,onChange:()=>{dirty=true;},onError:toast,
+  mountDialogueEditor($('#dialogueRoot'),{rule:draft,fields:S.config.fields,config:S.config,accountOptions,onChange:()=>{dirty=true;},onError:toast,
     onSave:async()=>{const i=S.config.rules.findIndex(r=>r.id===draft.id);S.config.rules[i]=structuredClone(draft);await saveConfig();render();},
     onCopy:async()=>{const r={...structuredClone(draft),id:uid(),name:draft.name+' 복사',enabled:false};S.config.rules.push(r);selected=r.id;draft=r;dirty=true;render();},
     onDelete:async()=>{S.config.rules=S.config.rules.filter(r=>r.id!==selected);await saveConfig();draft=null;selected='';render();}
   });
+}
+function flexiblePage(app){
+  dialoguePageShell(app);
+  mountFlexibleBot($('#flexibleRoot'),{rule:draft,config:S.config,accountOptions,onChange:()=>{dirty=true;},onError:toast,
+    onSave:async()=>{S.config.rules[S.config.rules.findIndex(r=>r.id===draft.id)]=structuredClone(draft);await saveConfig();render();},
+    onCopy:async()=>{const r={...structuredClone(draft),id:uid(),name:draft.name+' 복사',enabled:false};S.config.rules.push(r);selected=r.id;draft=r;dirty=true;render();},
+    onDelete:async()=>{S.config.rules=S.config.rules.filter(r=>r.id!==selected);await saveConfig();draft=null;selected='';render();}
+  });
+}
+function dialoguePageShell(app){
+  app.insertAdjacentHTML('beforeend',heading('MAKE IT YOURS','자동봇 제작소','결과별로 원하는 작업과 문장을 정해요.',`<button id="newRule" class="primary">+ 새 자동봇</button>`)+`<div class="bot-layout"><aside class="bot-list">${S.config.rules.map(r=>`<button class="bot-choice ${r.id===selected?'selected':''}" data-pick="${esc(r.id)}">${esc(r.name)}<small>${esc(r.keyword)}</small></button>`).join('')}</aside><div id="flexibleRoot"></div></div>`);
+  action('#newRule',newRuleModal);action('[data-pick]',(_e,b)=>{if(dirty&&draft&&!confirm('현재 규칙의 저장하지 않은 편집을 버릴까요?'))return;selected=b.dataset.pick;draft=null;dirty=false;render();});
+}
+function catalogPage(app){
+  app.insertAdjacentHTML('beforeend',heading('COMMUNITY RESOURCES','아이템·능력치','조사에 쓸 항목을 등록하고, 아이템 사용 효과를 정해요.')+'<div id="catalogRoot"></div>');
+  const config=catalogDraft??=structuredClone(S.config);
+  mountCatalog($('#catalogRoot'),{config,onChange:()=>{dirty=true;},onError:toast,onSave:async c=>{S.config.fields=c.fields;S.config.items=c.items;await saveConfig();catalogDraft=null;render();}});
 }
 function sceneCollect(){
   if($('#storyTitle'))story.title=$('#storyTitle').value;
@@ -340,7 +365,7 @@ function settingsPage(app){
   app.insertAdjacentHTML('beforeend',heading('A LITTLE PREPARATION','연결·설정','무료 실행 환경을 연결하고, 커뮤에 맞는 기본값을 정해요.')+`
   <div class="grid"><section class="card"><div class="card-head"><h2>운영실 연결</h2><span class="tag">${online?'연결됨':'연습 중'}</span></div><p>Cloudflare Workers + D1 무료 요금제를 사용하는 구성입니다. 브라우저를 닫아도 Cloudflare가 새 멘션을 확인해요.</p><div class="actions" style="margin-top:17px"><button id="settingsConnect" class="primary">운영 암호로 연결</button><button id="logoutServer">이 기기 연결 해제</button><a class="text-link" href="https://dash.cloudflare.com/" target="_blank" rel="noopener">Cloudflare 열기 ↗</a></div><p class="inline-help">운영 암호를 바꾸면 저장된 계정 토큰을 읽을 수 없게 되어 계정을 다시 연결해야 해요.</p></section>
   <section class="card"><div class="card-head"><h2>하루 처리 상한</h2><span class="tag">무료 사용량 관리</span></div><label>전체 러너의 명령 합계 · 한국 시간 기준<input id="dailyCap" type="number" min="1" max="5000" value="${S.config.dailyCap}"></label><p class="inline-help">상한에 도달하면 새 명령은 대기해요. 재사용 대기 중인 명령은 합계에서 제외돼요. 이 숫자는 Cloudflare의 실제 사용량과 같지 않아요.</p><button id="saveCap" class="small" style="margin-top:13px">상한 저장</button></section>
-  <section class="card"><div class="card-head"><h2>새 러너의 기본 능력치</h2></div>${kvEditor(S.config.fields,'defaults')}<div class="actions" style="margin-top:15px"><button id="saveFields" class="primary small">기본값 저장</button></div><p class="inline-help">새로 등록하는 러너에게 적용해요. 이미 등록한 러너는 기록부에서 수정해 주세요.</p></section>
+  <section class="card"><h2>능력치·아이템 설정</h2><p>미리 등록한 항목과 아이템 사용 효과를 한곳에서 관리해요.</p><a href="#catalog" class="text-link">아이템·능력치 목록 열기 ↗</a></section>
   <section class="card"><div class="card-head"><h2>기록 파일과 확인</h2></div><p>능력치·소지품·설정과 최근 기록을 JSON으로 내려받아요. 계정 토큰과 운영 암호는 포함하지 않아요.</p><div class="actions" style="margin-top:17px"><button id="exportRecords" class="primary small">기록 파일 내려받기</button><button id="manualTick" class="small">봇 멘션만 확인</button></div><p class="inline-help">이 파일은 최근 기록 중심의 보조 내보내기예요. 전체 복구용 백업은 Cloudflare D1의 Export 기능을 사용해 주세요.</p><details style="margin-top:17px"><summary>현재 버전에서 알아둘 점</summary><ul><li>일정은 앱을 열면 표시해요. 브라우저 푸시는 아직 지원하지 않아요.</li><li>스토리는 분 단위 예약이며, 30초 간격 진행을 보장하지 않아요.</li><li>‘확인 필요’ 출력은 중복 방지를 위해 자동으로 다시 보내지 않아요. 계정에서 실제 게시 여부를 확인해 주세요.</li><li>첫 연결 이전의 멘션은 처리하지 않아요. 등록한 러너의 새 멘션부터 처리해요.</li><li>서버 전체를 운영하는 관리 기능이나 초대 링크 자동 생성은 포함하지 않아요.</li></ul></details></section></div>`);
   action('#settingsConnect',connect);kvBindings();
   action('#logoutServer',()=>{sessionStorage.removeItem('cc.admin');secret='';online=false;S=read('cc.practice.v1',null)||initial();draft=null;selected='';render();toast('이 기기의 연결을 해제했어요. 서버의 봇 실행은 계속될 수 있어요.');});
@@ -351,3 +376,4 @@ function settingsPage(app){
 }
 render();
 if(secret)reload().catch(e=>{toast(e.message);});
+

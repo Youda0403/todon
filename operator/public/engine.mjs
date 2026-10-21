@@ -61,14 +61,24 @@ export function randomChoices(text){
   if(!choices.length||!choices.some(c=>c.weight>0)||choices.some(c=>!Number.isFinite(c.weight)||c.weight<0)||!Number.isFinite(choices.reduce((n,c)=>n+c.weight,0)))throw Error('랜덤 후보와 0보다 큰 뽑힐 비중을 하나 이상 넣어 주세요.');
   return choices;
 }
-export function validateRule(rule) {
+export function validateRule(rule, depth=0) {
+  if(depth>3)throw Error('결과 안의 작업은 3단계까지만 연결할 수 있어요.');
   if(!rule || !cleanKey(rule.id) || !String(rule.name||'').trim() || String(rule.name).length>80)throw Error('봇 이름을 확인해 주세요.');
   if(!rule.keyword || rule.keyword.length>100 || !['exact','contains'].includes(rule.match))throw Error('반응할 키워드를 입력해 주세요.');
   if(!Number.isInteger(rule.dailyLimit)||rule.dailyLimit<0||rule.dailyLimit>1000||!Number.isInteger(rule.cooldown)||rule.cooldown<0||rule.cooldown>86400)throw Error('횟수·대기시간을 확인해 주세요.');
   if(rule.kind==='dialogue')return validateDialogue(rule);
   if(!Array.isArray(rule.blocks)||!rule.blocks.length||rule.blocks.length>30)throw Error('블록은 1~30개까지 넣을 수 있어요.');
   for(const b of rule.blocks){
-    if(!['reply','random','roll','dice','calculate','stat','item','guard','status','inventory','history','gather','recipe'].includes(b.type))throw Error('지원하지 않는 블록이에요.');
+    if(!['reply','random','roll','dice','calculate','stat','item','guard','status','inventory','history','gather','recipe','outcome','randomStat','useItem'].includes(b.type))throw Error('지원하지 않는 블록이에요.');
+    if(b.type==='outcome'){
+      if(!Array.isArray(b.cases)||!b.cases.length||b.cases.length>12||Math.abs(b.cases.reduce((n,c)=>n+c.chance,0)-100)>0.00001)throw Error('확률별 결과의 확률 합계를 100%로 맞춰 주세요.');
+      for(const c of b.cases){
+        if(typeof c.name!=='string'||!c.name.trim()||c.name.length>80||!Number.isFinite(c.chance)||c.chance<0||c.chance>100||typeof c.text!=='string'||c.text.length>2000||!Array.isArray(c.blocks)||c.blocks.length>10)throw Error('결과 이름·확률·문장·작업을 확인해 주세요.');
+        if(c.blocks.length)validateRule({...rule,kind:undefined,blocks:c.blocks},depth+1);
+      }
+    }
+    if(b.type==='randomStat'&&(!Array.isArray(b.keys)||!b.keys.length||b.keys.length>30||b.keys.some(k=>!cleanKey(k))||new Set(b.keys).size!==b.keys.length||!Number.isInteger(b.min)||!Number.isInteger(b.max)||b.min>b.max||Math.abs(b.min)>1e6||Math.abs(b.max)>1e6))throw Error('랜덤으로 바꿀 능력치와 정수 범위를 확인해 주세요.');
+    if(b.type==='useItem'&&(!cleanKey(b.key)||!Number.isInteger(b.amount)||b.amount<1||b.amount>20))throw Error('사용할 아이템과 수량을 확인해 주세요.');
     if(['stat','item','calculate','guard'].includes(b.type)&&!cleanKey(b.key))throw Error('블록의 항목 이름을 확인해 주세요.');
     if(['gather','recipe'].includes(b.type)){
       if(!Number.isFinite(b.chance)||b.chance<0||b.chance>100)throw Error('성공 확률은 0~100%로 적어 주세요.');
@@ -100,11 +110,39 @@ export function validateRule(rule) {
   }
   return rule;
 }
-export function execute(rule, actor, {random=Math.random,history=[],diceTotal}={}) {
+export function execute(rule, actor, {random=Math.random,history=[],diceTotal,items=[],depth=0}={}) {
+  if(depth>4)throw Error('결과 작업이 너무 깊게 연결되어 있어요.');
   const stats=numericMap(actor.stats), inventory=numericMap(actor.inventory), changes=[], replies=[],trace=[];
   let result='',diceValue='',verdict='',notation='',itemName='',itemCount=0;
-  const format=text=>String(text||'').replace(/\{([^{}]+)\}/g,(_,key)=>key==='획득물건'?itemName:key==='획득수량'?String(itemCount):key==='닉네임'?actor.name:key==='결과'?String(result):key==='주사위'?String(diceValue):key==='판정'?verdict:key==='주사위식'?notation:Object.hasOwn(stats,key)?String(stats[key]):'{'+key+'}');
+  const format=text=>String(text||'').replace(/\{([^{}]+)\}/g,(_,key)=>key==='획득물건'?itemName:key==='획득수량'?String(itemCount):key==='닉네임'?actor.name:key==='결과'?String(result):key==='주사위'?String(diceValue):key==='판정'?verdict:key==='주사위식'?notation:key.startsWith('물건:')?String(inventory[key.slice(3)]||0):Object.hasOwn(stats,key)?String(stats[key]):'{'+key+'}');
   for(const b of rule.blocks){
+    if(b.type==='outcome'||b.type==='useItem'){
+      let blocks,message;
+      if(b.type==='outcome'){
+        let pick=random()*100,chosen=b.cases.filter(c=>c.chance>0).at(-1);
+        for(const c of b.cases)if((pick-=c.chance)<0){chosen=c;break;}
+        if(!chosen)throw Error('확률별 결과가 비어 있어요.');
+        result=chosen.name;blocks=chosen.blocks;message=chosen.text;
+        const award=blocks.find(x=>x.type==='item'&&x.amount>0);itemName=award?.key||'';itemCount=award?.amount||0;
+        trace.push('확률 결과: '+chosen.name+' ('+chosen.chance+'%)');
+      }else{
+        const item=items.find(i=>i.name===b.key&&i.usable);
+        if(!item)throw Error('사용 효과가 등록되지 않은 아이템이에요: '+b.key);
+        if((inventory[b.key]||0)<b.amount)return {stats:numericMap(actor.stats),inventory:numericMap(actor.inventory),changes:[],replies:[b.key+'이(가) 부족해요.'],rejected:true,trace};
+        blocks=[...(item.consume!==false?[{type:'item',key:b.key,amount:-b.amount}]:[]),...Array.from({length:b.amount},()=>item.effects).flat()];
+        message=item.text||b.key+'을(를) 사용했어요.';
+      }
+      const child=execute({blocks},{...actor,stats,inventory},{random,history,diceTotal,items,depth:depth+1});
+      if(child.rejected)return {...child,stats:numericMap(actor.stats),inventory:numericMap(actor.inventory),changes:[]};
+      Object.assign(stats,child.stats);Object.assign(inventory,child.inventory);changes.push(...child.changes);replies.push(...child.replies);trace.push(...child.trace);
+      if(child.context){if(child.context.result!=='')result=child.context.result;if(child.context.diceValue!==''){diceValue=child.context.diceValue;verdict=child.context.verdict;notation=child.context.notation;}}
+      if(message)replies.push(format(message));
+    }
+    if(b.type==='randomStat'){
+      const k=b.keys[Math.min(b.keys.length-1,Math.floor(random()*b.keys.length))],amount=b.min+Math.floor(random()*(b.max-b.min+1)),next=(stats[k]||0)+amount;
+      if(!Number.isFinite(next)||Math.abs(next)>1e9)throw Error('능력치 결과가 허용 범위를 벗어났어요.');
+      stats[k]=next;result=amount;changes.push(`${k} ${amount>=0?'+':''}${amount} → ${next}`);trace.push(changes.at(-1));
+    }
     if(b.type==='gather'||b.type==='recipe'){
       if(b.type==='recipe'){
         const missing=b.ingredients.filter(r=>(inventory[r.key]||0)<r.amount);
@@ -164,10 +202,11 @@ export function execute(rule, actor, {random=Math.random,history=[],diceTotal}={
     if(b.type==='inventory')replies.push(`${actor.name}의 가방\n`+(Object.entries(inventory).filter(([,v])=>v>0).map(([k,v])=>`${k} ×${v}`).join('\n')||'아직 가진 물건이 없어요.'));
     if(b.type==='history')replies.push(`${actor.name}의 최근 기록\n`+(history.slice(0,10).map(h=>h.message).join('\n')||'아직 기록이 없어요.'));
   }
-  return {stats,inventory,changes,replies,rejected:false,trace};
+  return {stats,inventory,changes,replies,rejected:false,trace,context:{result,diceValue,verdict,notation,itemName,itemCount}};
 }
 export function example(kind,accountId='') {
   const base={id:newId(),accountId,enabled:false,name:'',keyword:'',match:'contains',dailyLimit:0,cooldown:30,blocks:[]};
+  if(kind==='outcome')return {...base,name:'확률별 조사 결과',keyword:'[조사]',blocks:[outcomeExample()]};
   if(kind==='dialogue')return {...base,name:'선택지형 조사',keyword:'조사를 시작한다',cooldown:0,dailyLimit:3,kind:'dialogue',dialogue:dialogueExample()};
   const templates={
     reply:{name:'키워드 답장',keyword:'[안내]',blocks:[{type:'reply',text:'{닉네임}님, 안내 문장을 여기에 적어 주세요.'}]},
@@ -190,7 +229,7 @@ export function example(kind,accountId='') {
 
 // A single active investigation per runner and sending account; scene effects run once per run.
 export function dialogueExample(){
-  return {start:'start',stopKeyword:'조사 중단',resumeKeyword:'조사 계속',endKeyword:'조사 종료',scenes:[
+  return {start:'start',endKeyword:'조사 종료',scenes:[
     {id:'start',title:'조사 시작',text:'조사를 시작했습니다. 어디로 가시겠습니까?',end:false,actions:[],choices:[{keyword:'숲',next:'forest'},{keyword:'동굴',next:'cave'},{keyword:'바다',next:'sea'}]},
     {id:'forest',title:'숲',text:'숲에 도착했습니다. 어디부터 조사해볼까요?',end:false,actions:[],choices:[{keyword:'나무',next:'tree'},{keyword:'풀숲',next:'grass'},{keyword:'벌집',next:'hive'}]},
     {id:'cave',title:'동굴',text:'동굴 벽에 낡은 표식이 있습니다. 오늘의 조사를 마칩니다.',end:true,actions:[],choices:[]},
@@ -205,38 +244,48 @@ export function validateDialogue(rule){
   if(!d||!Array.isArray(d.scenes)||!d.scenes.length||d.scenes.length>60)throw Error('조사 장면은 1~60개로 만들어 주세요.');
   const ids=new Set(d.scenes.map(s=>s.id));
   if(ids.size!==d.scenes.length||d.scenes.some(s=>!cleanKey(s.id))||!ids.has(d.start))throw Error('장면 이름과 시작 장면을 확인해 주세요.');
-  const controls=[d.stopKeyword,d.resumeKeyword,d.endKeyword];
-  if(controls.some(k=>typeof k!=='string'||!k.trim()||k!==k.trim()||k.length>100)||new Set(controls).size!==3||controls.some(k=>matches(rule,k)))throw Error('중단·계속·종료 명령은 서로 다르고 시작 키워드와 겹치지 않게 적어 주세요.');
+  const controls=[d.endKeyword].filter(Boolean);
+  if(controls.some(k=>typeof k!=='string'||!k.trim()||k.length>100||matches(rule,k)))throw Error('종료 명령과 시작 키워드가 겹치지 않게 적어 주세요.');
   for(const scene of d.scenes){
     if(typeof scene.title!=='string'||!scene.title.trim()||scene.title.length>80||typeof scene.text!=='string'||!scene.text.trim()||scene.text.length>1500||typeof scene.end!=='boolean')throw Error('각 장면의 이름과 이야기(1500자 이내)를 적어 주세요.');
+    if(scene.endText!==undefined&&(typeof scene.endText!=='string'||scene.endText.length>1500))throw Error('종료 문장은 1500자 이내로 적어 주세요.');
     if(!Array.isArray(scene.actions)||scene.actions.length>10)throw Error('장면 결과는 최대 10개까지 추가할 수 있어요.');
     if(scene.actions.length)validateRule({...rule,kind:undefined,dialogue:undefined,blocks:scene.actions});
     if(!Array.isArray(scene.choices)||scene.choices.length>9||!scene.end&&!scene.choices.length)throw Error('이어지는 장면에는 선택지 1~9개가 필요해요. 마지막 장면이면 ‘여기서 조사 끝내기’를 켜 주세요.');
     if(scene.end)continue;
     if(new Set(scene.choices.map(c=>c.keyword?.trim())).size!==scene.choices.length)throw Error(scene.title+': 선택지 키워드가 중복됐어요.');
     for(const c of scene.choices){
-      if(typeof c.keyword!=='string'||!c.keyword.trim()||c.keyword!==c.keyword.trim()||c.keyword.length>80||/^\d+(?:번)?$/.test(c.keyword)||controls.some(k=>c.keyword.includes(k)||k.includes(c.keyword))||matches(rule,c.keyword))throw Error(scene.title+': 선택지 키워드는 번호·시작·중단 명령과 겹치지 않게 적어 주세요.');
+      if(typeof c.keyword!=='string'||!c.keyword.trim()||c.keyword!==c.keyword.trim()||c.keyword.length>80||/^\d+(?:번)?$/.test(c.keyword)||controls.some(k=>c.keyword.includes(k)||k.includes(c.keyword))||matches(rule,c.keyword))throw Error(scene.title+': 선택지 키워드는 번호·시작·종료 명령과 겹치지 않게 적어 주세요.');
+      validateConditions(c.conditions||[]);
       if(!ids.has(c.next))throw Error(scene.title+': 각 선택지에 다음 장면을 골라 주세요.');
     }
   }
   return rule;
 }
-export function dialogueChoices(scene,text){
-  if(!scene||scene.end)return [];
-  const numbered=/^(\d+)(?:번)?[.!。]?\s*$/.exec(text.trim());
-  if(numbered)return scene.choices[Number(numbered[1])-1]?[scene.choices[Number(numbered[1])-1]]:[];
-  return scene.choices.filter(c=>text.includes(c.keyword));
+export function conditionMatches(c,actor){
+  const value=Number((c.target==='item'?actor.inventory:actor.stats)?.[c.key]||0),n=Number(c.amount);
+  return {'>=':value>=n,'<=':value<=n,'==':value===n,'>':value>n,'<':value<n}[c.op]===true;
 }
-export function dialoguePrompt(rule,scene,actor){
-  const text=scene.text.replace(/\{닉네임\}/g,actor.name);
-  return text+(scene.end?'\n\n조사가 끝났어요.': '\n\n'+scene.choices.map((c,i)=>`${i+1}. ${c.keyword}`).join('\n')+`\n\n선택지 단어나 번호로 답해 주세요.\n중단: ${rule.dialogue.stopKeyword} · 다시 보기/계속: ${rule.dialogue.resumeKeyword} · 끝내기: ${rule.dialogue.endKeyword}`);
+export function validateConditions(list){
+  if(!Array.isArray(list)||list.length>10||list.some(c=>!['stat','item'].includes(c.target)||!cleanKey(c.key)||!['>=','<=','==','>','<'].includes(c.op)||!Number.isFinite(c.amount)||Math.abs(c.amount)>1e9))throw Error('선택지 표시 조건의 항목과 수치를 확인해 주세요.');
 }
-export function selectBotRule(rules,text,session){
+export function availableChoices(scene,actor={stats:{},inventory:{}}){return !scene||scene.end?[]:scene.choices.filter(c=>(c.conditions||[]).every(condition=>conditionMatches(condition,actor)));}
+export function dialogueChoices(scene,text,actor){
+  const choices=availableChoices(scene,actor),numbered=/^(\d+)(?:번)?[.!。]?\s*$/.exec(text.trim());
+  if(numbered)return choices[Number(numbered[1])-1]?[choices[Number(numbered[1])-1]]:[];
+  return choices.filter(c=>text.includes(c.keyword));
+}
+export function formatMessage(text,actor,context={}){const special={닉네임:actor.name,결과:context.result??'',주사위:context.diceValue??'',판정:context.verdict??'',주사위식:context.notation??''};return String(text||'').replace(/\{([^{}]+)\}/g,(_,k)=>Object.hasOwn(special,k)?String(special[k]):k.startsWith('물건:')?String(actor.inventory?.[k.slice(3)]||0):Object.hasOwn(actor.stats||{},k)?String(actor.stats[k]):'{'+k+'}');}
+export function dialoguePrompt(rule,scene,actor,context={}){
+  const text=formatMessage(scene.text,actor),choices=availableChoices(scene,actor);
+  const tail=scene.end?(scene.endText??rule.dialogue.endText??'조사가 끝났어요.'):choices.length?choices.map((c,i)=>`${i+1}. ${c.keyword}`).join('\n')+'\n\n선택지 단어나 번호로 답해 주세요.':'지금 고를 수 있는 선택지가 없어요. 필요한 소지품이나 능력치를 확인해 주세요.';
+  return [text,formatMessage(tail,actor,context)].filter(Boolean).join('\n\n');
+}
+export function selectBotRule(rules,text,session,actor){
   const current=session&&rules.find(r=>r.id===session.ruleId&&r.kind==='dialogue');
   if(current&&['active','paused'].includes(session.status)){
     const d=current.dialogue,scene=d.scenes.find(s=>s.id===session.sceneId);
-    if([d.stopKeyword,d.resumeKeyword,d.endKeyword].includes(text.trim())||matches(current,text)||session.status==='active'&&dialogueChoices(scene,text).length)return current;
-    // Ordinary commands (such as checking the bag) may run without losing the investigation.
+    if(text.trim()===d.endKeyword||matches(current,text)||dialogueChoices(scene,text,actor).length)return current;
     const other=rules.find(r=>matches(r,text));if(other&&other.kind!=='dialogue')return other;
     return current;
   }
@@ -250,16 +299,14 @@ export function advanceDialogue(rule,actor,text,previous=null,options={}){
   const live=session&&['active','paused'].includes(session.status);
   if(live&&!current){out.session={...session,status:'ended'};return respond('진행하던 장면이 수정되었어요. 시작 키워드로 새 조사를 시작해 주세요.',null);}
   if(live&&text.trim()===d.endKeyword){out.session.status='ended';return respond('조사를 종료했어요. 다시 시작하려면 '+rule.keyword+' 키워드를 보내 주세요.',null);}
-  if(live&&text.trim()===d.stopKeyword){out.session.status='paused';return respond('조사를 중단하고 진행 상황을 저장했어요. '+d.resumeKeyword+' 명령으로 이어갈 수 있어요.',null);}
-  if(live&&text.trim()===d.resumeKeyword){out.session.status='active';return respond('현재 장면에서 이어갑니다. 장면의 보상은 다시 지급하지 않아요.');}
-  if(live&&matches(rule,text))return respond('이미 진행 중인 조사예요. '+(session.status==='paused'?d.resumeKeyword+' 명령으로 이어가거나 ':'')+d.endKeyword+' 명령으로 끝낸 뒤 새로 시작할 수 있어요.');
-  if(live&&session.status==='paused')return respond('지금은 조사를 중단한 상태예요. '+d.resumeKeyword+' 명령을 보내면 이어갈 수 있어요.',null);
+  if(live)out.session.status='active';
+  if(live&&matches(rule,text))return respond('현재 조사 장면을 다시 보여드릴게요.');
   let target;
   if(!live){
     if(!matches(rule,text))return respond('진행 중인 조사가 없어요. '+rule.keyword+' 키워드로 시작해 주세요.',null);
     target=d.scenes.find(s=>s.id===d.start);
   }else{
-    const choices=dialogueChoices(current,text);
+    const choices=dialogueChoices(current,text,actor);
     if(choices.length!==1)return respond(choices.length?'여러 선택지가 함께 들어 있어요. 하나만 골라 주세요.':'지금 장면의 선택지 중 하나를 골라 주세요.');
     target=d.scenes.find(s=>s.id===choices[0].next);
   }
@@ -269,7 +316,37 @@ export function advanceDialogue(rule,actor,text,previous=null,options={}){
   if(effect.rejected){out.rejected=true;out.replies=[...effect.replies,...(current?[dialoguePrompt(rule,current,actor)]:[])];out.trace=effect.trace;return out;}
   Object.assign(out,{stats:effect.stats,inventory:effect.inventory,changes:effect.changes,trace:[...effect.trace,'장면 이동: '+target.title],started:!live});
   out.session={ruleId:rule.id,sceneId:target.id,status:target.end?'ended':'active',visited:[...new Set([...visited,target.id])]};
-  const menu=dialoguePrompt(rule,{...target,text:''},actor).trim();
-  out.replies=[target.text.replace(/\{닉네임\}/g,actor.name),...effect.replies,...(effect.changes.length?['기록 변경: '+effect.changes.join(' · ')]:[]),menu].filter(Boolean);
+  const after={...actor,stats:effect.stats,inventory:effect.inventory};
+  const menu=dialoguePrompt(rule,{...target,text:''},after,effect.context).trim();
+  out.replies=[formatMessage(target.text,actor),...effect.replies,...(effect.changes.length?['기록 변경: '+effect.changes.join(' · ')]:[]),menu].filter(Boolean);
   return out;
 }
+
+
+export function outcomeExample(stat='체력') {return {type:'outcome',cases:[{name:'약초 발견',chance:25,text:'약초를 발견했습니다.',blocks:[{type:'item',key:'약초',amount:1}]},{name:'돌 발견',chance:25,text:'돌을 발견했습니다.',blocks:[{type:'item',key:'돌',amount:1}]},{name:'실패',chance:50,text:'조사에 실패했습니다. 현재 '+stat+': {'+stat+'}',blocks:[{type:'stat',key:stat,amount:-5}]}]};}
+
+export function upgradeActions(blocks){
+  for(let i=0;i<blocks.length;i++){
+    const b=blocks[i];
+    if(b.type==='gather'){
+      const total=b.loot.reduce((n,r)=>n+r.weight,0),cases=b.loot.map(r=>({name:r.key+' 획득',chance:b.chance*r.weight/total,text:b.successText,blocks:[{type:'item',key:r.key,amount:r.amount}]}));
+      if(b.chance<100)cases.push({name:'실패',chance:100-b.chance,text:b.failureText,blocks:[]});
+      blocks[i]={type:'outcome',cases};
+    }else if(b.type==='outcome')for(const c of b.cases)upgradeActions(c.blocks);
+  }
+  return blocks;
+}
+export function validateCatalog(items=[]){
+  if(!Array.isArray(items)||items.length>200||new Set(items.map(i=>i.name)).size!==items.length||new Set(items.map(i=>i.id)).size!==items.length)throw Error('아이템은 이름이 겹치지 않게 최대 200개까지 등록해 주세요.');
+  const used=new Set();
+  const hasUse=blocks=>blocks.some(b=>b.type==='useItem'||b.type==='outcome'&&b.cases.some(c=>hasUse(c.blocks)));
+  for(const i of items){
+    if(!cleanKey(i.id)||!cleanKey(i.name)||typeof i.usable!=='boolean'||typeof i.description!=='string'||i.description.length>1000||typeof i.text!=='string'||i.text.length>2000||!Array.isArray(i.effects)||i.effects.length>10)throw Error('아이템 이름·설명·사용 효과를 확인해 주세요.');
+    if(i.usable&&(typeof i.keyword!=='string'||!i.keyword.trim()||i.keyword.length>100||used.has(i.keyword)))throw Error('사용 가능한 아이템마다 서로 다른 사용 키워드를 적어 주세요.');
+    if(i.usable)used.add(i.keyword);
+    if(hasUse(i.effects))throw Error('아이템 사용 효과에서 다른 아이템 사용을 다시 실행할 수 없어요. 획득·소모 작업으로 설정해 주세요.');
+    if(i.effects.length)validateRule({id:'catalog',name:i.name,keyword:'사용',match:'exact',dailyLimit:0,cooldown:0,blocks:i.effects});
+  }
+  return items;
+}
+export function itemUseRules(items,accountId){return (items||[]).filter(i=>i.usable).map(i=>({id:'use-'+i.id,name:i.name+' 사용',accountId,enabled:true,keyword:i.keyword,match:'contains',dailyLimit:0,cooldown:0,blocks:[{type:'useItem',key:i.name,amount:1}]}));}

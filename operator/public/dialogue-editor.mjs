@@ -1,76 +1,90 @@
-import {advanceDialogue,validateRule,newId,diceBlock,diceRanges} from './engine.mjs';
+import {advanceDialogue,validateRule,newId,formatMessage,upgradeActions} from './engine.mjs';
+import {esc,actionsHTML,collectActions,actionCommand,listsHTML,variableHTML} from './action-editor.mjs';
 const $=(s,r)=>r.querySelector(s),$$=(s,r)=>[...r.querySelectorAll(s)];
-const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const editors=new Map();
-const effectNames={item:'물건 획득·사용',stat:'능력치 변경',gather:'확률로 물건 획득',dice:'주사위·성공 판정',guard:'입장 조건 확인'};
-const field=(title,k,value,type='text',extra='')=>`<label>${title}<input data-effect-field="${k}" type="${type}" value="${esc(value)}" ${extra}></label>`;
-function effectFields(b){
-  if(b.type==='item'||b.type==='stat')return `<div class="form-grid">${field(b.type==='item'?'물건 이름':'능력치 이름','key',b.key)}${field('변경 수치 · 빼려면 음수','amount',b.amount,'number',b.type==='item'?'step="1"':'step="any"')}</div>`;
-  if(b.type==='gather')return `<div class="form-grid">${field('성공 확률 · %','chance',b.chance,'number','min="0" max="100" step="any"')}<label>획득 물건<input data-loot-key value="${esc(b.loot[0].key)}"></label><label>획득 수량<input data-loot-amount type="number" min="1" max="10000" value="${b.loot[0].amount}"></label><label class="span2">성공 답장<textarea data-effect-field="successText">${esc(b.successText)}</textarea></label><label class="span2">실패 답장<textarea data-effect-field="failureText">${esc(b.failureText)}</textarea></label></div><p class="inline-help">성공·실패 모두 이 장면에 도착해요. 실패하면 물건을 주지 않아요.</p>`;
-  if(b.type==='dice')return `<div class="form-grid">${field('주사위 개수','count',b.count,'number','min="1" max="20"')}${field('주사위 면수','sides',b.sides,'number','min="2" max="1000"')}</div><p class="inline-help">구간 끝 숫자 이하일 때 해당 판정을 보내요. 면수를 바꾸면 구간을 다시 나눠요.</p><div class="dialogue-ranges">${b.ranges.map((r,i)=>`<div><label>구간 ${i+1} 끝<input data-effect-max type="number" value="${r.max}"></label><label>판정 이름<input data-effect-verdict value="${esc(r.label)}"></label></div>`).join('')}</div><label>답글 문장<textarea data-effect-field="text">${esc(b.text)}</textarea></label><p class="inline-help">{주사위}: 숫자 · {판정}: 판정 이름</p>`;
-  if(b.type==='guard')return `<div class="form-grid"><label>확인할 대상<select data-effect-field="target"><option value="stat" ${b.target==='stat'?'selected':''}>능력치</option><option value="item" ${b.target==='item'?'selected':''}>물건 수량</option><option value="result" ${b.target==='result'?'selected':''}>앞 작업의 주사위 결과</option></select></label>${field('확인할 이름','key',b.key)}<label>비교<select data-effect-field="op">${[['>=','이상'],['<=','이하'],['==','같음'],['>','초과'],['<','미만']].map(([v,t])=>`<option value="${v}" ${b.op===v?'selected':''}>${t}</option>`).join('')}</select></label>${field('기준 숫자','amount',b.amount,'number','step="any"')}</div><label>조건이 맞지 않을 때 답장<textarea data-effect-field="text">${esc(b.text)}</textarea></label><p class="inline-help">조건이 맞지 않으면 이 장면으로 이동하지 않고, 이 명령의 다른 기록 변경도 취소해요.</p>`;
-  return '<p class="inline-help">이전 장면 결과 설정을 유지하고 있어요.</p>';
-}
-function defaultEffect(type){
-  return type==='dice'?diceBlock():type==='gather'?{type,chance:70,loot:[{key:'약초',amount:1,weight:1}],successText:'{획득물건} ×{획득수량}을 찾았습니다.',failureText:'이번에는 찾지 못했습니다.'}:type==='guard'?{type,target:'item',key:'열쇠',amount:1,op:'>=',text:'열쇠가 필요합니다.'}:{type,key:type==='item'?'새 물건':'체력',amount:1};
-}
 export function mountDialogueEditor(root,ctx){
-  const rule=ctx.rule,d=rule.dialogue;
+  const rule=ctx.rule,d=rule.dialogue,c=ctx.config||{fields:ctx.fields,items:[]};
+  for(const s of d.scenes)upgradeActions(s.actions);
   if(!editors.has(rule.id))editors.set(rule.id,{sceneId:d.start,runner:'a',sim:{},log:{}});
-  const view=editors.get(rule.id);if(!d.scenes.some(s=>s.id===view.sceneId))view.sceneId=d.start;
-  const scene=d.scenes.find(s=>s.id===view.sceneId)||d.scenes[0];
-  const options=(value,allowNew=false)=>'<option value="">다음 장면 선택</option>'+d.scenes.map(s=>`<option value="${esc(s.id)}" ${s.id===value?'selected':''}>${esc(s.title)}</option>`).join('')+(allowNew?'<option value="__new__">+ 새 장면 만들어 연결</option>':'');
-  const sim=view.sim[view.runner],logs=view.log[view.runner]||[],currentSim=sim?.session&&d.scenes.find(s=>s.id===sim.session.sceneId);
-  root.innerHTML=`<div class="dialogue-builder"><section class="card" id="dialogueEditor"><div class="card-head"><h2>선택지형 조사 만들기</h2><label class="checkline"><input data-dialogue-rule="enabled" type="checkbox" ${rule.enabled?'checked':''}> 이 규칙 켜기</label></div><p class="notice">장면의 이야기와 선택지를 적고, 선택했을 때 이어질 장면을 골라 주세요. 러너별로 진행 상황을 따로 저장해요.</p><p class="inline-help">등록된 러너가 선택한 운영 계정에 보낸 새 멘션에 반응해요. 러너는 봇의 답장에 다시 답글을 보내면 돼요.</p><div class="form-grid"><label>봇 설정 이름<input data-dialogue-rule="name" value="${esc(rule.name)}" maxlength="80"></label><label>어느 계정이 답할까?<select data-dialogue-rule="accountId">${ctx.accountOptions(rule.accountId)}</select></label><label class="span2">조사를 시작하는 키워드<input data-dialogue-rule="keyword" value="${esc(rule.keyword)}" maxlength="100"></label><label>시작 키워드 인식<select data-dialogue-rule="match"><option value="contains" ${rule.match==='contains'?'selected':''}>문장에 포함되면</option><option value="exact" ${rule.match==='exact'?'selected':''}>명령 전체가 같으면</option></select></label><label>처음 보여줄 장면<select data-dialogue-field="start">${options(d.start)}</select></label></div><details class="dialogue-controls"><summary>시작 횟수·중단·계속 명령</summary><p class="inline-help">하루 횟수와 대기시간은 새 조사를 시작할 때만 적용해요. 진행 중인 조사는 자정이나 횟수 제한에 막히지 않고 이어갈 수 있어요.</p><div class="form-grid"><label>러너 1명당 하루 시작 횟수 · 0은 무제한<input data-dialogue-rule="dailyLimit" type="number" min="0" max="1000" value="${rule.dailyLimit}"></label><label>새 조사 시작 대기시간 · 초<input data-dialogue-rule="cooldown" type="number" min="0" max="86400" value="${rule.cooldown}"></label>${[['stopKeyword','중단 명령'],['resumeKeyword','계속·현재 장면 다시 보기'],['endKeyword','완전히 끝내는 명령']].map(([k,t])=>`<label>${t}<input data-dialogue-field="${k}" value="${esc(d[k])}" maxlength="100"></label>`).join('')}</div><p class="inline-help">중단·계속·종료 명령은 적힌 말 그대로 보내면 돼요. 같은 계정에서는 러너당 조사 하나씩 진행해요.</p></details><div class="dialogue-scene-heading"><h3>장면 ${d.scenes.length}개</h3><button data-dialogue-action="addScene" class="small">+ 장면 추가</button></div><div class="dialogue-scene-list" aria-label="조사 장면 목록">${d.scenes.map(s=>`<button data-dialogue-scene="${esc(s.id)}" class="small ${scene.id===s.id?'green':''}" ${scene.id===s.id?'aria-current="true"':''}>${esc(s.title)}${s.id===d.start?' · 시작':s.end?' · 끝':''}</button>`).join('')}</div><div class="dialogue-scene-editor"><label>장면 이름<input data-scene-prop="title" value="${esc(scene.title)}" maxlength="80"></label><label>러너에게 보여줄 이야기<textarea data-scene-prop="text" rows="5" maxlength="1500">${esc(scene.text)}</textarea></label><p class="inline-help">선택지 번호와 단어는 아래 설정을 바탕으로 답장에 자동으로 붙여요. {닉네임}을 쓰면 러너 이름으로 바뀌어요.</p><label class="checkline"><input data-scene-prop="end" type="checkbox" ${scene.end?'checked':''}> 여기서 조사 끝내기</label>${scene.end?'<p class="inline-help">이야기와 장면 결과를 보낸 뒤 조사를 마쳐요.</p>':`<div class="dialogue-choices">${scene.choices.map((c,i)=>`<div class="dialogue-choice"><span class="tag">${i+1}</span><label>러너가 답할 키워드<input data-dialogue-choice-key value="${esc(c.keyword)}" maxlength="80"></label><label>이어서 보여줄 장면<select data-dialogue-next>${options(c.next,true)}</select></label><button data-dialogue-remove-choice="${i}" class="small" aria-label="선택지 ${i+1} 삭제">×</button></div>`).join('')}</div><button data-dialogue-action="addChoice" class="small">+ 선택지 추가</button><p class="inline-help">‘숲으로 갑니다’처럼 키워드가 포함된 말이나 ‘1’, ‘1번’으로 답할 수 있어요. 한 답장에 여러 선택지가 있으면 다시 골라 달라고 안내해요.</p>`}<details class="dialogue-effects" ${scene.actions.length?'open':''}><summary>이 장면에 처음 도착했을 때 · 결과 ${scene.actions.length}개</summary><p class="inline-help">조사 한 번 안에서는 같은 장면의 결과를 한 번만 적용해요. 아래 순서대로 실행하며, 조건이 맞지 않으면 이동과 변경을 취소해요.</p>${scene.actions.map((b,i)=>`<section class="dialogue-effect" data-dialogue-effect="${i}"><div class="card-head"><strong>${i+1}. ${effectNames[b.type]||b.type}</strong><div class="actions"><button data-dialogue-up-effect="${i}" class="small" aria-label="결과 ${i+1} 위로" ${i?'':'disabled'}>↑</button><button data-dialogue-remove-effect="${i}" class="small" aria-label="결과 ${i+1} 삭제">×</button></div></div>${effectFields(b)}</section>`).join('')}<div class="row"><select id="dialogueEffectType" aria-label="추가할 장면 결과">${Object.entries(effectNames).map(([v,t])=>`<option value="${v}">${t}</option>`).join('')}</select><button data-dialogue-action="addEffect" class="small">+ 결과 추가</button></div></details><button data-dialogue-action="deleteScene" class="small danger" ${d.scenes.length<2?'disabled':''}>이 장면 삭제</button></div><div class="editor-foot"><button data-dialogue-action="save" class="primary">규칙 저장</button><button data-dialogue-action="copy">복제</button><button data-dialogue-action="delete" class="danger">규칙 삭제</button></div></section><section class="card dialogue-practice"><div class="card-head"><h2>대화하며 연습하기</h2><button data-dialogue-action="resetPractice" class="small">처음부터</button></div><p class="inline-help">실제 툿이나 러너 기록에 영향을 주지 않아요. 설정을 바꾼 뒤에는 ‘처음부터’로 다시 시험해 주세요. 시작 횟수·대기시간은 시험하지 않아요.</p><label>시험할 러너<select id="dialoguePracticeRunner"><option value="a" ${view.runner==='a'?'selected':''}>연습 러너 A</option><option value="b" ${view.runner==='b'?'selected':''}>연습 러너 B</option></select></label><p class="dialogue-progress" role="status">${sim?.session?esc((sim.session.status==='paused'?'중단 · ':sim.session.status==='ended'?'종료 · ':'진행 중 · ')+(currentSim?.title||'변경된 장면')):'아직 시작하지 않았어요.'}</p><div class="dialogue-chat" aria-live="polite">${logs.map(m=>`<div class="bubble ${m.me?'me':''}">${esc(m.text)}</div>`).join('')||'<p class="inline-help">아래 ‘시작 키워드 보내기’를 눌러 첫 장면부터 확인해 보세요.</p>'}</div><div class="row"><input id="dialoguePracticeText" aria-label="조사 연습 답장" placeholder="선택지 단어나 번호를 적어 주세요."><button data-dialogue-action="sendPractice" class="green">답장 보내기</button></div><div class="actions dialogue-practice-controls"><button data-dialogue-command="${esc(rule.keyword)}" class="small">시작 키워드 보내기</button>${[['stopKeyword','중단'],['resumeKeyword','계속·다시 보기'],['endKeyword','종료']].map(([k,t])=>`<button data-dialogue-command="${esc(d[k])}" class="small">${t}</button>`).join('')}</div>${sim?`<details><summary>이 러너의 연습 기록</summary><h3>능력치</h3><p>${esc(Object.entries(sim.actor.stats).map(([k,v])=>k+' '+v).join(' · ')||'없음')}</p><h3>소지품</h3><p>${esc(Object.entries(sim.actor.inventory).filter(([,v])=>v>0).map(([k,v])=>k+' ×'+v).join(' · ')||'없음')}</p></details>`:''}</section></div>`;
+  const v=editors.get(rule.id);if(!d.scenes.some(s=>s.id===v.sceneId))v.sceneId=d.start;
+  const scene=d.scenes.find(s=>s.id===v.sceneId)||d.scenes[0];
+  const options=(value,add=false)=>'<option value="">다음 장면 선택</option>'+d.scenes.map(s=>`<option value="${esc(s.id)}" ${s.id===value?'selected':''}>${esc(s.title)}</option>`).join('')+(add?'<option value="__new__">+ 새 장면 만들어 연결</option>':'');
+  const keyOptions=(map,current)=>[...new Set([...map,current].filter(Boolean))].map(k=>`<option value="${esc(k)}" ${k===current?'selected':''}>${esc(k)}</option>`).join('');
+  root.innerHTML=`${listsHTML(c)}<div class="dialogue-builder"><section class="card" id="dialogueEditor"><div class="card-head"><h2>선택지형 조사</h2><label class="checkline"><input data-rule-prop="enabled" type="checkbox" ${rule.enabled?'checked':''}> 이 규칙 켜기</label></div><p class="notice">시작 키워드 → 첫 장면 → 러너의 선택 → 다음 장면 순서로 이어져요. 답장을 쉬어도 진행 상황이 저장되어 다음 답부터 이어져요.</p><div class="form-grid"><label>조사 이름<input data-rule-prop="name" value="${esc(rule.name)}" maxlength="80"></label><label>답장할 운영 계정<select data-rule-prop="accountId">${ctx.accountOptions(rule.accountId)}</select></label><label>조사를 시작하는 키워드<input data-rule-prop="keyword" value="${esc(rule.keyword)}"></label><label>첫 장면<select data-dialogue-prop="start">${options(d.start)}</select></label></div><details class="dialogue-controls"><summary>시작 키워드 인식·횟수 설정</summary><div class="form-grid"><label>인식 방식<select data-rule-prop="match"><option value="contains" ${rule.match==='contains'?'selected':''}>문장에 포함되면</option><option value="exact" ${rule.match==='exact'?'selected':''}>명령 전체가 같으면</option></select></label><label>러너당 하루 새 조사 횟수 · 0은 무제한<input data-rule-prop="dailyLimit" type="number" value="${rule.dailyLimit}" min="0" max="1000"></label><label>새 조사 시작 대기시간 · 초<input data-rule-prop="cooldown" type="number" value="${rule.cooldown}" min="0" max="86400"></label></div><p class="inline-help">진행 중인 선택지에 답하는 횟수는 여기서 차감하지 않아요. 등록된 러너가 운영 계정에 보낸 새 멘션에 반응해요.</p></details><div class="dialogue-scene-heading"><h3>편집할 장면</h3><button data-editor-act="addScene" class="small">+ 장면 추가</button></div><div class="dialogue-scene-list">${d.scenes.map(s=>`<button data-scene-pick="${esc(s.id)}" class="small ${s.id===scene.id?'green':''}">${esc(s.title)}${s.id===d.start?' · 시작':s.end?' · 끝':''}</button>`).join('')}</div><div class="dialogue-scene-editor"><label>장면 이름 · 운영자에게만 보임<input data-scene-prop="title" value="${esc(scene.title)}" maxlength="80"></label><section class="scene-stage"><h3>① 이 장면에 도착하면 보내는 이야기</h3><p class="inline-help">첫 장면이면 시작 키워드를 받았을 때, 다른 장면이면 이곳으로 연결된 선택지를 골랐을 때 나와요. 이 문장 속 수치는 결과 적용 전의 값이에요.</p><label>장면 이야기<textarea id="sceneNarrative" data-scene-prop="text" rows="4" maxlength="1500">${esc(scene.text)}</textarea></label>${variableHTML(c,'sceneNarrative',false)}</section><section class="scene-stage"><h3>② 이어서 처리할 결과</h3><p class="inline-help">필요한 작업을 추가해 주세요. 확률별 결과 안에도 아이템 획득·HP 감소·랜덤 능력치 상승 등을 함께 넣을 수 있어요. 같은 조사에서 같은 장면의 결과는 한 번만 적용해요.</p><div id="sceneActions">${actionsHTML(scene.actions,c)}</div><a href="#catalog" class="text-link">아이템·능력치 목록 관리 ↗</a></section><label class="checkline"><input data-scene-prop="end" type="checkbox" ${scene.end?'checked':''}> 이 장면에서 조사를 마칩니다</label><section class="scene-stage"><h3>③ ${scene.end?'마지막에 보낼 종료 문장':'다음 선택지 보내기'}</h3>${scene.end?`<p class="inline-help">① 이야기와 ② 결과 다음에 붙는 마지막 문장이에요. 종료 문장을 따로 보내지 않으려면 비워두세요.</p><label>조사를 마무리하는 문장<textarea id="sceneEnding" data-scene-prop="endText" rows="2" maxlength="1500">${esc(scene.endText??d.endText??'조사가 끝났어요.')}</textarea></label>${variableHTML(c,'sceneEnding')}`:`<p class="inline-help">조건이 맞는 선택지만 번호를 다시 매겨 러너에게 보여줘요. 숨긴 선택지의 키워드를 직접 보내도 이동하지 않아요.</p><div class="dialogue-choices">${scene.choices.map((choice,i)=>{const condition=choice.conditions?.[0],target=condition?.target||'';return `<section class="dialogue-choice-v2" data-choice-row="${i}"><div class="card-head"><strong>선택지 ${i+1}</strong><button data-choice-delete="${i}" class="small danger">선택지 삭제</button></div><div class="form-grid"><label>러너가 답할 단어<input data-choice-key value="${esc(choice.keyword)}" maxlength="80"></label><label>이 단어를 고르면 이동할 장면<select data-choice-next>${options(choice.next,true)}</select></label><label>이 선택지를 보여줄 조건<select data-choice-condition><option value="" ${!target?'selected':''}>항상 표시</option><option value="item" ${target==='item'?'selected':''}>아이템 수량이 조건에 맞을 때</option><option value="stat" ${target==='stat'?'selected':''}>능력치·변수가 조건에 맞을 때</option></select></label>${target?`<label>${target==='item'?'필요 아이템':'능력치·변수'}<select data-condition-key>${keyOptions(target==='item'?(c.items||[]).map(i=>i.name):Object.keys(c.fields||{}),condition.key)}</select></label><label>비교<select data-condition-op>${[['>=','이상'],['<=','이하'],['==','같음'],['>','초과'],['<','미만']].map(([op,t])=>`<option value="${op}" ${condition.op===op?'selected':''}>${t}</option>`).join('')}</select></label><label>기준 수치<input data-condition-amount type="number" value="${condition.amount}" step="any"></label>`:''}</div></section>`;}).join('')}</div><button data-editor-act="addChoice" class="small">+ 선택지 추가</button>`}</section><button data-editor-act="deleteScene" class="small danger" ${d.scenes.length===1?'disabled':''}>이 장면 삭제</button></div><div class="editor-foot"><button data-editor-act="save" class="primary">규칙 저장</button><button data-editor-act="copy">복제</button><button data-editor-act="delete" class="danger">규칙 삭제</button></div></section><section class="card dialogue-practice" id="dialoguePractice"></section></div>`;
   const collect=()=>{
-    for(const el of $$('[data-dialogue-rule]',root))rule[el.dataset.dialogueRule]=el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value;
-    for(const el of $$('[data-dialogue-field]',root))d[el.dataset.dialogueField]=el.value;
+    for(const el of $$('[data-rule-prop]',root))rule[el.dataset.ruleProp]=el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value;
+    for(const el of $$('[data-dialogue-prop]',root))d[el.dataset.dialogueProp]=el.value;
     for(const el of $$('[data-scene-prop]',root))scene[el.dataset.sceneProp]=el.type==='checkbox'?el.checked:el.value;
-    if(!scene.end)scene.choices=$$('.dialogue-choice',root).map(r=>({keyword:$('[data-dialogue-choice-key]',r).value.trim(),next:$('[data-dialogue-next]',r).value}));
-    for(const el of $$('[data-dialogue-effect]',root)){
-      const b=scene.actions[Number(el.dataset.dialogueEffect)],changedDice=b.type==='dice'&&(Number($('[data-effect-field="count"]',el).value)!==b.count||Number($('[data-effect-field="sides"]',el).value)!==b.sides);
-      for(const f of $$('[data-effect-field]',el))b[f.dataset.effectField]=f.type==='number'?Number(f.value):f.value;
-      if(b.type==='gather')b.loot=[{key:$('[data-loot-key]',el).value.trim(),amount:Number($('[data-loot-amount]',el).value),weight:1}];
-      if(b.type==='dice'){b.ranges=$$('[data-effect-max]',el).map((f,i)=>({max:Number(f.value),label:$$('[data-effect-verdict]',el)[i].value}));if(changedDice&&Number.isInteger(b.count)&&b.count>=1&&b.count<=20&&Number.isInteger(b.sides)&&b.sides>=2&&b.sides<=1000){b.ranges=diceRanges(b.count,b.sides,b.ranges.map(r=>r.label));$('.dialogue-ranges',el).innerHTML=b.ranges.map((r,i)=>`<div><label>구간 ${i+1} 끝<input data-effect-max type="number" value="${r.max}"></label><label>판정 이름<input data-effect-verdict value="${esc(r.label)}"></label></div>`).join('');}}
-    }
+    if(!scene.end&&$('.dialogue-choices',root))scene.choices=$$('[data-choice-row]',root).map((row,i)=>{
+      const target=$('[data-choice-condition]',row).value,old=scene.choices[i]?.conditions||[];
+      return {keyword:$('[data-choice-key]',row).value.trim(),next:$('[data-choice-next]',row).value,conditions:target?[{target,key:$('[data-condition-key]',row)?.value||old[0]?.key||(target==='item'?c.items?.[0]?.name:Object.keys(c.fields||{})[0])||'',op:$('[data-condition-op]',row)?.value||'>=',amount:Number($('[data-condition-amount]',row)?.value??1)},...old.slice(1)]:[]};
+    });
+    collectActions($('#sceneActions',root),scene.actions);
   };
-  const redraw=()=>mountDialogueEditor(root,ctx),changed=()=>{ctx.onChange();};
-  const newScene=(title='새 장면')=>{if(d.scenes.length>=60)throw Error('장면은 최대 60개예요.');const next={id:newId(),title,text:'이 장면의 이야기를 적어 주세요.',end:true,choices:[],actions:[]};d.scenes.push(next);return next;};
-  const send=text=>{
-    validateRule(rule);if(!text.trim())throw Error('보낼 답장을 적어 주세요.');
-    const previous=view.sim[view.runner]||{actor:{name:'연습 러너 '+view.runner.toUpperCase(),stats:structuredClone(ctx.fields),inventory:{}},session:null};
-    const out=advanceDialogue(rule,previous.actor,text,previous.session);
-    view.sim[view.runner]={actor:{...previous.actor,stats:out.stats,inventory:out.inventory},session:out.session};
-    view.log[view.runner]=[...(view.log[view.runner]||[]),{me:true,text},...out.replies.map(text=>({me:false,text}))].slice(-24);redraw();
-  };
-  root.oninput=e=>{if(e.target.id.startsWith('dialoguePractice'))return;collect();changed();};
-  for(const el of $$('[data-scene-prop="end"], [data-dialogue-next]',root))el.addEventListener('change',()=>{try{
-    collect();if(el.dataset.dialogueNext!==undefined&&el.value==='__new__'){const i=$$('[data-dialogue-next]',root).indexOf(el),next=newScene(scene.choices[i].keyword||'새 장면');scene.choices[i].next=next.id;view.sceneId=next.id;}
-    changed();redraw();
-  }catch(e){ctx.onError(e.message);}});
-  $('#dialoguePracticeRunner',root).onchange=e=>{collect();view.runner=e.target.value;redraw();};
-  $('#dialoguePracticeText',root).addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();$('[data-dialogue-action="sendPractice"]',root).click();}});
-  for(const b of $$('button',root))b.addEventListener('click',async()=>{
-    if(b.disabled)return;b.disabled=true;try{
-      collect();const act=b.dataset.dialogueAction;
-      if(b.dataset.dialogueScene){view.sceneId=b.dataset.dialogueScene;redraw();return;}
-      if(b.dataset.dialogueCommand!==undefined){send(b.dataset.dialogueCommand);return;}
-      if(b.dataset.dialogueRemoveChoice!==undefined){scene.choices.splice(Number(b.dataset.dialogueRemoveChoice),1);changed();redraw();return;}
-      if(b.dataset.dialogueRemoveEffect!==undefined){scene.actions.splice(Number(b.dataset.dialogueRemoveEffect),1);changed();redraw();return;}
-      if(b.dataset.dialogueUpEffect!==undefined){const i=Number(b.dataset.dialogueUpEffect);[scene.actions[i-1],scene.actions[i]]=[scene.actions[i],scene.actions[i-1]];changed();redraw();return;}
-      if(act==='save'){validateRule(rule);await ctx.onSave();return;}
+  const redraw=()=>{const y=window.scrollY;mountDialogueEditor(root,ctx);window.scrollTo(0,y);},changed=()=>ctx.onChange();
+  const makeScene=title=>{if(d.scenes.length>=60)throw Error('장면은 최대 60개예요.');const s={id:newId(),title:title||'새 장면',text:'이 장면의 이야기를 적어 주세요.',end:true,endText:'',choices:[],actions:[]};d.scenes.push(s);return s;};
+  root.oninput=e=>{if(e.target.closest('#dialoguePractice'))return;try{collect();changed();}catch(error){ctx.onError(error.message);}};
+  root.onchange=e=>{if(e.target.closest('#dialoguePractice'))return;try{
+    collect();
+    if(e.target.matches('[data-choice-next]')&&e.target.value==='__new__'){const index=Number(e.target.closest('[data-choice-row]').dataset.choiceRow),s=makeScene(scene.choices[index].keyword);scene.choices[index].next=s.id;v.sceneId=s.id;}
+    if(e.target.matches('[data-choice-condition],[data-choice-next],[data-scene-prop="end"]')){changed();redraw();}
+  }catch(error){ctx.onError(error.message);}};
+  root.onclick=async e=>{
+    const b=e.target.closest('button');if(!b||b.closest('#dialoguePractice')||b.disabled)return;e.preventDefault();
+    try{
+      collect();const command=actionCommand(b,scene.actions,c);if(command){if(command==='redraw'){changed();redraw();}return;}
+      if(b.dataset.scenePick){v.sceneId=b.dataset.scenePick;redraw();return;}
+      if(b.dataset.choiceDelete!==undefined){if(!confirm('이 선택지를 삭제할까요?'))return;scene.choices.splice(Number(b.dataset.choiceDelete),1);changed();redraw();return;}
+      const act=b.dataset.editorAct;
+      if(act==='save'){validateRule(rule);b.disabled=true;await ctx.onSave();return;}
       if(act==='copy'){await ctx.onCopy();return;}
-      if(act==='delete'){await ctx.onDelete();return;}
-      if(act==='sendPractice'){send($('#dialoguePracticeText',root).value);return;}
-      if(act==='resetPractice'){delete view.sim[view.runner];view.log[view.runner]=[];redraw();return;}
-      if(act==='addScene')view.sceneId=newScene().id;
+      if(act==='delete'){if(confirm('이 조사 규칙 전체를 삭제할까요?'))await ctx.onDelete();return;}
+      if(act==='addScene')v.sceneId=makeScene().id;
+      if(act==='addChoice'){if(scene.choices.length>=9)throw Error('선택지는 최대 9개예요.');scene.choices.push({keyword:'새 선택지',next:'',conditions:[]});}
       if(act==='deleteScene'){
-        if(d.scenes.some(s=>s.id!==scene.id&&!s.end&&s.choices.some(c=>c.next===scene.id)))throw Error('이 장면으로 연결된 선택지가 있어요. 연결을 다른 장면으로 바꾼 뒤 삭제해 주세요.');
-        d.scenes=d.scenes.filter(s=>s.id!==scene.id);if(d.start===scene.id)d.start=d.scenes[0].id;view.sceneId=d.start;
+        if(!confirm('이 장면과 그 안의 결과를 삭제할까요? 이 장면으로 향하는 선택지 연결도 해제돼요.'))return;
+        d.scenes=d.scenes.filter(s=>s.id!==scene.id);for(const s of d.scenes)for(const choice of s.choices)if(choice.next===scene.id)choice.next='';
+        if(d.start===scene.id)d.start=d.scenes[0].id;v.sceneId=d.start;
       }
-      if(act==='addChoice'){if(scene.choices.length>=9)throw Error('선택지는 최대 9개예요.');scene.choices.push({keyword:'선택지 '+(scene.choices.length+1),next:''});}
-      if(act==='addEffect'){if(scene.actions.length>=10)throw Error('장면 결과는 최대 10개예요.');scene.actions.push(defaultEffect($('#dialogueEffectType',root).value));}
       changed();redraw();
-    }catch(e){ctx.onError(e.message);}finally{b.disabled=false;}
-  });
+    }catch(error){ctx.onError(error.message);}finally{b.disabled=false;}
+  };
+  function simulation(){return v.sim[v.runner]??=( {actor:{name:'연습 러너 '+v.runner.toUpperCase(),stats:structuredClone(c.fields||{}),inventory:{}},session:null});}
+  function recordHTML(){const sim=simulation();return `<details><summary>시험용 능력치·소지품 바꾸기</summary><p class="inline-help">선택지 숨김 조건이나 아이템 사용을 시험할 때 수량을 바꿔 보세요.</p><div class="practice-values">${Object.entries(sim.actor.stats).map(([k,n])=>`<label>${esc(k)}<input data-practice-stat="${esc(k)}" type="number" value="${n}"></label>`).join('')}${[...new Set([...(c.items||[]).map(i=>i.name),...Object.keys(sim.actor.inventory)])].map(k=>`<label>${esc(k)} 소지 수량<input data-practice-item="${esc(k)}" type="number" value="${sim.actor.inventory[k]||0}" min="0" step="1"></label>`).join('')}</div></details>`;}
+  function chatHTML(){return (v.log[v.runner]||[]).map(m=>`<div class="bubble ${m.me?'me':''}">${esc(m.text)}</div>`).join('')||'<p class="inline-help">‘시작 키워드 보내기’를 누른 다음 단어나 번호로 답해 보세요.</p>';}
+  function updatePractice(){
+    const sim=simulation(),current=sim.session&&d.scenes.find(s=>s.id===sim.session.sceneId);
+    $('#practiceState',root).textContent=sim.session?(sim.session.status==='ended'?'조사 완료 · ':'진행 중 · ')+(current?.title||'변경된 장면'):'아직 시작하지 않았어요.';
+    const chat=$('#practiceLog',root);chat.innerHTML=chatHTML();chat.scrollTop=chat.scrollHeight;
+    $('#practiceRecords',root).innerHTML=recordHTML();
+  }
+  function send(text){
+    collect();validateRule(rule);if(!text.trim())throw Error('보낼 답장을 적어 주세요.');
+    const sim=simulation();const out=advanceDialogue(rule,sim.actor,text,sim.session,{items:c.items||[]});
+    v.sim[v.runner]={actor:{...sim.actor,stats:out.stats,inventory:out.inventory},session:out.session};
+    v.log[v.runner]=[...(v.log[v.runner]||[]),{me:true,text},...out.replies.map(text=>({text}))].slice(-40);
+    $('#practiceReply',root).value='';updatePractice();
+  }
+  const practice=$('#dialoguePractice',root);
+  practice.innerHTML=`<div class="card-head"><h2>대화하며 연습하기</h2><button class="small" data-practice-act="reset">처음부터</button></div><p class="inline-help">실제 계정과 기록은 바뀌지 않아요. 설정을 고쳤다면 ‘처음부터’로 다시 시험해 주세요.</p><label>시험할 러너<select id="practiceRunner"><option value="a" ${v.runner==='a'?'selected':''}>연습 러너 A</option><option value="b" ${v.runner==='b'?'selected':''}>연습 러너 B</option></select></label><p id="practiceState" class="dialogue-progress" role="status"></p><div class="dialogue-chat" id="practiceLog" aria-live="polite"></div><div class="practice-reply-row"><input id="practiceReply" aria-label="조사 연습 답장" placeholder="선택지 단어 또는 번호"><button data-practice-act="send" class="green">답장 보내기</button></div><div class="actions dialogue-practice-controls"><button data-practice-act="start" class="small">시작 키워드 보내기</button><button data-practice-act="current" class="small">현재 장면 다시 보기</button></div><div id="practiceRecords"></div><details><summary>등록한 아이템 사용 시험</summary><div class="action-add"><select id="practiceUseItem" aria-label="시험할 사용 아이템"><option value="">아이템 선택</option>${(c.items||[]).filter(i=>i.usable).map(i=>`<option value="${esc(i.name)}">${esc(i.name)}</option>`).join('')}</select><button data-practice-act="use" class="small">사용해 보기</button></div></details>`;
+  updatePractice();
+  practice.oninput=e=>{
+    e.stopPropagation();const sim=simulation();if(e.target.dataset.practiceStat!==undefined)sim.actor.stats[e.target.dataset.practiceStat]=Number(e.target.value);
+    if(e.target.dataset.practiceItem!==undefined)sim.actor.inventory[e.target.dataset.practiceItem]=Number(e.target.value);
+  };
+  practice.onchange=e=>{e.stopPropagation();if(e.target.id==='practiceRunner'){v.runner=e.target.value;updatePractice();}};
+  practice.onkeydown=e=>{if(e.key==='Enter'&&!e.isComposing&&e.target.id==='practiceReply'){e.preventDefault();$('[data-practice-act="send"]',root).click();}};
+  practice.onclick=async e=>{
+    const b=e.target.closest('button');if(!b)return;e.stopPropagation();e.preventDefault();
+    try{
+      if(b.dataset.practiceAct==='send')send($('#practiceReply',root).value);
+      if(['start','current'].includes(b.dataset.practiceAct))send(rule.keyword);
+      if(b.dataset.practiceAct==='reset'){if(!confirm('이 연습 러너의 대화와 시험 기록을 초기화할까요?'))return;delete v.sim[v.runner];v.log[v.runner]=[];updatePractice();}
+      if(b.dataset.practiceAct==='use'){
+        const {execute}=await import('./engine.mjs'),name=$('#practiceUseItem',root).value;if(!name)throw Error('사용할 아이템을 골라 주세요.');
+        const sim=simulation(),out=execute({blocks:[{type:'useItem',key:name,amount:1}]},sim.actor,{items:c.items});
+        sim.actor={...sim.actor,stats:out.stats,inventory:out.inventory};v.log[v.runner]=[...(v.log[v.runner]||[]),{me:true,text:name+' 사용'},...out.replies.map(text=>({text}))];updatePractice();
+      }
+    }catch(error){ctx.onError(error.message);}
+  };
 }

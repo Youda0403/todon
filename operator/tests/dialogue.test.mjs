@@ -15,19 +15,14 @@ test('investigation follows only the current scene, accepts natural keywords and
   a=move(r,a,'풀숲을 살펴봅니다.');assert.equal(a.session.sceneId,'grass');assert.equal(a.actor.inventory.약초,1);assert.equal(b.actor.inventory.약초,undefined);
   a=move(r,a,'풀숲');assert.equal(a.actor.inventory.약초,1);assert.equal(a.out.started,false);
 });
-test('stop, resume, repeating start and revisiting a scene cannot repeat its effects',()=>{
+test('waiting, repeating start and revisiting a scene preserve progress without repeating effects',()=>{
   const r=example('dialogue');r.dialogue.scenes.find(s=>s.id==='forest').actions=[{type:'item',key:'지도',amount:1}];
   const tree=r.dialogue.scenes.find(s=>s.id==='tree');tree.end=false;tree.choices=[{keyword:'돌아가기',next:'forest'}];validateRule(r);
-  let p={actor:actor(),session:null};
-  for(const text of [r.keyword,'숲',r.dialogue.stopKeyword])p=move(r,p,text);
-  assert.equal(p.session.status,'paused');assert.equal(p.actor.inventory.지도,1);
-  p=move(r,p,'나무');assert.equal(p.session.status,'paused');assert.equal(p.session.sceneId,'forest');
-  p=move(r,p,r.keyword);assert.equal(p.session.status,'paused');assert.equal(p.out.started,false);
-  p=move(r,p,r.dialogue.resumeKeyword);assert.equal(p.session.status,'active');assert.equal(p.actor.inventory.지도,1);
-  for(const text of ['나무','돌아가기',r.dialogue.resumeKeyword,r.keyword])p=move(r,p,text);
-  assert.equal(p.actor.inventory.지도,1);assert.equal(p.session.sceneId,'forest');
-  p=move(r,p,r.dialogue.endKeyword);assert.equal(p.session.status,'ended');
-  p=move(r,p,r.keyword);assert.equal(p.out.started,true);p=move(r,p,'숲');assert.equal(p.actor.inventory.지도,2);
+  let p={actor:actor(),session:null};for(const text of [r.keyword,'숲',r.keyword])p=move(r,p,text);
+  assert.equal(p.session.status,'active');assert.equal(p.actor.inventory.지도,1);
+  p.session.status='paused';p=move(r,p,'나무');assert.equal(p.session.status,'active');assert.equal(p.session.sceneId,'tree');
+  for(const text of ['돌아가기',r.keyword])p=move(r,p,text);assert.equal(p.actor.inventory.지도,1);
+  p=move(r,p,r.dialogue.endKeyword);p=move(r,p,r.keyword);assert.equal(p.out.started,true);p=move(r,p,'숲');assert.equal(p.actor.inventory.지도,2);
 });
 test('failed entry conditions roll back all effects and leave the runner in the previous scene',()=>{
   const r=example('dialogue'),forest=r.dialogue.scenes.find(s=>s.id==='forest');
@@ -52,8 +47,9 @@ test('deleted current scenes recover without rewards and malformed links, effect
   assert.equal(missing.session.status,'ended');assert.equal(missing.changes.length,0);
   for(const mutate of [
     r=>{r.dialogue.start='missing';},r=>{r.dialogue.scenes[0].choices[0].next='missing';},
-    r=>{r.dialogue.stopKeyword=r.dialogue.resumeKeyword;},r=>{r.dialogue.scenes[0].choices[0].keyword='조사 중단';},
+    r=>{r.dialogue.endKeyword=r.keyword;},r=>{r.dialogue.scenes[0].choices[0].keyword='조사 종료';},
     r=>{r.dialogue.scenes[0].choices[0].keyword='1';},r=>{r.dialogue.scenes[0].actions=[{type:'item',key:'약초',amount:0.5}];},
     r=>{r.dialogue.scenes[0].choices=[];},r=>{r.dialogue.scenes.push({...r.dialogue.scenes[0]});}
   ]){const r=structuredClone(base);mutate(r);assert.throws(()=>validateRule(r));}
 });
+

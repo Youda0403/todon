@@ -228,7 +228,7 @@ test('recipe awards and deductions are atomic and a repeated mention cannot craf
   try{await tick(e);await tick(e);const inv=JSON.parse(e.DB.sql.prepare('SELECT inventory FROM participants').get().inventory);assert.equal(inv.회복약,1);assert.equal(inv.약초,2);assert.equal(inv.물,1);assert.equal(e.DB.sql.prepare('SELECT COUNT(*) AS n FROM audit').get().n,1);}finally{globalThis.fetch=original;}
 });
 
-test('investigations persist separately per runner; ordinary commands and pause/resume preserve progress and start-only limits',async()=>{
+test('investigations persist separately per runner; ordinary commands and waiting preserve progress and start-only limits',async()=>{
   const e=env();await account(e);
   for(const runner of ['a','b'])e.DB.sql.prepare('INSERT INTO participants(id,acct,name,stats) VALUES(?,?,?,?)').run(runner,runner+'@planet.moe',runner,'{"체력":50}');
   const r={...example('dialogue','bot'),enabled:true,dailyLimit:1,cooldown:86400},check={...example('check','bot'),enabled:true,cooldown:0};
@@ -242,8 +242,8 @@ test('investigations persist separately per runner; ordinary commands and pause/
     await step('a','숲으로 가겠습니다.');await step('b','3번');
     assert.equal(session('a').sceneId,'forest');assert.equal(session('b').sceneId,'sea');
     await step('a','확인');assert.equal(session('a').sceneId,'forest');assert.match(posts.at(-1).status,/가방/);
-    await step('a',r.dialogue.stopKeyword);await step('a','풀숲');assert.equal(session('a').status,'paused');assert.equal(session('a').sceneId,'forest');
-    await step('a',r.dialogue.resumeKeyword);await step('a','2');
+    await step('a',r.keyword);assert.equal(session('a').status,'active');assert.equal(session('a').sceneId,'forest');
+    await step('a','2');
     assert.equal(session('a').status,'ended');assert.equal(session('a').sceneId,'grass');
     assert.equal(JSON.parse(e.DB.sql.prepare('SELECT inventory FROM participants WHERE id=?').get('a').inventory).약초,1);
     const usage=e.DB.sql.prepare('SELECT count FROM usage WHERE rule_id=? AND actor_id=?').get(r.id,'a');assert.equal(usage.count,1);
@@ -287,5 +287,33 @@ test('26 runner investigations drain within the query budget and keep exactly on
     for(const row of e.DB.sql.prepare('SELECT inventory FROM participants').all())assert.equal(JSON.parse(row.inventory).약초,1);
     assert.equal(posts.length,26);assert.equal(e.DB.sql.prepare('SELECT COUNT(*) AS n FROM audit').get().n,26);
     assert.equal(e.DB.sql.prepare("SELECT value FROM runtime WHERE key='tickError'").get().value,'');
+  }finally{globalThis.fetch=original;}
+});
+
+
+test('catalog items save through the API, are usable during an investigation, and cannot consume twice',async()=>{
+  const e=env();await account(e);e.DB.sql.prepare('INSERT INTO participants(id,acct,name,stats,inventory) VALUES(?,?,?,?,?)').run('runner','runner@planet.moe','러너','{}','{"회복약":1}');
+  const initial=await(await worker.fetch(request('/api/state'),e)).json();const r={...example('dialogue','bot'),enabled:true};
+  initial.config.paused=false;initial.config.fields={HP:100};initial.config.rules=[r];initial.config.items=[{id:'potion',name:'회복약',description:'회복',usable:true,consume:true,keyword:'[회복약 사용]',text:'회복 후 HP {HP}',effects:[{type:'stat',key:'HP',amount:10}]}];
+  assert.equal((await worker.fetch(request('/api/config','PUT',initial.config),e)).status,200);
+  const original=globalThis.fetch,posts=[];globalThis.fetch=async(url,opt)=>{if(url.includes('/notifications'))return Response.json([]);posts.push(JSON.parse(opt.body));return Response.json({id:'posted-'+posts.length});};
+  const job=async(id,text)=>{e.DB.sql.prepare('INSERT INTO jobs(id,account_id,actor_id,payload,created) VALUES(?,?,?,?,?)').run(id,'bot','runner',JSON.stringify({text,statusId:id,visibility:'private'}),Date.now());await tick(e);};
+  try{
+    await job('start',r.keyword);await job('use','[회복약 사용]');await tick(e);
+    assert.equal(JSON.parse(e.DB.sql.prepare('SELECT stats FROM participants').get().stats).HP,110);assert.equal(JSON.parse(e.DB.sql.prepare('SELECT inventory FROM participants').get().inventory).회복약,0);
+    assert.equal(JSON.parse(e.DB.sql.prepare("SELECT value FROM runtime WHERE key='dialog:bot:runner'").get().value).sceneId,'start');
+    assert.match(posts.at(-1).status,/회복 후 HP 110/);const count=posts.length;await tick(e);assert.equal(posts.length,count);
+    await job('use-again','[회복약 사용]');assert.match(posts.at(-1).status,/부족/);assert.equal(JSON.parse(e.DB.sql.prepare('SELECT stats FROM participants').get().stats).HP,110);
+  }finally{globalThis.fetch=original;}
+});
+test('the Worker rejects hidden choice keywords and reveals them after an operator changes inventory',async()=>{
+  const e=env();await account(e);e.DB.sql.prepare('INSERT INTO participants(id,acct,name,stats) VALUES(?,?,?,?)').run('runner','runner@planet.moe','러너','{}');
+  const r={...example('dialogue','bot'),enabled:true};r.dialogue.scenes[0].choices[0].conditions=[{target:'item',key:'열쇠',op:'>=',amount:1}];config(e,[r]);
+  const original=globalThis.fetch,posts=[];globalThis.fetch=async(url,opt)=>{if(url.includes('/notifications'))return Response.json([]);posts.push(JSON.parse(opt.body));return Response.json({id:'posted-'+posts.length});};
+  const job=async(id,text)=>{e.DB.sql.prepare('INSERT INTO jobs(id,account_id,actor_id,payload,created) VALUES(?,?,?,?,?)').run(id,'bot','runner',JSON.stringify({text,statusId:id,visibility:'private'}),Date.now());await tick(e);};
+  try{
+    await job('start',r.keyword);assert.ok(!posts.at(-1).status.includes('1. 숲'));assert.match(posts.at(-1).status,/1\. 동굴/);
+    await job('cheat','숲');assert.equal(JSON.parse(e.DB.sql.prepare("SELECT value FROM runtime WHERE key='dialog:bot:runner'").get().value).sceneId,'start');
+    e.DB.sql.prepare('UPDATE participants SET inventory=?').run('{"열쇠":1}');await job('valid','숲');assert.equal(JSON.parse(e.DB.sql.prepare("SELECT value FROM runtime WHERE key='dialog:bot:runner'").get().value).sceneId,'forest');
   }finally{globalThis.fetch=original;}
 });

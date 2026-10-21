@@ -84,8 +84,8 @@ export function commandText(text, handles=[]) {
 export function matches(rule,text) {
   const normalize=value=>normalizeMatchText(value,rule.ignoreSpaces),input=normalize(text);
   if(rule.match==='all')return Array.isArray(rule.keywords)&&rule.keywords.length>0&&rule.keywords.every(word=>normalize(word).length>0&&input.includes(normalize(word)));
-  const keyword=normalize(rule.keyword).trim();
-  return !!keyword && (rule.match==='exact'?input.trim()===keyword:input.includes(keyword));
+  const words=rule.match==='exact'?[rule.keyword]:String(rule.keyword||'').split(/[,\n]+/);
+  return words.some(word=>{const keyword=normalize(word).trim();return !!keyword&&(rule.match==='exact'?input.trim()===keyword:input.includes(keyword));});
 }
 const normalizeMatchText=(value,ignoreSpaces=false)=>{const text=String(value??'').normalize('NFC');return ignoreSpaces?text.replace(/\s+/gu,''):text;};
 function validateMatchWords(words,ignoreSpaces){
@@ -264,7 +264,7 @@ export function execute(rule, actor, {random=Math.random,history=[],diceTotal,it
   return {stats,inventory,effectiveStats:view().stats,changes,replies,rejected:false,trace,context:{result,diceValue,verdict,notation,itemName,itemCount}};
 }
 export function example(kind,accountId='') {
-  const base={id:newId(),accountId,enabled:false,name:'',keyword:'',match:'contains',dailyLimit:0,cooldown:30,blocks:[]};
+  const base={id:newId(),accountId,enabled:false,name:'',keyword:'',match:'contains',ignoreSpaces:true,dailyLimit:0,cooldown:30,blocks:[]};
   if(kind==='outcome')return {...base,name:'확률별 조사 결과',keyword:'[조사]',blocks:[outcomeExample()]};
   if(kind==='dialogue')return {...base,name:'선택지형 조사',keyword:'조사를 시작한다',cooldown:0,dailyLimit:3,kind:'dialogue',dialogue:dialogueExample()};
   const templates={
@@ -408,14 +408,13 @@ export function validateCatalog(items=[]){
     if(i.passiveStack!==undefined&&!['once','quantity'].includes(i.passiveStack))throw Error('상시 효과 중첩 방식을 확인해 주세요.');
     if(i.passiveEffects!==undefined&&(!Array.isArray(i.passiveEffects)||i.passiveEffects.length>20||i.passiveEffects.some(e=>!cleanKey(e.key)||!['stat','max'].includes(e.target)||!Number.isFinite(e.amount)||Math.abs(e.amount)>1e6)))throw Error('상시 보정의 대상 능력치와 수치를 확인해 주세요.');
     if(i.passive&&!i.passiveEffects?.length)throw Error('상시 발동 아이템에는 보정을 하나 이상 추가해 주세요.');
-    if(i.usable&&(typeof i.keyword!=='string'||!i.keyword.trim()||i.keyword.length>100||used.has(i.keyword)))throw Error('사용 가능한 아이템마다 서로 다른 사용 키워드를 적어 주세요.');
-    if(i.usable)used.add(i.keyword);
+    if(i.usable){const words=String(i.keyword||'').split(/[,\n]+/).map(w=>w.trim());validateMatchWords(words,true);for(const word of words){const key=word.normalize('NFC').replace(/\s+/gu,'');if(used.has(key))throw Error('다른 아이템과 겹치는 사용 키워드가 있어요: '+word);used.add(key);}}
     if(hasUse(i.effects))throw Error('아이템 사용 효과에서 다른 아이템 사용을 다시 실행할 수 없어요. 획득·소모 작업으로 설정해 주세요.');
     if(i.effects.length)validateRule({id:'catalog',name:i.name,keyword:'사용',match:'exact',dailyLimit:0,cooldown:0,blocks:i.effects});
   }
   return items;
 }
-export function itemUseRules(items,accountId){return (items||[]).filter(i=>i.usable).map(i=>({id:'use-'+i.id,name:i.name+' 사용',accountId,enabled:true,keyword:i.keyword,match:'contains',dailyLimit:0,cooldown:0,blocks:[{type:'useItem',key:i.name,amount:1}]}));}
+export function itemUseRules(items,accountId){return (items||[]).filter(i=>i.usable).map(i=>({id:'use-'+i.id,name:i.name+' 사용',accountId,enabled:true,keyword:i.keyword,match:'contains',ignoreSpaces:true,dailyLimit:0,cooldown:0,blocks:[{type:'useItem',key:i.name,amount:1}]}));}
 
 export function hasAction(blocks,type){return (blocks||[]).some(b=>b.type===type||b.type==='outcome'&&b.cases.some(c=>hasAction(c.blocks,type)));}
 export function actionReferences(blocks){return (blocks||[]).flatMap(b=>b.type==='runRecipe'?[b.recipeId]:b.type==='outcome'?b.cases.flatMap(c=>actionReferences(c.blocks)):[]);}

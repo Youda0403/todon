@@ -121,3 +121,12 @@ Node.js 22.13 이상(내장 `node:sqlite` 사용)에서 `npm test`로 실행합�
 
 공식 문서: [D1 시작](https://developers.cloudflare.com/d1/get-started/), [Workers Builds 설정](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/), [D1 무료 요금](https://developers.cloudflare.com/d1/platform/pricing/), [D1 제한](https://developers.cloudflare.com/d1/platform/limits/), [Workers 제한](https://developers.cloudflare.com/workers/platform/limits/).
 
+
+### 편집 화면과 지문 키워드
+
+- 아이템 / 능력치 / 레시피 탭으로 편집 대상을 나눕니다.
+- `이 아이템 설명만 저장`은 저장된 설정에서 해당 설명만 변경합니다. 신규 아이템은 사용·상시 효과를 끈 설명 항목으로 먼저 저장합니다. 미완성 효과, 다른 목록의 편집은 보내지 않고 화면의 초안에 남깁니다. 전체 설정 저장은 기존 검증을 유지합니다.
+- 아이템 사용 키워드는 쉼표로 구분합니다. 한 키워드가 지문에 포함되면 반응하며 띄어쓰기는 무시합니다. 동의어를 자동 추론하지 않으므로 필요한 표현을 추가합니다. 서로 다른 아이템의 동일 키워드는 저장을 거절합니다.
+- 일반 자동봇·조사 시작 키워드도 포함 인식에서 쉼표로 여러 표현을 지정할 수 있습니다. 기존의 정확히 일치 모드는 그대로 유지하며, 띄어쓰기 무시를 별도로 선택할 수 있습니다.
+- 조사 전체 흐름도에는 이야기·선택지·조건·연결 장면·기록 변화·종료 문장이 표시됩니다. 반복 연결은 참조로 표시하여 무한 전개를 막습니다. 장면 버튼은 편집 화면으로 이동합니다.
+- 실행 순서 요약은 위에서 아래 순서를 보여주고 확률 결과와 랜덤 답장 후보를 가지로 표시합니다. 키워드가 겹치는 다른 규칙까지 동시에 실행한다는 뜻이 아닙니다.

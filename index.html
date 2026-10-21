@@ -1945,18 +1945,18 @@ function verifyNotificationStatuses(list, acc){
   return state.pending;
 }
 function notifEl(n, acc = cur()){
-  const a = n.account, s = n.status;
+  const a = n.account, s = n.status, type = notificationDisplayType(n,acc.id);
   if (STATUS_NOTIFICATIONS.has(n.type) && !s) return document.createComment('unavailable-status');
   const identify = el => {
     el._notification = n; el.dataset.nid = n.id;
     if (s) el.dataset.sid = s.id;
     return el;
   };
-  if (['mention','status','quote','quoted_update'].includes(n.type) && s){
+  if (['mention','status','quote','quoted_update'].includes(type) && s){
     const el = statusEl(s,{acc});
-    const reply = isReply(n), toMe = reply && String(s.in_reply_to_account_id) === String(acc.id);
-    const kind = n.type === 'mention' ? (reply ? 'reply' : 'mention') : n.type === 'status' ? 'status' : 'quote';
-    const preTxt = {reply:toMe ? '님이 내 글에 답글을 달았어요' : '님이 답글을 달았어요', mention:'님이 나를 불렀어요', status:'님이 새 글을 올렸어요', quote:n.type === 'quote' ? '님이 내 글을 인용했어요' : '님이 내가 인용한 글을 수정했어요'}[kind];
+    const reply = isReply({...n,type}), toMe = reply && String(s.in_reply_to_account_id) === String(acc.id);
+    const kind = type === 'mention' ? (reply ? 'reply' : 'mention') : type === 'status' ? 'status' : 'quote';
+    const preTxt = {reply:toMe ? '님이 내 글에 답글을 달았어요' : '님이 답글을 달았어요', mention:'님이 나를 불렀어요', status:'님이 새 글을 올렸어요', quote:type === 'quote' ? '님이 내 글을 인용했어요' : '님이 내가 인용한 글을 수정했어요'}[kind];
     const icon = {reply:'corner', mention:'at', status:'bell', quote:'quote'}[kind];
     const pre = h(`<div class="pre k-${kind}">${ic(icon)}<span></span></div>`);
     $('span', pre).append(richName(a), preTxt);
@@ -4198,8 +4198,9 @@ const NTYPES = [
 ];
 const alertPrefs = () => Object.assign({mention:true, dm:true, favourite:true, reblog:true, follow:true, status:true, quote:true}, LS.get('ytt.alerts', {}));
 function alertKind(n){
-  if (isDm(n)) return 'dm';
-  return {mention:'mention', favourite:'favourite', reblog:'reblog', follow:'follow', follow_request:'follow', status:'status', quote:'quote', quoted_update:'quote', poll:'mention'}[n.type] || null;
+  const type = notificationDisplayType(n,cur()?.id);
+  if (isDm({...n,type})) return 'dm';
+  return {mention:'mention', favourite:'favourite', reblog:'reblog', follow:'follow', follow_request:'follow', status:'status', quote:'quote', quoted_update:'quote', poll:'mention'}[type] || null;
 }
 function pushAlerts(){
   const p = alertPrefs();
@@ -4405,28 +4406,37 @@ function notifSettingsEl(){
   return sec;
 }
 const POP_TXT = {mention:'님이 나를 불렀어요', favourite:'님이 내 글을 좋아해요', reblog:'님이 내 글을 부스트했어요', follow:'님이 나를 팔로우했어요', follow_request:'님이 팔로우를 요청했어요', status:'님이 새 글을 올렸어요', quote:'님이 내 글을 인용했어요', quoted_update:'님이 내가 인용한 글을 수정했어요', poll:'님의 투표가 끝났어요'};
+/* 새 글 구독 알림이어도 수신 계정이 명시된 멘션·답글이면 그 종류로 표시한다. */
+function notificationDisplayType(n,meId){
+  const s = n.status?.reblog || n.status;
+  if (n.type !== 'status' || !s || meId === null || meId === undefined) return n.type;
+  const toMe = s.in_reply_to_account_id !== null && s.in_reply_to_account_id !== undefined && String(s.in_reply_to_account_id) === String(meId);
+  const mentioned = Array.isArray(s.mentions) && s.mentions.some(m => m?.id !== null && m?.id !== undefined && String(m.id) === String(meId));
+  return toMe || mentioned ? 'mention' : n.type;
+}
 function exactNotificationId(value){
   if (typeof value === 'number') return Number.isSafeInteger(value) && value >= 0 ? String(value) : null;
   return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value) ? value : null;
 }
-function notificationTarget(n){
+function notificationTarget(n,meId = null){
+  if (!['mention','status','favourite','reblog','quote','quoted_update','poll','update','follow','follow_request'].includes(n.type)) return {kind:'list',id:'-'};
   const s = n.status?.reblog || n.status;
-  if (s){ const id = exactNotificationId(s.id); return id ? {kind:n.type === 'mention' && s.visibility === 'direct' ? 'chat' : 'thread',id} : {kind:'list',id:'-'}; }
+  if (s){ const id = exactNotificationId(s.id); return id ? {kind:notificationDisplayType(n,meId) === 'mention' && s.visibility === 'direct' ? 'chat' : 'thread',id} : {kind:'list',id:'-'}; }
   if (['mention','favourite','reblog','status','quote','quoted_update','poll','update'].includes(n.type)) return {kind:'list',id:'-'};
-  const id = exactNotificationId(n.account?.id);
+  const id = ['follow','follow_request'].includes(n.type) && exactNotificationId(n.account?.id);
   return id ? {kind:'user',id} : {kind:'list',id:'-'};
 }
 function validNotificationTarget(target){
-  return !!target && (target.kind === 'list' ? target.id === '-' : ['thread','chat','user'].includes(target.kind) && !!exactNotificationId(target.id));
+  return !!target && (target.kind === 'list' ? target.id === '-' : ['thread','chat','user','notification'].includes(target.kind) && !!exactNotificationId(target.id));
 }
 function notificationOpenRoute(hash){
-  const match = /^#\/notice\/[A-Za-z0-9_-]{1,128}\/(?:[a-f0-9]{12})?\/(thread|chat|user|list)\/([A-Za-z0-9_-]{1,128})(?:\/([a-f0-9]{32}))?$/.exec(hash);
+  const match = /^#\/notice\/[A-Za-z0-9_-]{1,128}\/(?:[a-f0-9]{12})?\/(thread|chat|user|list|notification)\/([A-Za-z0-9_-]{1,128})(?:\/([a-f0-9]{32}))?$/.exec(hash);
   const target = match && {kind:match[1],id:match[2]};
   return validNotificationTarget(target) ? {target,nonce:match[3] || null} : null;
 }
 function notificationOpenTarget(hash){ return notificationOpenRoute(hash)?.target || null; }
-function notifTarget(n){
-  const target = notificationTarget(n);
+function notifTarget(n,acc = cur()){
+  const target = notificationTarget(n,acc?.id);
   if (target.kind === 'chat') return '#/chat/' + dmKeyOf(n.status.reblog || n.status);
   if (target.kind === 'thread') return '#/thread/' + target.id;
   if (target.kind === 'user') return '#/user/' + target.id;
@@ -4440,15 +4450,15 @@ function popOut(p){
 function popup(n, more){
   if (!filterNotifications([n]).length) return;
   document.querySelectorAll('.pop:not(.updbar)').forEach(x => x.remove()); clearTimeout(popTimer);
-  const me = cur(), s = n.status?.reblog || n.status, dm = isDm({...n,status:s});
+  const me = cur(), s = n.status?.reblog || n.status, type = notificationDisplayType(n,me.id), dm = isDm({...n,type,status:s});
   /* 답글: 내 글에 단 답글뿐 아니라, 상대가 자기 글에 이어 쓰면서 나를 부른 경우처럼 대화 속 답글도 포함 */
-  const reply = isReply({...n,status:s});
+  const reply = isReply({...n,type,status:s});
   const toMe = reply && String(s.in_reply_to_account_id) === String(me.id);
-  const txt = dm ? '님이 쪽지를 보냈어요' : reply ? (toMe ? '님이 내 글에 답글을 달았어요' : '님이 답글을 달았어요') : POP_TXT[n.type];
+  const txt = dm ? '님이 쪽지를 보냈어요' : reply ? (toMe ? '님이 내 글에 답글을 달았어요' : '님이 답글을 달았어요') : POP_TXT[type];
   if (!txt) return;
-  const icn = dm ? 'mail' : reply ? 'corner' : ({favourite:'heart', reblog:'boost', follow:'user', follow_request:'user', status:'bell', quote:'quote', quoted_update:'quote', poll:'check'}[n.type] || 'at');
-  const kind = dm ? 'dm' : reply ? 'reply' : ({favourite:'fav', reblog:'boost', status:'status', quote:'quote', quoted_update:'quote', mention:'mention'}[n.type] || 'other');
-  const cls = n.type === 'favourite' ? 'fav' : n.type === 'reblog' ? 'boost' : 'k-' + kind;
+  const icn = dm ? 'mail' : reply ? 'corner' : ({favourite:'heart', reblog:'boost', follow:'user', follow_request:'user', status:'bell', quote:'quote', quoted_update:'quote', poll:'check'}[type] || 'at');
+  const kind = dm ? 'dm' : reply ? 'reply' : ({favourite:'fav', reblog:'boost', status:'status', quote:'quote', quoted_update:'quote', mention:'mention'}[type] || 'other');
+  const cls = type === 'favourite' ? 'fav' : type === 'reblog' ? 'boost' : 'k-' + kind;
   const tagTxt = {dm:'쪽지', reply:'답글', fav:'좋아요', boost:'부스트', status:'새 글', quote:'인용', mention:'멘션'}[kind] || '알림';
   const shownDestination = notifTarget(n), shownStatus = s ? {...s} : null;
   const p = h(`<div class="pop" role="status"><img class="av" alt=""><span class="pic ${cls}">${ic(icn)}</span><div class="t"><div class="pt"><span class="ptag k-${kind}">${tagTxt}</span><b></b><span class="ptx"></span></div><small></small></div><button class="ibtn" type="button" aria-label="닫기">${ic('x')}</button></div>`);
@@ -4495,6 +4505,26 @@ async function tokHint(t){
 }
 /* 알림 조회 결과는 사용자가 마지막으로 고른 이동에만 적용한다. */
 let notificationOpen = null, notificationHandoffHash = null;
+const seenPushDiagnostics = new Set();
+function importPushDiagnostics(entries){
+  if (!Array.isArray(entries)) return;
+  const cleanType = type => ['mention','status','favourite','reblog','follow','follow_request','quote','quoted_update','poll','update','dm','reply'].includes(type) ? type : 'other';
+  for (const entry of entries.slice(-20)){
+    const age = Date.now() - entry?.at;
+    if (!Number.isFinite(entry?.at) || age < 0 || age > 86400000) continue;
+    const data = {
+      typeHint:cleanType(entry.typeHint),receivedType:cleanType(entry.receivedType),displayKind:cleanType(entry.displayKind),
+      outcome:['ok','http','invalid','timeout','network','account-unknown'].includes(entry.outcome) ? entry.outcome : 'other',
+      hasAccount:entry.hasAccount === true,status:Number.isInteger(entry.status) && entry.status >= 0 && entry.status < 600 ? entry.status : 0,
+      attempts:[0,1,2].includes(entry.attempts) ? entry.attempts : 0,typeMismatch:entry.typeMismatch === true,hasStatus:entry.hasStatus === true
+    };
+    const key = entry.at + ':' + JSON.stringify(data);
+    if (seenPushDiagnostics.has(key)) continue;
+    seenPushDiagnostics.add(key);
+    if (seenPushDiagnostics.size > 100) seenPushDiagnostics.delete(seenPushDiagnostics.values().next().value);
+    recordDiag('push-preview',{...data,ageMs:Math.round(age)});
+  }
+}
 /* 복원된 주소만으로는 알림을 열지 않는다. 실제 클릭 때 발급한 정보를 한 번만 사용한다. */
 function claimNotificationOpen(hash){
   if (!navigator.serviceWorker || typeof MessageChannel !== 'function') return Promise.resolve(false);
@@ -4535,7 +4565,8 @@ function onSwMessage(ev){
   const m = ev.data || {};
   if (m.type === 'push') checkNotif();
   if (m.type === 'push-repair') checkPush({force:true});
-  if (m.type === 'worker-info' && /^\d{4}-\d{2}-\d{2}\.\d+$/.test(m.version || '')) recordDiag('worker-info', {version:m.version,routeVersion:[2,3].includes(m.routeVersion) ? m.routeVersion : 1});
+  if (m.type === 'worker-info' && /^\d{4}-\d{2}-\d{2}\.\d+$/.test(m.version || '')) recordDiag('worker-info', {version:m.version,routeVersion:[2,3,4].includes(m.routeVersion) ? m.routeVersion : 1});
+  if (m.type === 'push-diagnostics') importPushDiagnostics(m.entries);
   if (m.type === 'open'){
     let accepted = false;
     if (typeof m.hash === 'string' && (m.hash === '#/notifications' || notificationOpenTarget(m.hash) || /^#\/open\/[A-Za-z0-9_-]{1,128}\/(?:[a-f0-9]{12})?$/.test(m.hash))){
@@ -4557,7 +4588,8 @@ function openNotif(id, hint, shownTarget = null){
   if (notificationOpen && notificationOpen.hash === hash) return notificationOpen.task;
   cancelNotificationOpen('new-notification');
   const bound = validNotificationTarget(shownTarget), entry = notificationOpenRoute(hash), source = handedOff ? 'handoff' : 'url';
-  const controller = new AbortController(), trace = recordDiag('notification-open', {hasAccountHint:!!hint,routeVersion:entry?.nonce ? 3 : bound ? 2 : 1,source});
+  const resolving = bound && shownTarget.kind === 'notification';
+  const controller = new AbortController(), trace = recordDiag('notification-open', {hasAccountHint:!!hint,routeVersion:resolving ? 4 : entry?.nonce ? 3 : bound ? 2 : 1,source});
   const job = {hash,controller,trace,task:null}; notificationOpen = job;
   const current = () => notificationOpen === job && !controller.signal.aborted && location.hash === hash;
   const main = $('#main'), previous = main.firstElementChild;
@@ -4600,7 +4632,11 @@ function openNotif(id, hint, shownTarget = null){
       recipient = acc;
       if (!bound || shownTarget.kind === 'list'){
         recordDiag('notification-target', {trace,bound,matched:false,reason:bound ? 'unverified-display' : 'legacy'});
-        toast('이 알림에는 확인된 툿 정보가 없어 알림 목록을 열었어요.'); finish('#/notifications',acc); return;
+        toast('팝업의 상세 정보를 확인하지 못했어요. 알림 목록에서 확인해 주세요.'); finish('#/notifications',acc); return;
+      }
+      if (resolving && (!entry?.nonce || exactNotificationId(shownTarget.id) !== notificationId)){
+        recordDiag('notification-target', {trace,bound,matched:false,reason:'invalid-recovery'});
+        finish('#/notifications',acc); return;
       }
       const n = await api('/api/v1/notifications/' + encodeURIComponent(notificationId), {acc,signal:controller.signal,trace});
       if (!current()) return;
@@ -4608,16 +4644,16 @@ function openNotif(id, hint, shownTarget = null){
         recordDiag('notification-resolved', {trace, matched:false});
         toast('알림 정보가 일치하지 않아 열지 못했어요. 알림 목록에서 확인해 주세요.'); finish('#/notifications',acc); return;
       }
-      const actualTarget = notificationTarget(n);
-      const targetMatched = actualTarget.kind === shownTarget.kind && actualTarget.id === shownTarget.id;
+      const actualTarget = notificationTarget(n,acc.id);
+      const targetMatched = resolving ? actualTarget.kind !== 'list' : actualTarget.kind === shownTarget.kind && actualTarget.id === shownTarget.id;
       const type = ['mention','favourite','reblog','status','quote','quoted_update','poll','update','follow','follow_request'].includes(n.type) ? n.type : 'other';
       const status = n.status?.reblog || n.status;
-      recordDiag('notification-resolved', {trace,matched:true,targetMatched,type,hasParent:!!status?.in_reply_to_id});
+      recordDiag('notification-resolved', {trace,matched:true,targetMatched,type,hasParent:!!status?.in_reply_to_id,recovered:resolving,displayType:type === 'other' ? 'other' : notificationDisplayType(n,acc.id)});
       if (!targetMatched){
-        toast('알림에 표시된 툿과 조회 결과가 달라 알림 목록을 열었어요.'); finish('#/notifications',acc); return;
+        toast(resolving ? '알림은 확인했지만 연결된 글의 정보를 받지 못했어요. 알림 목록에서 확인해 주세요.' : '알림에 표시된 툿과 조회 결과가 달라 알림 목록을 열었어요.'); finish('#/notifications',acc); return;
       }
       if (!filterNotifications([n],acc).length){ toast('이 알림의 툿은 삭제되었거나 더 이상 볼 수 없어요.'); finish('#/notifications',acc); return; }
-      rememberStatusData(n,acc); finish(notifTarget(n),acc);
+      rememberStatusData(n,acc); finish(notifTarget(n,acc),acc);
     }catch(e){
       if (!current()) return;
       recordDiag('notification-open-error', {trace, phase:'lookup', status:e.status || 0, timeout:e.code === 'timeout'});
@@ -4828,7 +4864,7 @@ function mainSettings(root){
   const s7 = secEl('그 밖의 설정', '여기 없는 설정은 마스토돈 웹사이트에서 바꿀 수 있어요.');
   s7.append(linkRow('globe', '마스토돈 웹에서 설정 열기', me.instance + '/settings', () => window.open(`https://${me.instance}/settings/preferences`, '_blank', 'noopener')));
   s7.append(linkRow('memo', '문제 확인용 기록 복사', '최근 요청 시간과 화면 이동만 복사해요. 글 내용과 로그인 정보는 포함하지 않아요.', async () => {
-    const text = JSON.stringify({version:'2026-10-20.5', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
+    const text = JSON.stringify({version:'2026-10-21.1', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
     try{ await navigator.clipboard.writeText(text); toast('문제 확인용 기록을 복사했어요'); }
     catch(e){ toast('복사하지 못했어요. 브라우저의 클립보드 권한을 확인해 주세요.'); }
   }));

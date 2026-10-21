@@ -1,6 +1,6 @@
 // 역극툿 서비스 워커: 앱 화면 파일만 캐시하고, 마스토돈 서버 요청은 건드리지 않음
 const CACHE = 'ytt-v5';
-const WORKER_VERSION = '2026-10-20.5';
+const WORKER_VERSION = '2026-10-21.1';
 const BADGES = ['dm', 'reply', 'mention', 'fav', 'boost', 'status', 'follow', 'quote', 'default'].map(k => `./badge-${k}.png`);
 async function appClients(){
   const scope = new URL(self.registration.scope);
@@ -14,15 +14,16 @@ function exactNotificationId(value){
   if (typeof value === 'number') return Number.isSafeInteger(value) && value >= 0 ? String(value) : null;
   return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value) ? value : null;
 }
-function notificationTarget(n){
+function notificationTarget(n,meId = null){
+  if (!['mention','status','favourite','reblog','quote','quoted_update','poll','update','follow','follow_request'].includes(n.type)) return {kind:'list',id:'-'};
   const s = n.status?.reblog || n.status;
-  if (s){ const id = exactNotificationId(s.id); return id ? {kind:n.type === 'mention' && s.visibility === 'direct' ? 'chat' : 'thread',id} : {kind:'list',id:'-'}; }
+  if (s){ const id = exactNotificationId(s.id); return id ? {kind:notificationDisplayType(n,meId) === 'mention' && s.visibility === 'direct' ? 'chat' : 'thread',id} : {kind:'list',id:'-'}; }
   if (['mention','favourite','reblog','status','quote','quoted_update','poll','update'].includes(n.type)) return {kind:'list',id:'-'};
-  const id = exactNotificationId(n.account?.id);
+  const id = ['follow','follow_request'].includes(n.type) && exactNotificationId(n.account?.id);
   return id ? {kind:'user',id} : {kind:'list',id:'-'};
 }
 function validNotificationTarget(target){
-  return !!target && (target.kind === 'list' ? target.id === '-' : ['thread','chat','user'].includes(target.kind) && !!exactNotificationId(target.id));
+  return !!target && (target.kind === 'list' ? target.id === '-' : ['thread','chat','user','notification'].includes(target.kind) && !!exactNotificationId(target.id));
 }
 const SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', ...BADGES];
 
@@ -81,7 +82,10 @@ async function checkPage() {
 }
 self.addEventListener('message', e => {
   if (e.data && e.data.type === 'check') e.waitUntil(checkPage());
-  if (e.data?.type === 'worker-info') e.source?.postMessage({type:'worker-info',version:WORKER_VERSION,routeVersion:3});
+  if (e.data?.type === 'worker-info'){
+    e.source?.postMessage({type:'worker-info',version:WORKER_VERSION,routeVersion:4});
+    const task = sendPushDiagnostics(e.source); if (e.waitUntil) e.waitUntil(task);
+  }
   if (e.data?.type === 'notification-open-claim' && e.ports?.[0]){
     const task = claimNotificationIntent(e.data.hash,e.source?.url).catch(() => false).then(accepted => e.ports[0].postMessage({type:'notification-open-claim',accepted}));
     e.waitUntil(task);
@@ -113,7 +117,7 @@ function claimNotificationIntent(hash,clientURL){
     const url = new URL(clientURL), scope = new URL(self.registration.scope);
     if (url.origin !== scope.origin || !url.pathname.startsWith(scope.pathname)) return Promise.resolve(false);
   }catch(e){ return Promise.resolve(false); }
-  if (typeof hash !== 'string' || !/^#\/notice\/[A-Za-z0-9_-]{1,128}\/(?:[a-f0-9]{12})?\/(?:thread|chat|user|list)\/[A-Za-z0-9_-]{1,128}\/[a-f0-9]{32}$/.test(hash)) return Promise.resolve(false);
+  if (typeof hash !== 'string' || !/^#\/notice\/[A-Za-z0-9_-]{1,128}\/(?:[a-f0-9]{12})?\/(?:thread|chat|user|list|notification)\/[A-Za-z0-9_-]{1,128}\/[a-f0-9]{32}$/.test(hash)) return Promise.resolve(false);
   return changeNotificationIntents(entries => {
     const i = entries.findIndex(x => x.hash === hash);
     if (i < 0) return false;
@@ -145,13 +149,21 @@ const plainText = html => String(html || '')
   .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
   .replace(/^(\s*@[\w.-]+(@[\w.-]+)?)+\s*/, '').trim();
 function isReply(n) { return n.type === 'mention' && !!n.status && !!(n.status.in_reply_to_id || n.status.in_reply_to_account_id); }
+function notificationDisplayType(n,meId){
+  const s = n.status?.reblog || n.status;
+  if (n.type !== 'status' || !s || meId === null || meId === undefined) return n.type;
+  const toMe = s.in_reply_to_account_id !== null && s.in_reply_to_account_id !== undefined && String(s.in_reply_to_account_id) === String(meId);
+  const mentioned = Array.isArray(s.mentions) && s.mentions.some(m => m?.id !== null && m?.id !== undefined && String(m.id) === String(meId));
+  return toMe || mentioned ? 'mention' : n.type;
+}
 function describe(n, meId) {
   const name = (n.account && (n.account.display_name || n.account.username)) || '누군가';
   const s = n.status?.reblog || n.status;
+  const type = notificationDisplayType(n,meId);
   const text = s ? (s.spoiler_text ? '⚠ ' + s.spoiler_text : (plainText(s.content) || (s.media_attachments && s.media_attachments.length ? '사진' : ''))) : '';
-  const dm = n.type === 'mention' && s && s.visibility === 'direct';
+  const dm = type === 'mention' && s && s.visibility === 'direct';
   // 답글: 내 글에 단 답글 + 대화 속 답글(상대가 자기 글에 이어 쓰면서 나를 부른 경우 등)
-  const reply = isReply({...n,status:s});
+  const reply = isReply({...n,type,status:s});
   if (dm) return { title: `${name} · 쪽지`, body: text, kind: 'dm' };
   if (reply) return { title: `${name} · 답글`, body: text, kind: 'reply' };
   const t = {
@@ -165,8 +177,8 @@ function describe(n, meId) {
     quoted_update: [`${name}님이 내가 인용한 글을 수정했어요`, text],
     poll: ['투표가 끝났어요', text],
     update: [`${name}님이 글을 수정했어요`, text]
-  }[n.type];
-  return t ? { title: t[0], body: t[1], kind: n.type } : null;
+  }[type];
+  return t ? { title: t[0], body: t[1], kind: type } : null;
 }
 // 상단 상태 표시줄에 뜨는 작은 아이콘: 종류마다 다르게
 const BADGE_OF = { dm: 'dm', reply: 'reply', mention: 'mention', favourite: 'fav', reblog: 'boost', status: 'status', follow: 'follow', follow_request: 'follow', quote: 'quote', quoted_update: 'quote' };
@@ -180,23 +192,55 @@ async function readAccounts() {
 }
 // 푸시의 mention만으로는 답글과 일반 멘션을 구분할 수 없다.
 // 상세 조회는 전체 10초. 일시 실패는 한 번 재시도하고, 실패해도 알림은 표시한다.
-async function describePush(d, acc) {
+async function describePush(d, acc, diagnostic) {
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 10000);
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
+      diagnostic.attempts = attempt + 1;
       try {
         const r = await fetch(`https://${acc.instance}/api/v1/notifications/${encodeURIComponent(d.notification_id)}`, {
           headers: { Authorization: 'Bearer ' + d.access_token }, signal: controller.signal
         });
-        if (!r.ok) { if (!attempt && r.status >= 500 && !controller.signal.aborted) continue; return null; }
+        diagnostic.status = r.status;
+        if (!r.ok) { diagnostic.outcome = 'http'; if (!attempt && r.status >= 500 && !controller.signal.aborted) continue; return null; }
         const n = await r.json();
-        if (!n || String(n.id) !== String(d.notification_id) || (d.notification_type && n.type !== d.notification_type) || (n.type === 'mention' && !n.status)) return null;
+        diagnostic.receivedType = safePushType(n?.type); diagnostic.typeMismatch = !!d.notification_type && n?.type !== d.notification_type; diagnostic.hasStatus = !!n?.status;
+        if (!n || exactNotificationId(n.id) !== d.notification_id || (n.type === 'mention' && !n.status)){ diagnostic.outcome = 'invalid'; return null; }
         const described = describe(n,acc.id);
-        return described ? {...described,target:notificationTarget(n)} : null;
-      } catch (_) { if (controller.signal.aborted || attempt) return null; }
+        const target = notificationTarget(n,acc.id);
+        if (!described || target.kind === 'list'){ diagnostic.outcome = 'invalid'; return null; }
+        diagnostic.outcome = 'ok'; diagnostic.displayKind = described.kind;
+        return {...described,target};
+      } catch (error) { diagnostic.outcome = controller.signal.aborted ? 'timeout' : error?.name === 'SyntaxError' ? 'invalid' : 'network'; if (controller.signal.aborted || attempt) return null; }
     }
   } finally { clearTimeout(timer); }
   return null;
+}
+
+function safePushType(type){ return ['mention','status','favourite','reblog','follow','follow_request','quote','quoted_update','poll','update','dm','reply'].includes(type) ? type : 'other'; }
+/* 백그라운드의 실패 이유도 다음 실행 때 확인한다. 주소·번호·토큰·본문은 저장하지 않는다. */
+let pushDiagnosticTask = Promise.resolve();
+function recordPushDiagnostic(diagnostic){
+  const task = pushDiagnosticTask.catch(() => {}).then(async () => {
+    const cache = await caches.open('ytt-meta'), key = new URL('./ytt-push-diagnostics.json',self.registration.scope).href;
+    const old = await cache.match(key); let entries = [];
+    try{ entries = old ? await old.json() : []; }catch(e){}
+    if (!Array.isArray(entries)) entries = [];
+    entries.push({at:Date.now(),...diagnostic});
+    await cache.put(key,new Response(JSON.stringify(entries.slice(-20)),{headers:{'Content-Type':'application/json'}}));
+  });
+  pushDiagnosticTask = task;
+  return task.catch(() => {});
+}
+async function sendPushDiagnostics(client){
+  try{
+    const url = new URL(client?.url), scope = new URL(self.registration.scope);
+    if (url.origin !== scope.origin || !url.pathname.startsWith(scope.pathname)) return;
+    await pushDiagnosticTask.catch(() => {});
+    const cache = await caches.open('ytt-meta'), stored = await cache.match(new URL('./ytt-push-diagnostics.json',self.registration.scope).href);
+    const entries = stored ? await stored.json() : [];
+    if (Array.isArray(entries) && entries.length) client.postMessage({type:'push-diagnostics',entries:entries.slice(-20)});
+  }catch(e){}
 }
 
 // 휴대폰 알림: 앱이 화면에 떠 있으면 앱 안 팝업으로, 아니면 시스템 알림으로
@@ -210,13 +254,13 @@ self.addEventListener('push', e => {
     const vis = cs.find(c => c.visibilityState === 'visible');
     if (vis) { vis.postMessage({ type: 'push' }); return; }
     const hint = await tokHint(d.access_token);
-    // 상세 정보를 확인하지 못한 mention은 답글도 포함하는 일반 알림으로 표시한다.
-    const unclassified = d.notification_type === 'mention';
-    let title = unclassified ? '새 멘션·답글' : d.title || '역극툿', body = d.body || '', kind = unclassified ? 'other' : d.notification_type || 'other';
-    let target = {kind:'list',id:'-'};
+    // 미확인 미리보기는 종류·본문을 단정하지 않고, 누르면 정확한 알림 번호로 다시 확인한다.
+    let title = '새 알림', body = '앱을 열어 알림을 확인해 주세요.', kind = 'other';
+    let target = d.notification_id ? {kind:'notification',id:d.notification_id} : {kind:'list',id:'-'};
     const acc = (await readAccounts()).find(a => a && a.instance && a.hint && a.hint === hint);
+    const diagnostic = {typeHint:safePushType(d.notification_type),receivedType:'other',displayKind:'other',outcome:'account-unknown',hasAccount:!!acc,status:0,attempts:0,typeMismatch:false,hasStatus:false};
     if (acc && d.notification_id && d.access_token) {
-      const x = await describePush(d, acc);
+      const x = await describePush(d, acc,diagnostic);
       if (x) { title = x.title; body = x.body; kind = x.kind; target = x.target; }
     }
     await self.registration.showNotification(title, {
@@ -226,8 +270,9 @@ self.addEventListener('push', e => {
       vibrate: [80, 40, 80],
       timestamp: Date.now(),
       tag: 'ytt-' + (hint || 'unmatched') + '-' + (d.notification_id || Date.now()),
-      data: {id:d.notification_id || null,hint,routeVersion:3,workerVersion:WORKER_VERSION,target}
+      data: {id:d.notification_id || null,hint,routeVersion:4,workerVersion:WORKER_VERSION,target}
     });
+    await recordPushDiagnostic(diagnostic);
   })());
 });
 
@@ -247,7 +292,9 @@ self.addEventListener('notificationclick', e => {
   const click = ++notificationClickGeneration;
   e.notification.close();
   const data = e.notification.data || {}, id = exactNotificationId(data.id), hint = /^[a-f0-9]{12}$/.test(data.hint || '') ? data.hint : '';
-  const target = [2,3].includes(data.routeVersion) && validNotificationTarget(data.target) ? data.target : {kind:'list',id:'-'};
+  const valid = [2,3,4].includes(data.routeVersion) && validNotificationTarget(data.target);
+  const recover = data.routeVersion === 4 && data.target?.kind === 'notification' && exactNotificationId(data.target.id) === id;
+  const target = valid && (data.target.kind !== 'notification' || recover) ? data.target : {kind:'list',id:'-'};
   const baseHash = id ? `#/notice/${id}/${hint}/${target.kind}/${target.id}` : '#/notifications';
   const task = notificationClickTask.catch(() => {}).then(async () => {
     if (click !== notificationClickGeneration) return;

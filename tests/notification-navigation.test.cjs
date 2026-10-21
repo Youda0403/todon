@@ -91,7 +91,7 @@ function workerFixture(clients=[],storage=new Map()){
   setTimeout:(fn,ms)=>setTimeout(fn,ms===1500?10:ms),clearTimeout,
   caches:{open:async()=>({match:async key=>storage.has(key)?new Response(storage.get(key)):undefined,put:async(key,response)=>storage.set(key,await response.text())})}});
  vm.runInContext(worker,context);
- return {opened,navigated,messages,shown,context,storage,claim:async(hash,url='https://app.test/todon/')=>{let task,accepted;handlers.get('message')({data:{type:'notification-open-claim',hash},source:{url},ports:[{postMessage:data=>accepted=data.accepted}],waitUntil:p=>task=p});await task;return accepted;},click:(id='42',hint=fingerprint('private-a'),target={kind:'thread',id:'100'})=>{let task;handlers.get('notificationclick')({notification:{data:{id,hint,...(target?{routeVersion:2,target}:{})},close(){}},waitUntil:p=>task=p});return task;},
+ return {opened,navigated,messages,shown,context,storage,claim:async(hash,url='https://app.test/todon/')=>{let task,accepted;handlers.get('message')({data:{type:'notification-open-claim',hash},source:{url},ports:[{postMessage:data=>accepted=data.accepted}],waitUntil:p=>task=p});await task;return accepted;},click:(id='42',hint=fingerprint('private-a'),target={kind:'thread',id:'100'},routeVersion=2)=>{let task;handlers.get('notificationclick')({notification:{data:{id,hint,...(target?{routeVersion,target}:{})},close(){}},waitUntil:p=>task=p});return task;},
   push:()=>{let task;handlers.get('push')({data:{json:()=>({notification_id:'42',notification_type:'mention'})},waitUntil:p=>task=p});return task;}};
 }
 test('an unrelated focused or visible app never receives this app notification clicks',async()=>{
@@ -225,4 +225,52 @@ test('the current route accepts a receipt only as an exact additional component'
  const f=fixture(),base='#/notice/42/'+fingerprint('private-a')+'/thread/100',nonce='a'.repeat(32);f.context.hash=base+'/'+nonce;
  assert.equal(f.run('notificationOpenRoute(hash).nonce'),nonce);assert.equal(f.run('notificationOpenTarget(hash).id'),'100');
  for(const hash of [base+'/'+nonce+'/extra',base+'/short',base+'/'+'A'.repeat(32)]){f.context.hash=hash;assert.equal(f.run('notificationOpenRoute(hash)'),null);}
+});
+
+test('a neutral preview uses the exact notification ID to recover the replied-to account and post',async()=>{
+ const f=fixture();await f.start('42',fingerprint('private-b'),{kind:'notification',id:'42'});
+ assert.equal(f.calls.length,1);assert.equal(f.calls[0].path,'/api/v1/notifications/42');assert.equal(f.calls[0].acc,f.accounts[1]);assert.equal(f.run('curIdx'),1);assert.equal(f.location.hash,'#/thread/100');assert.ok(f.events.some(e=>e.kind==='notification-resolved'&&e.recovered&&e.matched&&e.targetMatched));
+});
+test('recovering a neutral preview still requires an issued unconsumed click receipt',async()=>{
+ for(const opts of [{receipt:false,handoff:false},{receipt:false,handoff:true}]){
+  const f=fixture();await f.start('42',fingerprint('private-a'),{kind:'notification',id:'42'},opts);assert.equal(f.calls.length,0);assert.ok(['#/home','#/notifications'].includes(f.location.hash));
+ }
+ const f=fixture(async()=>notice(),async()=>false);await f.start('42',fingerprint('private-a'),{kind:'notification',id:'42'});assert.equal(f.calls.length,0);assert.equal(f.location.hash,'#/home');
+});
+test('a changed recovery notification ID is rejected before any API request',async()=>{
+ const f=fixture();await f.start('42',fingerprint('private-a'),{kind:'notification',id:'43'});assert.equal(f.calls.length,0);assert.equal(f.location.hash,'#/notifications');
+});
+test('a mismatched recovered response cannot open its returned unrelated status',async()=>{
+ const f=fixture(async()=>notice('43','999'));await f.start('42',fingerprint('private-a'),{kind:'notification',id:'42'});assert.equal(f.location.hash,'#/notifications');assert.ok(f.events.some(e=>e.kind==='notification-resolved'&&!e.matched));
+});
+test('recovery supports a verified private reply or follow notification without assuming a public thread',async()=>{
+ for(const [n,target] of [[{...notice(),status:{...notice().status,visibility:'direct'}},'#/chat/dm-key'],[{id:'42',type:'follow',account:{id:'other'}},'#/user/other']]){
+  const f=fixture(async()=>n);await f.start('42',fingerprint('private-a'),{kind:'notification',id:'42'});assert.equal(f.location.hash,target);
+ }
+});
+test('missing status data and unsupported recovered event types guide to the list without a false deletion claim',async()=>{
+ for(const n of [{...notice(),status:null},{...notice(),type:'unknown'},notice('42',9007199254740993)]){
+  const f=fixture(async()=>n);await f.start('42',fingerprint('private-a'),{kind:'notification',id:'42'});assert.equal(f.location.hash,'#/notifications');assert.equal(f.messages.some(text=>/삭제/.test(text)),false);
+ }
+});
+test('an API-confirmed deletion during recovery is handled while a temporary failure leaves a distinct explanation',async()=>{
+ for(const status of [404,503]){const f=fixture(async()=>{throw Object.assign(new Error('Temporary server failure'),{status});});await f.start('42',fingerprint('private-a'),{kind:'notification',id:'42'});assert.equal(f.location.hash,'#/notifications');assert.equal(f.messages.some(text=>/삭제/.test(text)),status===404);}
+});
+test('a newer click or manual navigation cancels a pending recovery',async()=>{
+ const gate=defer(),f=fixture(()=>gate.promise),pending=f.start('42',fingerprint('private-a'),{kind:'notification',id:'42'});await f.waitForCalls(1);f.run("nav('#/thread/999')");gate.resolve(notice());await pending;assert.equal(f.location.hash,'#/thread/999');assert.equal(f.calls[0].signal.aborted,true);
+});
+test('only the new preview protocol can request notification-ID recovery from a worker click',async()=>{
+ for(const [version,allowed] of [[2,false],[3,false],[4,true]]){const f=workerFixture();await f.click('42',fingerprint('private-a'),{kind:'notification',id:'42'},version);assert.equal(f.opened[0].includes('/notification/42/'),allowed);}
+ const wrong=workerFixture();await wrong.click('42',fingerprint('private-a'),{kind:'notification',id:'43'},4);assert.ok(wrong.opened[0].includes('/list/-/'));
+});
+test('new neutral preview recovery is one-use and cannot be replayed after the worker restarts',async()=>{
+ const f=workerFixture();await f.click('42',fingerprint('private-a'),{kind:'notification',id:'42'},4);const hash=new URL(f.opened[0]).hash,restarted=workerFixture([],f.storage);assert.equal(await restarted.claim(hash),true);assert.equal(await restarted.claim(hash),false);
+});
+test('raw subscription events addressed to the recipient retain correct private-message navigation',async()=>{
+ const n={...notice(),type:'status',status:{...notice().status,visibility:'direct',mentions:[{id:'b'}]}},f=fixture(async()=>n);await f.start('42',fingerprint('private-b'),{kind:'chat',id:'100'});assert.equal(f.location.hash,'#/chat/dm-key');
+});
+test('imported worker diagnostics are bounded, sanitized and deduplicated across version handshakes',()=>{
+ const f=fixture(),entry={at:Date.now(),outcome:'http',status:503,attempts:2,typeHint:'status',receivedType:'other',displayKind:'other',hasAccount:true,hasStatus:false,typeMismatch:false,token:'secret',id:'42',body:'private body',url:'https://server.test/status/100'};
+ f.context.entries=[entry];f.run('importPushDiagnostics(entries);importPushDiagnostics(entries)');assert.equal(f.events.filter(e=>e.kind==='push-preview').length,1);assert.doesNotMatch(JSON.stringify(f.events),/secret|private body|server\.test|"id"|"body"|"url"/);
+ f.context.entries=Array.from({length:30},(_,i)=>({...entry,at:Date.now()-i-1}));f.run('importPushDiagnostics(entries)');assert.equal(f.events.filter(e=>e.kind==='push-preview').length,21);
 });

@@ -361,3 +361,15 @@ test('saving invalid recipes or removing a referenced recipe is rejected without
   initial.config.recipes=[];initial.config.rules=[{...example('check'),blocks:[{type:'runRecipe',recipeId:'deleted'}]}];assert.equal((await worker.fetch(request('/api/config','PUT',initial.config),e)).status,400);
   const current=await(await worker.fetch(request('/api/state'),e)).json();assert.equal(current.config.revision,initial.config.revision);assert.ok(!current.config.rules.some(r=>r.blocks?.some(b=>b.type==='runRecipe')));
 });
+test('saved multiword recipes require both material words regardless of spacing, then verify the actual inventory',async()=>{
+  const e=env();await account(e);e.DB.sql.prepare('INSERT INTO participants(id,acct,name,stats,inventory) VALUES(?,?,?,?,?)').run('runner','runner@planet.moe','러너','{"힘":3}','{"돌":1,"마른 풀":2}');
+  const initial=await(await worker.fetch(request('/api/state'),e)).json();initial.config.paused=false;initial.config.rules=[];initial.config.fields={힘:3};initial.config.recipes=[{id:'all-words',name:'불 피우기',callable:true,keyword:'',triggerMode:'all',triggerWords:['돌','마른 풀'],ignoreSpaces:true,ingredients:[{key:'돌',amount:1,consume:false},{key:'마른 풀',amount:1,consume:true}],conditions:[{target:'stat',key:'힘',op:'>=',amount:3}],chance:100,consumeOnFail:false,effects:[{type:'item',key:'불씨',amount:1}],successText:'불을 피웠습니다.',failureText:'실패했습니다.'}];
+  assert.equal((await worker.fetch(request('/api/config','PUT',initial.config),e)).status,200);const saved=await(await worker.fetch(request('/api/state'),e)).json();assert.deepEqual(saved.config.recipes[0].triggerWords,['돌','마른 풀']);assert.equal(saved.config.recipes[0].ignoreSpaces,true);
+  const original=globalThis.fetch,posts=[];globalThis.fetch=async(url,opt)=>{if(url.includes('/notifications'))return Response.json([]);posts.push(JSON.parse(opt.body));return Response.json({id:'post-'+posts.length});};
+  const job=async(id,text)=>{e.DB.sql.prepare('INSERT INTO jobs(id,account_id,actor_id,payload,created) VALUES(?,?,?,?,?)').run(id,'bot','runner',JSON.stringify({text,statusId:id,visibility:'private'}),Date.now());await tick(e);};
+  try{
+    await job('only-stone','돌을 사용한다');await job('only-grass','마른풀을 사용한다');assert.equal(posts.length,0);assert.equal(JSON.parse(e.DB.sql.prepare('SELECT inventory FROM participants').get().inventory)['마른 풀'],2);
+    await job('both','돌과 마른풀을 조합한다');await job('reversed','마른 풀 + 돌');assert.equal(posts.length,2);let inv=JSON.parse(e.DB.sql.prepare('SELECT inventory FROM participants').get().inventory);assert.equal(inv.불씨,2);assert.equal(inv['마른 풀'],0);assert.equal(inv.돌,1);
+    await job('no-material','마른풀과돌');assert.match(posts.at(-1).status,/조건이 부족/);inv=JSON.parse(e.DB.sql.prepare('SELECT inventory FROM participants').get().inventory);assert.equal(inv.불씨,2);assert.equal(inv['마른 풀'],0);
+  }finally{globalThis.fetch=original;}
+});

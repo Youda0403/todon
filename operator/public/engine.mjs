@@ -82,8 +82,14 @@ export function commandText(text, handles=[]) {
   return t;
 }
 export function matches(rule,text) {
-  const keyword=String(rule.keyword||'').trim();
-  return !!keyword && (rule.match==='exact'?text.trim()===keyword:text.includes(keyword));
+  const normalize=value=>normalizeMatchText(value,rule.ignoreSpaces),input=normalize(text);
+  if(rule.match==='all')return Array.isArray(rule.keywords)&&rule.keywords.length>0&&rule.keywords.every(word=>normalize(word).length>0&&input.includes(normalize(word)));
+  const keyword=normalize(rule.keyword).trim();
+  return !!keyword && (rule.match==='exact'?input.trim()===keyword:input.includes(keyword));
+}
+const normalizeMatchText=(value,ignoreSpaces=false)=>{const text=String(value??'').normalize('NFC');return ignoreSpaces?text.replace(/\s+/gu,''):text;};
+function validateMatchWords(words,ignoreSpaces){
+  if(!Array.isArray(words)||!words.length||words.length>20||words.some(w=>typeof w!=='string'||!w.trim()||w.length>80)||new Set(words.map(w=>normalizeMatchText(w.trim(),ignoreSpaces))).size!==words.length)throw Error('모두 들어가야 할 키워드를 쉼표로 나눠 1~20개 적어 주세요. 같은 키워드는 한 번만 적어 주세요.');
 }
 export function diceRanges(count=1,sides=100,labels=['어려운 성공','성공','실패','대실패']) {
   if(!Number.isInteger(count)||count<1||count>20||!Number.isInteger(sides)||sides<2||sides>1000)throw Error('주사위 개수는 1~20, 면수는 2~1000이에요.');
@@ -99,7 +105,9 @@ export function randomChoices(text){
 export function validateRule(rule, depth=0) {
   if(depth>3)throw Error('결과 안의 작업은 3단계까지만 연결할 수 있어요.');
   if(!rule || !cleanKey(rule.id) || !String(rule.name||'').trim() || String(rule.name).length>80)throw Error('봇 이름을 확인해 주세요.');
-  if(!rule.keyword || rule.keyword.length>100 || !['exact','contains'].includes(rule.match))throw Error('반응할 키워드를 입력해 주세요.');
+  if(!['exact','contains','all'].includes(rule.match)||rule.match!=='all'&&(!rule.keyword||rule.keyword.length>100))throw Error('반응할 키워드를 입력해 주세요.');
+  if(rule.ignoreSpaces!==undefined&&typeof rule.ignoreSpaces!=='boolean')throw Error('띄어쓰기 인식 설정을 확인해 주세요.');
+  if(rule.match==='all')validateMatchWords(rule.keywords,rule.ignoreSpaces);
   if(!Number.isInteger(rule.dailyLimit)||rule.dailyLimit<0||rule.dailyLimit>1000||!Number.isInteger(rule.cooldown)||rule.cooldown<0||rule.cooldown>86400)throw Error('횟수·대기시간을 확인해 주세요.');
   if(rule.kind==='dialogue')return validateDialogue(rule);
   if(!Array.isArray(rule.blocks)||!rule.blocks.length||rule.blocks.length>30)throw Error('블록은 1~30개까지 넣을 수 있어요.');
@@ -417,8 +425,12 @@ export function validateRecipes(recipes=[]){
   for(const r of recipes){
     if(!cleanKey(r.id)||ids.has(r.id)||typeof r.name!=='string'||!r.name.trim()||r.name.length>80||names.has(r.name)||typeof r.callable!=='boolean')throw Error('레시피 이름과 실행 설정을 확인해 주세요. 같은 이름은 한 번만 등록해 주세요.');
     ids.add(r.id);names.add(r.name);
-    if(typeof r.keyword!=='string'||r.keyword.length>100||r.callable&&(!r.keyword.trim()||keywords.has(r.keyword)))throw Error('직접 실행할 레시피는 서로 다른 키워드를 적어 주세요.');
-    if(r.callable)keywords.add(r.keyword);
+    if(r.triggerMode!==undefined&&!['keyword','all'].includes(r.triggerMode)||r.ignoreSpaces!==undefined&&typeof r.ignoreSpaces!=='boolean')throw Error('레시피의 인식 방식과 띄어쓰기 설정을 확인해 주세요.');
+    if(typeof r.keyword!=='string'||r.keyword.length>100||r.callable&&r.triggerMode!=='all'&&!r.keyword.trim())throw Error('직접 실행할 레시피에는 키워드를 적어 주세요.');
+    if(r.triggerMode==='all')validateMatchWords(r.triggerWords,r.ignoreSpaces);
+    const triggerKey=(r.triggerMode==='all'?'all:'+r.triggerWords.map(w=>normalizeMatchText(w.trim(),r.ignoreSpaces)).sort().join('\u0000'):'keyword:'+normalizeMatchText(r.keyword.trim(),r.ignoreSpaces))+':'+!!r.ignoreSpaces;
+    if(r.callable&&keywords.has(triggerKey))throw Error('같은 인식 조건을 쓰는 레시피가 있어요. 키워드를 다르게 설정해 주세요.');
+    if(r.callable)keywords.add(triggerKey);
     if(!Array.isArray(r.ingredients)||!r.ingredients.length||r.ingredients.length>20||new Set(r.ingredients.map(i=>i.key)).size!==r.ingredients.length||r.ingredients.some(i=>!cleanKey(i.key)||!Number.isInteger(i.amount)||i.amount<1||i.amount>10000||typeof i.consume!=='boolean'))throw Error(r.name+': 재료와 필요 수량, 소모 여부를 확인해 주세요.');
     validateConditions(r.conditions);if(r.conditions.some(c=>c.target!=='stat'))throw Error('능력치 조건에는 능력치를 골라 주세요.');
     if(!Number.isFinite(r.chance)||r.chance<0||r.chance>100||typeof r.consumeOnFail!=='boolean'||typeof r.successText!=='string'||r.successText.length>2000||typeof r.failureText!=='string'||!r.failureText.trim()||r.failureText.length>2000||!Array.isArray(r.effects)||r.effects.length>10)throw Error(r.name+': 확률과 결과 문장·효과를 확인해 주세요.');
@@ -432,6 +444,8 @@ export function validateRecipeReferences(config){
   const lists=[...(config.items||[]).map(i=>i.effects),...(config.rules||[]).flatMap(r=>r.kind==='dialogue'?r.dialogue.scenes.map(s=>s.actions):[r.blocks])];
   if(lists.some(blocks=>actionReferences(blocks).some(id=>!ids.has(id))))throw Error('삭제되었거나 선택하지 않은 레시피를 실행하는 작업이 있어요. 해당 작업에서 레시피를 다시 골라 주세요.');
 }
-export function recipeRules(recipes,accountId){return (recipes||[]).filter(r=>r.callable).map(r=>({id:'craft-'+r.id,name:r.name,accountId,enabled:true,keyword:r.keyword,match:'contains',dailyLimit:0,cooldown:0,blocks:[{type:'runRecipe',recipeId:r.id}]}));}
+const recipeTrigger=r=>({keyword:r.keyword,match:r.triggerMode==='all'?'all':'contains',keywords:r.triggerWords,ignoreSpaces:r.ignoreSpaces===true});
+export function matchesRecipe(recipe,text){return matches(recipeTrigger(recipe),text);}
+export function recipeRules(recipes,accountId){return (recipes||[]).filter(r=>r.callable).map(r=>({id:'craft-'+r.id,name:r.name,accountId,enabled:true,...recipeTrigger(r),dailyLimit:0,cooldown:0,blocks:[{type:'runRecipe',recipeId:r.id}]}));}
 export function itemDetails(name,items=[]){const item=items.find(i=>i.name===name);return name+' · 아이템 설명\n'+(item?.description?.trim()||'등록된 설명이 없어요.')+(item?.usable?'\n\n사용 키워드: '+item.keyword:'');}
 export function itemInfoRules(items,accountId){return (items||[]).map(i=>({id:'info-'+i.id,name:i.name+' 설명',accountId,enabled:true,keyword:'[설명 '+i.name+']',match:'exact',dailyLimit:0,cooldown:0,blocks:[{type:'inspectItem',key:i.name}]}));}

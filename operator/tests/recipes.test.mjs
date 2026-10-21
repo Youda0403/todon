@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {execute,example,validateRule,validateRecipes,validateRecipeReferences,recipeRules,itemInfoRules,selectBotRule,advanceDialogue} from '../public/engine.mjs';
+import {execute,example,validateRule,validateRecipes,validateRecipeReferences,recipeRules,itemInfoRules,selectBotRule,advanceDialogue,matchesRecipe,matches} from '../public/engine.mjs';
 const item=(name,description='')=>({id:name,name,description,usable:false,effects:[],text:''});
 const recipe=()=>({id:'fire',name:'불 피우기',callable:true,keyword:'[불 피우기]',ingredients:[{key:'돌',amount:1,consume:false},{key:'마른 풀',amount:2,consume:true}],conditions:[{target:'stat',key:'힘',op:'>=',amount:3}],chance:100,consumeOnFail:false,effects:[{type:'item',key:'불씨',amount:1}],successText:'불을 피웠습니다. 힘 {힘}',failureText:'불을 피우지 못했습니다.'});
 const actor=()=>({name:'러너',stats:{힘:3},inventory:{돌:1,'마른 풀':2}});
@@ -48,4 +48,15 @@ test('recipes remain executable inside nested item-use outcomes without bypassin
   const wrap=blocks=>[{type:'outcome',cases:[{name:'결과',chance:100,text:'',blocks}]}],r=recipe();r.effects=wrap(wrap(r.effects));validateRecipes([r]);
   const stone={...item('돌'),usable:true,consume:false,text:'',effects:wrap([{type:'runRecipe',recipeId:r.id}])},rule={...example('check'),blocks:wrap([{type:'useItem',key:'돌',amount:1}])};validateRule(rule);
   const o=execute(rule,actor(),{items:[stone],recipes:[r]});assert.equal(o.rejected,false);assert.equal(o.inventory.불씨,1);assert.equal(o.inventory['마른 풀'],0);assert.equal(o.inventory.돌,1);
+});
+test('all-word recipe triggers require every word in either order and can ignore whitespace',()=>{
+  const r={...recipe(),keyword:'',triggerMode:'all',triggerWords:['돌','마른 풀'],ignoreSpaces:true};validateRecipes([r]);const rule=recipeRules([r],'bot')[0];validateRule(rule);
+  for(const text of ['돌과 마른풀을 조합한다','마른 풀 + 돌','돌마른풀','마 른\t풀 그리고 돌','돌과 마른\u00a0풀']){assert.equal(matchesRecipe(r,text),true,text);assert.equal(matches(rule,text),true,text);assert.equal(selectBotRule([rule],text,null,actor()),rule);}
+  for(const text of ['돌','마른 풀','조합한다','',r.name])assert.equal(matchesRecipe(r,text),false,text);
+  r.ignoreSpaces=false;assert.equal(matchesRecipe(r,'돌과 마른풀'),false);assert.equal(matchesRecipe(r,'돌과 마른 풀'),true);
+});
+test('legacy recipe triggers stay literal and new all-word definitions reject blanks and duplicate normalized conditions',()=>{
+  const old=recipe();assert.equal(matchesRecipe(old,'[불피우기]'),false);assert.equal(matchesRecipe(old,'[불 피우기]'),true);
+  for(const words of [[],[' '],['돌','돌'],['마른 풀','마른풀'],Array.from({length:21},(_,i)=>'단어'+i)])assert.throws(()=>validateRecipes([{...old,triggerMode:'all',triggerWords:words,ignoreSpaces:true}]));
+  const r={...old,triggerMode:'all',triggerWords:['돌','마른 풀'],ignoreSpaces:true};assert.throws(()=>validateRecipes([r,{...r,id:'other',name:'다른 불',triggerWords:['마른풀','돌']}]),/같은 인식 조건/);
 });

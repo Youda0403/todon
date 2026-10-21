@@ -41,6 +41,22 @@ test('ordinary commands may run during investigation while choices and controls 
   assert.equal(selectBotRule([r],r.keyword,null),r);
   session.status='paused';assert.equal(selectBotRule([check,r],'확인',session),check);
 });
+test('empty arrival stories allow menus and result-only endings without blank replies',()=>{
+  const r=example('dialogue');
+  for(const scene of r.dialogue.scenes)scene.text=scene.id==='forest'?' \n ':'';
+  const grass=r.dialogue.scenes.find(s=>s.id==='grass');grass.endText='';grass.actions=[{type:'reply',text:'약초를 발견했습니다.'}];
+  const tree=r.dialogue.scenes.find(s=>s.id==='tree');tree.endText='';
+  validateRule(r);
+  const start=move(r,{actor:actor(),session:null},r.keyword);assert.equal(start.out.replies.length,1);assert.match(start.out.replies[0],/^1\. 숲/);
+  const forest=move(r,start,'숲');assert.equal(forest.out.replies.length,1);assert.match(forest.out.replies[0],/^1\. 나무/);
+  const result=move(r,forest,'풀숲');assert.deepEqual(result.out.replies,['약초를 발견했습니다.']);assert.equal(result.session.status,'ended');
+  const silent=move(r,forest,'나무');assert.deepEqual(silent.out.replies,[]);assert.equal(silent.session.status,'ended');
+});
+test('optional arrival stories retain title, type and length validation',()=>{
+  for(const mutate of [r=>{r.dialogue.scenes[0].text=null;},r=>{r.dialogue.scenes[0].text='가'.repeat(1501);},r=>{r.dialogue.scenes[0].title='';}]){
+    const r=example('dialogue');mutate(r);assert.throws(()=>validateRule(r));
+  }
+});
 test('deleted current scenes recover without rewards and malformed links, effects and control collisions are rejected',()=>{
   const base=example('dialogue');
   const missing=advanceDialogue(base,actor(),'숲',{ruleId:base.id,sceneId:'removed',status:'active',visited:[]});

@@ -285,7 +285,7 @@ export function validateDialogue(rule){
   const controls=[d.endKeyword].filter(Boolean);
   if(controls.some(k=>typeof k!=='string'||!k.trim()||k.length>100||matches(rule,k)))throw Error('종료 명령과 시작 키워드가 겹치지 않게 적어 주세요.');
   for(const scene of d.scenes){
-    if(typeof scene.title!=='string'||!scene.title.trim()||scene.title.length>80||typeof scene.text!=='string'||!scene.text.trim()||scene.text.length>1500||typeof scene.end!=='boolean')throw Error('각 장면의 이름과 이야기(1500자 이내)를 적어 주세요.');
+    if(typeof scene.title!=='string'||!scene.title.trim()||scene.title.length>80||typeof scene.text!=='string'||scene.text.length>1500||typeof scene.end!=='boolean')throw Error('장면 이름을 적고, 이야기는 비워두거나 1500자 이내로 적어 주세요.');
     if(scene.endText!==undefined&&(typeof scene.endText!=='string'||scene.endText.length>1500))throw Error('종료 문장은 1500자 이내로 적어 주세요.');
     if(!Array.isArray(scene.actions)||scene.actions.length>10)throw Error('장면 결과는 최대 10개까지 추가할 수 있어요.');
     if(scene.actions.length)validateRule({...rule,kind:undefined,dialogue:undefined,blocks:scene.actions});
@@ -316,7 +316,7 @@ export function dialogueChoices(scene,text,actor){
 }
 export function formatMessage(text,actor,context={}){const special={닉네임:actor.name,결과:context.result??'',주사위:context.diceValue??'',판정:context.verdict??'',주사위식:context.notation??''};return String(text||'').replace(/\{([^{}]+)\}/g,(_,k)=>Object.hasOwn(special,k)?String(special[k]):k.startsWith('물건:')?String(actor.inventory?.[k.slice(3)]||0):Object.hasOwn(actor.stats||{},k)?String(actor.stats[k]):'{'+k+'}');}
 export function dialoguePrompt(rule,scene,actor,context={}){
-  const text=formatMessage(scene.text,actor),choices=availableChoices(scene,actor);
+  const text=formatMessage(scene.text,actor).trim(),choices=availableChoices(scene,actor);
   const tail=scene.end?(scene.endText??rule.dialogue.endText??'조사가 끝났어요.'):choices.length?choices.map((c,i)=>`${i+1}. ${c.keyword}`).join('\n')+'\n\n선택지 단어나 번호로 답해 주세요.':'지금 고를 수 있는 선택지가 없어요. 필요한 소지품이나 능력치를 확인해 주세요.';
   return [text,formatMessage(tail,actor,context)].filter(Boolean).join('\n\n');
 }
@@ -358,7 +358,7 @@ export function advanceDialogue(rule,actor,text,previous=null,options={}){
   out.session={ruleId:rule.id,sceneId:target.id,status:target.end?'ended':'active',visited:[...new Set([...visited,target.id])]};
   const after={...actor,baseStats:undefined,stats:statView({stats:effect.stats,inventory:effect.inventory},options).stats,inventory:effect.inventory};
   const menu=dialoguePrompt(rule,{...target,text:''},after,effect.context).trim();
-  out.replies=[formatMessage(target.text,effectiveActor),...effect.replies,...(effect.changes.length?['기록 변경: '+effect.changes.join(' · ')]:[]),menu].filter(Boolean);
+  out.replies=[formatMessage(target.text,effectiveActor).trim(),...effect.replies,...(effect.changes.length?['기록 변경: '+effect.changes.join(' · ')]:[]),menu].filter(Boolean);
   return out;
 }
 

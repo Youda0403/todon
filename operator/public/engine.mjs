@@ -177,7 +177,7 @@ export function execute(rule, actor, {random=Math.random,history=[],diceTotal,it
         const recipe=recipes.find(r=>r.id===b.recipeId);if(!recipe)throw Error('등록된 레시피를 찾지 못했어요. 운영자에게 알려 주세요.');
         const missing=recipe.ingredients.filter(r=>(inventory[r.key]||0)<r.amount),failed=recipe.conditions.filter(c=>!conditionMatches({...c,target:'stat'},{stats:view().stats}));
         if(missing.length||failed.length)return {stats:numericMap(actor.baseStats||actor.stats),inventory:numericMap(actor.inventory),changes:[],replies:['조합 조건이 부족해요.\n'+[...missing.map(r=>`${r.key}: ${inventory[r.key]||0} / 필요 ${r.amount}`),...failed.map(c=>`${c.key}: ${view().stats[c.key]||0} / 필요 ${c.amount} ${{'>=':'이상','>':'초과','<=':'이하','<':'미만','==':'같음'}[c.op]}`)].join('\n')],rejected:true,trace:[...trace,'레시피 조건 불충족 · 재료를 소모하지 않음']};
-        const success=random()*100<recipe.chance;
+        const chance=recipeChance(recipe,view().stats),success=random()*100<chance.total;trace.push('조합 성공 확률: 기본 '+chance.base+'% + 보너스 '+chance.bonus+'%p → '+chance.total+'%');
         blocks=[...((success||recipe.consumeOnFail)?recipe.ingredients.filter(r=>r.consume!==false).map(r=>({type:'item',key:r.key,amount:-r.amount})):[]),...(success?recipe.effects:[])];
         result=success?'성공':'실패';message=success?recipe.successText:recipe.failureText;trace.push(recipe.name+' · 조합 '+result);
       }else{
@@ -433,6 +433,7 @@ export function validateRecipes(recipes=[]){
     if(!Array.isArray(r.ingredients)||!r.ingredients.length||r.ingredients.length>20||new Set(r.ingredients.map(i=>i.key)).size!==r.ingredients.length||r.ingredients.some(i=>!cleanKey(i.key)||!Number.isInteger(i.amount)||i.amount<1||i.amount>10000||typeof i.consume!=='boolean'))throw Error(r.name+': 재료와 필요 수량, 소모 여부를 확인해 주세요.');
     validateConditions(r.conditions);if(r.conditions.some(c=>c.target!=='stat'))throw Error('능력치 조건에는 능력치를 골라 주세요.');
     if(!Number.isFinite(r.chance)||r.chance<0||r.chance>100||typeof r.consumeOnFail!=='boolean'||typeof r.successText!=='string'||r.successText.length>2000||typeof r.failureText!=='string'||!r.failureText.trim()||r.failureText.length>2000||!Array.isArray(r.effects)||r.effects.length>10)throw Error(r.name+': 확률과 결과 문장·효과를 확인해 주세요.');
+    if(r.chanceBonuses!==undefined&&(!Array.isArray(r.chanceBonuses)||r.chanceBonuses.length>10||r.chanceBonuses.some(b=>!cleanKey(b.key)||!Number.isFinite(b.amount)||Math.abs(b.amount)>1e9||!Number.isFinite(b.bonus)||b.bonus<0||b.bonus>100)))throw Error(r.name+': 확률 보너스는 능력치·기준 수치·추가 확률(0~100)을 확인해 주세요.');
     if(hasAction(r.effects,'runRecipe')||hasAction(r.effects,'useItem'))throw Error('레시피 결과에는 아이템 획득·능력치 변화·문장을 직접 설정해 주세요. 다른 레시피나 아이템 사용을 다시 실행할 수는 없어요.');
     if(r.effects.length)validateRule({id:r.id,name:r.name,keyword:'검증',match:'exact',dailyLimit:0,cooldown:0,blocks:r.effects});
   }
@@ -448,3 +449,10 @@ export function matchesRecipe(recipe,text){return matches(recipeTrigger(recipe),
 export function recipeRules(recipes,accountId){return (recipes||[]).filter(r=>r.callable).map(r=>({id:'craft-'+r.id,name:r.name,accountId,enabled:true,...recipeTrigger(r),dailyLimit:0,cooldown:0,blocks:[{type:'runRecipe',recipeId:r.id}]}));}
 export function itemDetails(name,items=[]){const item=items.find(i=>i.name===name);return name+' · 아이템 설명\n'+(item?.description?.trim()||'등록된 설명이 없어요.')+(item?.usable?'\n\n사용 키워드: '+item.keyword:'');}
 export function itemInfoRules(items,accountId){return (items||[]).map(i=>({id:'info-'+i.id,name:i.name+' 설명',accountId,enabled:true,keyword:'[설명 '+i.name+']',match:'exact',dailyLimit:0,cooldown:0,blocks:[{type:'inspectItem',key:i.name}]}));}
+
+// Use effective stats before consuming ingredients (including passive modifiers).
+export function recipeChance(recipe,stats={}){
+ const matched=(recipe.chanceBonuses||[]).filter(b=>(stats[b.key]||0)>=b.amount);
+ const bonus=matched.reduce((sum,b)=>sum+b.bonus,0);
+ return {base:recipe.chance,bonus,total:Math.min(100,Math.max(0,recipe.chance+bonus)),matched};
+}

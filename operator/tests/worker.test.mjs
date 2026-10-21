@@ -373,3 +373,13 @@ test('saved multiword recipes require both material words regardless of spacing,
     await job('no-material','마른풀과돌');assert.match(posts.at(-1).status,/조건이 부족/);inv=JSON.parse(e.DB.sql.prepare('SELECT inventory FROM participants').get().inventory);assert.equal(inv.불씨,2);assert.equal(inv['마른 풀'],0);
   }finally{globalThis.fetch=original;}
 });
+
+test('recipe bonus settings persist and influence real queue execution with unusable ingredients',async()=>{
+ const e=env();await account(e);e.DB.sql.prepare('INSERT INTO participants(id,acct,name,stats,inventory) VALUES(?,?,?,?,?)').run('runner','runner@planet.moe','러너','{"행운":5}','{"돌":2}');
+ const state=await(await worker.fetch(request('/api/state'),e)).json();state.config.paused=false;state.config.rules=[];state.config.fields={행운:0};state.config.items=[{id:'stone',name:'돌',description:'재료',usable:false,text:'',effects:[]}];
+ state.config.recipes=[{id:'bonus',name:'조합',callable:true,keyword:'조합',ingredients:[{key:'돌',amount:1,consume:true}],conditions:[],chance:0,chanceBonuses:[{key:'행운',amount:5,bonus:100}],consumeOnFail:false,effects:[],successText:'보너스로 성공',failureText:'기본 확률로 실패'}];
+ assert.equal((await worker.fetch(request('/api/config','PUT',state.config),e)).status,200);
+ const saved=await(await worker.fetch(request('/api/state'),e)).json();assert.deepEqual(saved.config.recipes[0].chanceBonuses,state.config.recipes[0].chanceBonuses);
+ const original=globalThis.fetch,posts=[];globalThis.fetch=async(url,opt)=>url.includes('/notifications')?Response.json([]):(posts.push(JSON.parse(opt.body)),Response.json({id:'posted-'+posts.length}));
+ try{for(const [id,luck] of [['high',5],['low',4]]){e.DB.sql.prepare('UPDATE participants SET stats=?').run(JSON.stringify({행운:luck}));e.DB.sql.prepare('INSERT INTO jobs(id,account_id,actor_id,payload,created) VALUES(?,?,?,?,?)').run(id,'bot','runner',JSON.stringify({text:'돌을 조합한다.',statusId:id,visibility:'private'}),Date.now());await tick(e);}assert.match(posts[0].status,/보너스로 성공/);assert.match(posts[1].status,/기본 확률로 실패/);assert.equal(JSON.parse(e.DB.sql.prepare('SELECT inventory FROM participants').get().inventory).돌,1);}finally{globalThis.fetch=original;}
+});

@@ -60,3 +60,20 @@ test('legacy recipe triggers stay literal and new all-word definitions reject bl
   for(const words of [[],[' '],['돌','돌'],['마른 풀','마른풀'],Array.from({length:21},(_,i)=>'단어'+i)])assert.throws(()=>validateRecipes([{...old,triggerMode:'all',triggerWords:words,ignoreSpaces:true}]));
   const r={...old,triggerMode:'all',triggerWords:['돌','마른 풀'],ignoreSpaces:true};assert.throws(()=>validateRecipes([r,{...r,id:'other',name:'다른 불',triggerWords:['마른풀','돌']}]),/같은 인식 조건/);
 });
+
+test('recipe chance bonuses use thresholds, add together, cap at 100, and preserve legacy chance',async()=>{
+ const {recipeChance}=await import('../public/engine.mjs');const r={...recipe(),chance:40,chanceBonuses:[{key:'힘',amount:3,bonus:10},{key:'행운',amount:5,bonus:20}]};
+ validateRecipes([r]);assert.equal(recipeChance(r,{힘:2,행운:4}).total,40);assert.equal(recipeChance(r,{힘:3,행운:4}).total,50);assert.equal(recipeChance(r,{힘:3,행운:5}).total,70);
+ assert.match(run(r,{...actor(),stats:{힘:3,행운:5}},{random:()=>.69}).replies.at(-1),/불을 피웠습니다/);assert.equal(run(r,actor(),{random:()=>.5}).replies.at(-1),r.failureText);
+ r.chance=90;assert.equal(recipeChance(r,{힘:3,행운:5}).total,100);delete r.chanceBonuses;assert.equal(recipeChance(r,{}).total,90);
+});
+test('recipe bonuses count passive stats before consuming materials and never bypass mandatory conditions',()=>{
+ const r={...recipe(),chance:0,chanceBonuses:[{key:'힘',amount:3,bonus:100}]};r.ingredients=[{key:'돌',amount:1,consume:true}];
+ const items=[{...item('돌'),usable:false,passive:true,passiveEffects:[{key:'힘',target:'stat',amount:1}]}];
+ const a={...actor(),stats:{힘:2}};const out=run(r,a,{items,random:()=>.99});assert.equal(out.rejected,false);assert.equal(out.inventory.돌,0);assert.match(out.replies.at(-1),/불을 피웠습니다/);
+ assert.equal(run(r,{...a,stats:{힘:1}},{items}).rejected,true);
+ const capped=run(r,a,{items,statMaxes:{힘:2}});assert.equal(capped.rejected,true);
+});
+test('invalid recipe probability bonuses are rejected',()=>{
+ for(const value of [null,{},[{key:'',amount:5,bonus:10}],[{key:'힘',amount:NaN,bonus:10}],[{key:'힘',amount:5,bonus:-1}],[{key:'힘',amount:5,bonus:101}],Array.from({length:11},()=>({key:'힘',amount:5,bonus:1}))])assert.throws(()=>validateRecipes([{...recipe(),chanceBonuses:value}]),/확률 보너스/);
+});

@@ -61,7 +61,7 @@ export function mountDialogueEditor(root,ctx){
   }
   function send(text){
     collect();validateRule(rule);if(!text.trim())throw Error('보낼 답장을 적어 주세요.');
-    const sim=simulation();const out=advanceDialogue(rule,sim.actor,text,sim.session,{items:c.items||[],statMaxes:c.statMaxes||{}});
+    const sim=simulation();const out=advanceDialogue(rule,sim.actor,text,sim.session,{items:c.items||[],recipes:c.recipes||[],statMaxes:c.statMaxes||{}});
     v.sim[v.runner]={actor:{...sim.actor,stats:out.stats,inventory:out.inventory},session:out.session};
     v.log[v.runner]=[...(v.log[v.runner]||[]),{me:true,text},...out.replies.map(text=>({text}))].slice(-40);
     $('#practiceReply',root).value='';updatePractice();
@@ -84,7 +84,7 @@ export function mountDialogueEditor(root,ctx){
       if(b.dataset.practiceAct==='reset'){if(!confirm('이 연습 러너의 대화와 시험 기록을 초기화할까요?'))return;delete v.sim[v.runner];v.log[v.runner]=[];updatePractice();}
       if(b.dataset.practiceAct==='use'){
         const {execute}=await import('./engine.mjs'),name=$('#practiceUseItem',root).value;if(!name)throw Error('사용할 아이템을 골라 주세요.');
-        const sim=simulation(),out=execute({blocks:[{type:'useItem',key:name,amount:1}]},sim.actor,{items:c.items,statMaxes:c.statMaxes||{}});
+        const sim=simulation(),out=execute({blocks:[{type:'useItem',key:name,amount:1}]},sim.actor,{items:c.items,recipes:c.recipes||[],statMaxes:c.statMaxes||{}});
         sim.actor={...sim.actor,stats:out.stats,inventory:out.inventory};v.log[v.runner]=[...(v.log[v.runner]||[]),{me:true,text:name+' 사용'},...out.replies.map(text=>({text}))];updatePractice();
       }
     }catch(error){ctx.onError(error.message);}

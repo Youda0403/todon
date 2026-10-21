@@ -340,3 +340,24 @@ test('a short alias advances its displayed choice through the server while hidde
   const job=async(id,text)=>{e.DB.sql.prepare('INSERT INTO jobs(id,account_id,actor_id,payload,created) VALUES(?,?,?,?,?)').run(id,'bot','runner',JSON.stringify({text,statusId:id,visibility:'private'}),Date.now());await tick(e);};
   try{await job('start',r.keyword);assert.match(posts.at(-1).status,/1\. 칼로 벗긴다/);await job('choose','칼');assert.equal(JSON.parse(e.DB.sql.prepare("SELECT value FROM runtime WHERE key='dialog:bot:runner'").get().value).sceneId,'forest');}finally{globalThis.fetch=original;}
 });
+test('registered recipes save and execute atomically through automatic commands, and descriptions can be read from the bag',async()=>{
+  const e=env();await account(e);e.DB.sql.prepare('INSERT INTO participants(id,acct,name,stats,inventory) VALUES(?,?,?,?,?)').run('runner','runner@planet.moe','러너','{"힘":2}','{"돌":1,"마른 풀":1}');
+  const initial=await(await worker.fetch(request('/api/state'),e)).json();initial.config.paused=false;initial.config.fields={힘:2};initial.config.rules=[];
+  initial.config.items=['돌','마른 풀','불씨'].map((name,n)=>({id:'resource-'+n,name,description:name+' 설명',usable:false,text:'',effects:[]}));
+  initial.config.recipes=[{id:'fire',name:'불 피우기',callable:true,keyword:'[불 피우기]',ingredients:[{key:'돌',amount:1,consume:false},{key:'마른 풀',amount:1,consume:true}],conditions:[{target:'stat',key:'힘',op:'>=',amount:3}],chance:100,consumeOnFail:true,effects:[{type:'item',key:'불씨',amount:1}],successText:'불을 피웠습니다.',failureText:'실패했습니다.'}];
+  assert.equal((await worker.fetch(request('/api/config','PUT',initial.config),e)).status,200);
+  const original=globalThis.fetch,posts=[];globalThis.fetch=async(url,opt)=>{if(url.includes('/notifications'))return Response.json([]);posts.push(JSON.parse(opt.body));return Response.json({id:'post-'+posts.length});};
+  const job=async(id,text)=>{e.DB.sql.prepare('INSERT INTO jobs(id,account_id,actor_id,payload,created) VALUES(?,?,?,?,?)').run(id,'bot','runner',JSON.stringify({text,statusId:id,visibility:'private'}),Date.now());await tick(e);};
+  try{
+    await job('low-stat','[불 피우기]');assert.match(posts.at(-1).status,/힘: 2/);assert.equal(JSON.parse(e.DB.sql.prepare('SELECT inventory FROM participants').get().inventory)['마른 풀'],1);
+    e.DB.sql.prepare('UPDATE participants SET stats=?').run('{"힘":3}');await job('craft','[불 피우기]');const inv=JSON.parse(e.DB.sql.prepare('SELECT inventory FROM participants').get().inventory);assert.equal(inv.돌,1);assert.equal(inv['마른 풀'],0);assert.equal(inv.불씨,1);assert.match(posts.at(-1).status,/불씨 설명/);assert.equal(posts.at(-1).visibility,'private');
+    const count=posts.length;await tick(e);assert.equal(posts.length,count);assert.equal(JSON.parse(e.DB.sql.prepare('SELECT inventory FROM participants').get().inventory).불씨,1);
+    await job('inspect','[설명 불씨]');assert.match(posts.at(-1).status,/불씨 설명/);await job('again','[불 피우기]');assert.match(posts.at(-1).status,/조건이 부족/);assert.equal(JSON.parse(e.DB.sql.prepare('SELECT inventory FROM participants').get().inventory).불씨,1);
+  }finally{globalThis.fetch=original;}
+});
+test('saving invalid recipes or removing a referenced recipe is rejected without overwriting settings',async()=>{
+  const e=env(),initial=await(await worker.fetch(request('/api/state'),e)).json();initial.config.recipes=[{id:'bad',name:'잘못된 레시피',callable:true,keyword:'[조합]',ingredients:[],conditions:[],chance:100,consumeOnFail:false,effects:[],successText:'성공',failureText:'실패'}];
+  assert.equal((await worker.fetch(request('/api/config','PUT',initial.config),e)).status,400);
+  initial.config.recipes=[];initial.config.rules=[{...example('check'),blocks:[{type:'runRecipe',recipeId:'deleted'}]}];assert.equal((await worker.fetch(request('/api/config','PUT',initial.config),e)).status,400);
+  const current=await(await worker.fetch(request('/api/state'),e)).json();assert.equal(current.config.revision,initial.config.revision);assert.ok(!current.config.rules.some(r=>r.blocks?.some(b=>b.type==='runRecipe')));
+});

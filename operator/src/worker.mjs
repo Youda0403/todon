@@ -1,4 +1,4 @@
-import {execute,validateRule,numericMap,commandText,matches,cleanKey,selectBotRule,advanceDialogue,validateCatalog,itemUseRules,validateStatMaxes,statView,boundBaseStats,participantView} from '../public/engine.mjs';
+import {execute,validateRule,numericMap,commandText,matches,cleanKey,selectBotRule,advanceDialogue,validateCatalog,itemUseRules,validateStatMaxes,statView,boundBaseStats,participantView,validateRecipes,validateRecipeReferences,recipeRules,itemInfoRules} from '../public/engine.mjs';
 const json=(value,status=200)=>Response.json(value,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
 const err=(text,status=400)=>Object.assign(Error(text),{status});
 const now=()=>Date.now();
@@ -81,6 +81,8 @@ function validateConfig(c){
   c.fields=numericMap(c.fields);assert(Object.keys(c.fields).length<=30,'능력치는 최대 30개예요.');
   c.statMaxes=validateStatMaxes(c.statMaxes||{},c.fields);
   validateCatalog(c.items||[]);
+  validateRecipes(c.recipes||[]);
+  validateRecipeReferences(c);
   for(const rule of c.rules)validateRule(rule);
   assert(new Set(c.rules.map(r=>r.id)).size===c.rules.length,'규칙 ID가 중복됐어요.');
   assert(Number.isInteger(c.dailyCap)&&c.dailyCap>=1&&c.dailyCap<=5000,'전체 명령 상한은 1~5000으로 설정해 주세요.');
@@ -131,7 +133,7 @@ async function processJob(job,account,config,env){
   const actorRow=await one(env.DB,"SELECT p.*,(SELECT value FROM runtime WHERE key=?) AS used,(SELECT value FROM runtime WHERE key=?) AS session_json,(SELECT json_group_array(json_object('rule_id',rule_id,'count',count,'last_at',last_at)) FROM usage WHERE actor_id=p.id AND day=?) AS usage_json,(SELECT json_group_array(json_object('message',message)) FROM (SELECT message FROM audit WHERE actor_id=p.id ORDER BY id DESC LIMIT 10)) AS history_json FROM participants p WHERE p.id=?",'used:'+d,sessionKey,d,job.actor_id);
   if(!actorRow||config.paused){await run(env.DB,"UPDATE jobs SET state='ignored' WHERE id=?",job.id);return;}
   const actor=actorView(actorRow);actor.stats=boundBaseStats({...config.fields,...actor.stats},actor.inventory,config);const session=actorRow.session_json?JSON.parse(actorRow.session_json):null;
-  const rule=selectBotRule([...config.rules.filter(r=>r.enabled&&r.accountId===account.id),...itemUseRules(config.items||[],account.id)],text,session,{...actor,stats:statView(actor,config).stats});
+  const rule=selectBotRule([...config.rules.filter(r=>r.enabled&&r.accountId===account.id),...itemInfoRules(config.items||[],account.id),...itemUseRules(config.items||[],account.id),...recipeRules(config.recipes||[],account.id)],text,session,{...actor,stats:statView(actor,config).stats});
   if(!rule){await run(env.DB,"UPDATE jobs SET state='ignored' WHERE id=?",job.id);return;}
   const usage=JSON.parse(actorRow.usage_json||'[]').find(u=>u.rule_id===rule.id)||{};
   const dialogue=rule.kind==='dialogue',starting=dialogue&&!(session?.ruleId===rule.id&&['active','paused'].includes(session.status));
@@ -142,7 +144,7 @@ async function processJob(job,account,config,env){
   let output;
   if((!dialogue||starting)&&limited)output={stats:actor.stats,inventory:actor.inventory,changes:[],replies:[dialogue?'오늘 새로 시작할 수 있는 조사 횟수를 모두 사용했어요.':'오늘 사용할 수 있는 횟수를 모두 사용했어요.'],limited:true};
   else if(starting&&cooldown)output={stats:actor.stats,inventory:actor.inventory,changes:[],replies:[`새 조사는 ${Math.ceil((rule.cooldown*1000-now()+usage.last_at)/1000)}초 뒤에 시작할 수 있어요.`],limited:true};
-  else output=dialogue?advanceDialogue(rule,actor,text,session,{history:JSON.parse(actorRow.history_json||'[]'),items:config.items||[],statMaxes:config.statMaxes||{}}):execute(rule,actor,{history:JSON.parse(actorRow.history_json||'[]'),items:config.items||[],statMaxes:config.statMaxes||{}});
+  else output=dialogue?advanceDialogue(rule,actor,text,session,{history:JSON.parse(actorRow.history_json||'[]'),items:config.items||[],recipes:config.recipes||[],statMaxes:config.statMaxes||{}}):execute(rule,actor,{history:JSON.parse(actorRow.history_json||'[]'),items:config.items||[],recipes:config.recipes||[],statMaxes:config.statMaxes||{}});
   const queries=[statement(env.DB,'UPDATE participants SET stats=?,inventory=?,revision=revision+1 WHERE id=?',JSON.stringify(output.stats),JSON.stringify(output.inventory),actor.id),statement(env.DB,"UPDATE jobs SET state='done' WHERE id=?",job.id),statement(env.DB,'INSERT INTO runtime(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value','used:'+d,String(used+1))];
   if(!output.limited&&(!dialogue||output.started))queries.push(statement(env.DB,'INSERT INTO usage(rule_id,actor_id,day,count,last_at) VALUES(?,?,?,?,?) ON CONFLICT(rule_id,actor_id,day) DO UPDATE SET count=count+excluded.count,last_at=excluded.last_at',rule.id,actor.id,d,1,now()));
   if(dialogue&&output.session)queries.push(statement(env.DB,'INSERT INTO runtime(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',sessionKey,JSON.stringify(output.session)));

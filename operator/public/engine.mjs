@@ -104,7 +104,7 @@ export function validateRule(rule, depth=0) {
   if(rule.kind==='dialogue')return validateDialogue(rule);
   if(!Array.isArray(rule.blocks)||!rule.blocks.length||rule.blocks.length>30)throw Error('블록은 1~30개까지 넣을 수 있어요.');
   for(const b of rule.blocks){
-    if(!['reply','random','roll','dice','calculate','stat','item','guard','status','inventory','history','gather','recipe','outcome','randomStat','useItem'].includes(b.type))throw Error('지원하지 않는 블록이에요.');
+    if(!['reply','random','roll','dice','calculate','stat','item','guard','status','inventory','history','gather','recipe','outcome','randomStat','useItem','runRecipe','inspectItem'].includes(b.type))throw Error('지원하지 않는 블록이에요.');
     if(b.type==='outcome'){
       if(!Array.isArray(b.cases)||!b.cases.length||b.cases.length>12||Math.abs(b.cases.reduce((n,c)=>n+c.chance,0)-100)>0.00001)throw Error('확률별 결과의 확률 합계를 100%로 맞춰 주세요.');
       for(const c of b.cases){
@@ -114,6 +114,8 @@ export function validateRule(rule, depth=0) {
     }
     if(b.type==='randomStat'&&(!Array.isArray(b.keys)||!b.keys.length||b.keys.length>30||b.keys.some(k=>!cleanKey(k))||new Set(b.keys).size!==b.keys.length||!Number.isInteger(b.min)||!Number.isInteger(b.max)||b.min>b.max||Math.abs(b.min)>1e6||Math.abs(b.max)>1e6))throw Error('랜덤으로 바꿀 능력치와 정수 범위를 확인해 주세요.');
     if(b.type==='useItem'&&(!cleanKey(b.key)||!Number.isInteger(b.amount)||b.amount<1||b.amount>20))throw Error('사용할 아이템과 수량을 확인해 주세요.');
+    if(b.type==='runRecipe'&&!cleanKey(b.recipeId))throw Error('실행할 레시피를 골라 주세요.');
+    if(b.type==='inspectItem'&&!cleanKey(b.key))throw Error('설명을 볼 아이템을 골라 주세요.');
     if(['stat','item','calculate','guard'].includes(b.type)&&!cleanKey(b.key))throw Error('블록의 항목 이름을 확인해 주세요.');
     if(['gather','recipe'].includes(b.type)){
       if(!Number.isFinite(b.chance)||b.chance<0||b.chance>100)throw Error('성공 확률은 0~100%로 적어 주세요.');
@@ -145,15 +147,16 @@ export function validateRule(rule, depth=0) {
   }
   return rule;
 }
-export function execute(rule, actor, {random=Math.random,history=[],diceTotal,items=[],statMaxes={},depth=0}={}) {
-  if(depth>4)throw Error('결과 작업이 너무 깊게 연결되어 있어요.');
+export function execute(rule, actor, {random=Math.random,history=[],diceTotal,items=[],recipes=[],statMaxes={},depth=0,described=new Set()}={}) {
+  if(depth>12)throw Error('결과 작업이 너무 깊게 연결되어 있어요.');
   const stats=boundBaseStats(actor.baseStats||actor.stats,actor.inventory,{items,statMaxes}), inventory=numericMap(actor.inventory), changes=[], replies=[],trace=[];
   const view=()=>statView({stats,inventory},{items,statMaxes});
   const setStat=(key,value)=>{const before=view(),target=Object.hasOwn(before.maxima,key)?Math.min(value,before.maxima[key]):value;if(!Number.isFinite(target)||Math.abs(target)>1e9)throw Error('능력치 결과가 허용 범위를 벗어났어요.');if(target!==(before.stats[key]||0)||!Object.hasOwn(stats,key))stats[key]=target-(before.bonuses[key]||0);Object.assign(stats,boundBaseStats(stats,inventory,{items,statMaxes}));return view().stats[key]||0;};
   let result='',diceValue='',verdict='',notation='',itemName='',itemCount=0;
   const format=text=>String(text||'').replace(/\{([^{}]+)\}/g,(_,key)=>key==='획득물건'?itemName:key==='획득수량'?String(itemCount):key==='닉네임'?actor.name:key==='결과'?String(result):key==='주사위'?String(diceValue):key==='판정'?verdict:key==='주사위식'?notation:key.startsWith('물건:')?String(inventory[key.slice(3)]||0):Object.hasOwn(view().stats,key)?String(view().stats[key]):'{'+key+'}');
+  const acquired=key=>{const item=items.find(i=>i.name===key);if(item?.description?.trim()&&!described.has(key)){described.add(key);replies.push(key+' · 아이템 설명\n'+item.description.trim());}};
   for(const b of rule.blocks){
-    if(b.type==='outcome'||b.type==='useItem'){
+    if(['outcome','useItem','runRecipe'].includes(b.type)){
       let blocks,message;
       if(b.type==='outcome'){
         let pick=random()*100,chosen=b.cases.filter(c=>c.chance>0).at(-1);
@@ -162,14 +165,21 @@ export function execute(rule, actor, {random=Math.random,history=[],diceTotal,it
         result=chosen.name;blocks=chosen.blocks;message=chosen.text;
         const award=blocks.find(x=>x.type==='item'&&x.amount>0);itemName=award?.key||'';itemCount=award?.amount||0;
         trace.push('확률 결과: '+chosen.name+' ('+chosen.chance+'%)');
+      }else if(b.type==='runRecipe'){
+        const recipe=recipes.find(r=>r.id===b.recipeId);if(!recipe)throw Error('등록된 레시피를 찾지 못했어요. 운영자에게 알려 주세요.');
+        const missing=recipe.ingredients.filter(r=>(inventory[r.key]||0)<r.amount),failed=recipe.conditions.filter(c=>!conditionMatches({...c,target:'stat'},{stats:view().stats}));
+        if(missing.length||failed.length)return {stats:numericMap(actor.baseStats||actor.stats),inventory:numericMap(actor.inventory),changes:[],replies:['조합 조건이 부족해요.\n'+[...missing.map(r=>`${r.key}: ${inventory[r.key]||0} / 필요 ${r.amount}`),...failed.map(c=>`${c.key}: ${view().stats[c.key]||0} / 필요 ${c.amount} ${{'>=':'이상','>':'초과','<=':'이하','<':'미만','==':'같음'}[c.op]}`)].join('\n')],rejected:true,trace:[...trace,'레시피 조건 불충족 · 재료를 소모하지 않음']};
+        const success=random()*100<recipe.chance;
+        blocks=[...((success||recipe.consumeOnFail)?recipe.ingredients.filter(r=>r.consume!==false).map(r=>({type:'item',key:r.key,amount:-r.amount})):[]),...(success?recipe.effects:[])];
+        result=success?'성공':'실패';message=success?recipe.successText:recipe.failureText;trace.push(recipe.name+' · 조합 '+result);
       }else{
         const item=items.find(i=>i.name===b.key&&i.usable);
         if(!item)throw Error('사용 효과가 등록되지 않은 아이템이에요: '+b.key);
         if((inventory[b.key]||0)<b.amount)return {stats:numericMap(actor.stats),inventory:numericMap(actor.inventory),changes:[],replies:[b.key+'이(가) 부족해요.'],rejected:true,trace};
-        blocks=[...(item.consume!==false?[{type:'item',key:b.key,amount:-b.amount}]:[]),...Array.from({length:b.amount},()=>item.effects).flat()];
+        blocks=[...(item.consume!==false&&!hasAction(item.effects,'runRecipe')?[{type:'item',key:b.key,amount:-b.amount}]:[]),...Array.from({length:b.amount},()=>item.effects).flat()];
         message=item.text||b.key+'을(를) 사용했어요.';
       }
-      const child=execute({blocks},{...actor,baseStats:undefined,stats,inventory},{random,history,diceTotal,items,statMaxes,depth:depth+1});
+      const child=execute({blocks},{...actor,baseStats:undefined,stats,inventory},{random,history,diceTotal,items,recipes,statMaxes,depth:depth+1,described});
       if(child.rejected)return {...child,stats:numericMap(actor.stats),inventory:numericMap(actor.inventory),changes:[]};
       Object.assign(stats,child.stats);Object.assign(inventory,child.inventory);changes.push(...child.changes);replies.push(...child.replies);trace.push(...child.trace);
       if(child.context){if(child.context.result!=='')result=child.context.result;if(child.context.diceValue!==''){diceValue=child.context.diceValue;verdict=child.context.verdict;notation=child.context.notation;}}
@@ -201,6 +211,7 @@ export function execute(rule, actor, {random=Math.random,history=[],diceTotal,it
       result=success?`${itemName} ×${itemCount}`:'실패';
       trace.push(b.type==='recipe'?(success||b.consumeOnFail?'필요 재료 소모':'재료 보존'):'성공할 때만 후보 중 한 종류를 획득');
       replies.push(format(success?b.successText:b.failureText));
+      if(success)acquired(itemName);
     }
     if(b.type==='guard'){
       const a=b.target==='result'?Number(result):Number((b.target==='item'?inventory:view().stats)[b.key]||0),n=Number(b.amount);
@@ -230,13 +241,15 @@ export function execute(rule, actor, {random=Math.random,history=[],diceTotal,it
       const map=b.type==='item'?inventory:view().stats, before=Number(map[b.key]||0),next=before+Number(b.amount);
       if(!Number.isFinite(next)||Math.abs(next)>1e9||b.type==='item'&&next<0)throw Error('수치 범위를 벗어났거나 물건이 부족해요.');
       if(b.type==='item')inventory[b.key]=next;const actual=b.type==='item'?next:setStat(b.key,next);changes.push(`${b.key} ${actual-before>=0?'+':''}${actual-before} → ${actual}`);
+      if(b.type==='item'&&Number(b.amount)>0)acquired(b.key);
     }
     if(b.type==='roll'||b.type==='dice')trace.push(`주사위: ${notation} → ${result}${verdict?' / '+verdict:''}`);
     if(b.type==='random')trace.push('랜덤 선택: '+result);
     if(['calculate','stat','item'].includes(b.type))trace.push(changes.at(-1));
     if(b.type==='reply')replies.push(format(b.text));
     if(b.type==='status')replies.push(`${actor.name}의 상태\n`+Object.entries(view().stats).map(([k,v])=>`${k}: ${v}`).join('\n'));
-    if(b.type==='inventory')replies.push(`${actor.name}의 가방\n`+(Object.entries(inventory).filter(([,v])=>v>0).map(([k,v])=>`${k} ×${v}`).join('\n')||'아직 가진 물건이 없어요.'));
+    if(b.type==='inventory')replies.push(`${actor.name}의 가방\n`+(Object.entries(inventory).filter(([,v])=>v>0).map(([k,v])=>{const description=items.find(i=>i.name===k)?.description?.trim();return `${k} ×${v}`+(description?'\n  '+(description.length>100?description.slice(0,100)+'…':description):'');}).join('\n')||'아직 가진 물건이 없어요.')+(Object.entries(inventory).some(([k,n])=>n>0&&items.some(i=>i.name===k&&i.description?.trim()))?'\n\n[설명 아이템이름]으로 전체 설명을 확인할 수 있어요.':''));
+    if(b.type==='inspectItem')replies.push((inventory[b.key]||0)>0?itemDetails(b.key,items):'가방에 있는 아이템만 설명을 확인할 수 있어요.');
     if(b.type==='history')replies.push(`${actor.name}의 최근 기록\n`+(history.slice(0,10).map(h=>h.message).join('\n')||'아직 기록이 없어요.'));
   }
   Object.assign(stats,boundBaseStats(stats,inventory,{items,statMaxes}));
@@ -321,6 +334,7 @@ export function dialoguePrompt(rule,scene,actor,context={}){
   return [text,formatMessage(tail,actor,context)].filter(Boolean).join('\n\n');
 }
 export function selectBotRule(rules,text,session,actor){
+  const info=rules.find(r=>r.blocks?.[0]?.type==='inspectItem'&&matches(r,text));if(info)return info;
   const current=session&&rules.find(r=>r.id===session.ruleId&&r.kind==='dialogue');
   if(current&&['active','paused'].includes(session.status)){
     const d=current.dialogue,scene=d.scenes.find(s=>s.id===session.sceneId);
@@ -394,3 +408,30 @@ export function validateCatalog(items=[]){
   return items;
 }
 export function itemUseRules(items,accountId){return (items||[]).filter(i=>i.usable).map(i=>({id:'use-'+i.id,name:i.name+' 사용',accountId,enabled:true,keyword:i.keyword,match:'contains',dailyLimit:0,cooldown:0,blocks:[{type:'useItem',key:i.name,amount:1}]}));}
+
+export function hasAction(blocks,type){return (blocks||[]).some(b=>b.type===type||b.type==='outcome'&&b.cases.some(c=>hasAction(c.blocks,type)));}
+export function actionReferences(blocks){return (blocks||[]).flatMap(b=>b.type==='runRecipe'?[b.recipeId]:b.type==='outcome'?b.cases.flatMap(c=>actionReferences(c.blocks)):[]);}
+export function validateRecipes(recipes=[]){
+  if(!Array.isArray(recipes)||recipes.length>60)throw Error('레시피는 최대 60개까지 등록할 수 있어요.');
+  const ids=new Set(),names=new Set(),keywords=new Set();
+  for(const r of recipes){
+    if(!cleanKey(r.id)||ids.has(r.id)||typeof r.name!=='string'||!r.name.trim()||r.name.length>80||names.has(r.name)||typeof r.callable!=='boolean')throw Error('레시피 이름과 실행 설정을 확인해 주세요. 같은 이름은 한 번만 등록해 주세요.');
+    ids.add(r.id);names.add(r.name);
+    if(typeof r.keyword!=='string'||r.keyword.length>100||r.callable&&(!r.keyword.trim()||keywords.has(r.keyword)))throw Error('직접 실행할 레시피는 서로 다른 키워드를 적어 주세요.');
+    if(r.callable)keywords.add(r.keyword);
+    if(!Array.isArray(r.ingredients)||!r.ingredients.length||r.ingredients.length>20||new Set(r.ingredients.map(i=>i.key)).size!==r.ingredients.length||r.ingredients.some(i=>!cleanKey(i.key)||!Number.isInteger(i.amount)||i.amount<1||i.amount>10000||typeof i.consume!=='boolean'))throw Error(r.name+': 재료와 필요 수량, 소모 여부를 확인해 주세요.');
+    validateConditions(r.conditions);if(r.conditions.some(c=>c.target!=='stat'))throw Error('능력치 조건에는 능력치를 골라 주세요.');
+    if(!Number.isFinite(r.chance)||r.chance<0||r.chance>100||typeof r.consumeOnFail!=='boolean'||typeof r.successText!=='string'||r.successText.length>2000||typeof r.failureText!=='string'||!r.failureText.trim()||r.failureText.length>2000||!Array.isArray(r.effects)||r.effects.length>10)throw Error(r.name+': 확률과 결과 문장·효과를 확인해 주세요.');
+    if(hasAction(r.effects,'runRecipe')||hasAction(r.effects,'useItem'))throw Error('레시피 결과에는 아이템 획득·능력치 변화·문장을 직접 설정해 주세요. 다른 레시피나 아이템 사용을 다시 실행할 수는 없어요.');
+    if(r.effects.length)validateRule({id:r.id,name:r.name,keyword:'검증',match:'exact',dailyLimit:0,cooldown:0,blocks:r.effects});
+  }
+  return recipes;
+}
+export function validateRecipeReferences(config){
+  const ids=new Set((config.recipes||[]).map(r=>r.id));
+  const lists=[...(config.items||[]).map(i=>i.effects),...(config.rules||[]).flatMap(r=>r.kind==='dialogue'?r.dialogue.scenes.map(s=>s.actions):[r.blocks])];
+  if(lists.some(blocks=>actionReferences(blocks).some(id=>!ids.has(id))))throw Error('삭제되었거나 선택하지 않은 레시피를 실행하는 작업이 있어요. 해당 작업에서 레시피를 다시 골라 주세요.');
+}
+export function recipeRules(recipes,accountId){return (recipes||[]).filter(r=>r.callable).map(r=>({id:'craft-'+r.id,name:r.name,accountId,enabled:true,keyword:r.keyword,match:'contains',dailyLimit:0,cooldown:0,blocks:[{type:'runRecipe',recipeId:r.id}]}));}
+export function itemDetails(name,items=[]){const item=items.find(i=>i.name===name);return name+' · 아이템 설명\n'+(item?.description?.trim()||'등록된 설명이 없어요.')+(item?.usable?'\n\n사용 키워드: '+item.keyword:'');}
+export function itemInfoRules(items,accountId){return (items||[]).map(i=>({id:'info-'+i.id,name:i.name+' 설명',accountId,enabled:true,keyword:'[설명 '+i.name+']',match:'exact',dailyLimit:0,cooldown:0,blocks:[{type:'inspectItem',key:i.name}]}));}

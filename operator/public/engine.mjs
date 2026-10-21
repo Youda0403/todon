@@ -10,6 +10,41 @@ export function numericMap(value) {
   }
   return result;
 }
+// Stored stats are permanent values; possession bonuses are derived, never accumulated.
+export function validateStatMaxes(maxes={},fields={}){
+  const m=numericMap(maxes);
+  if(Object.entries(m).some(([k,n])=>!Object.hasOwn(fields,k)||n<0))throw Error('최대치는 등록한 능력치에 0 이상의 숫자로 적어 주세요.');
+  return m;
+}
+export function statView(actor,{items=[],statMaxes={},fields={}}={}){
+  const base=numericMap({...fields,...(actor.baseStats||actor.stats||{})}),bonuses=Object.create(null),maxBonuses=Object.create(null),active=[];
+  for(const item of items){
+    const count=Number(actor.inventory?.[item.name]||0);if(!item.passive||count<=0)continue;
+    const times=item.passiveStack==='quantity'?count:1;
+    for(const e of item.passiveEffects||[]){
+      const delta=e.amount*times,map=e.target==='max'?maxBonuses:bonuses;
+      map[e.key]=(map[e.key]||0)+delta;if(!Number.isFinite(map[e.key])||Math.abs(map[e.key])>1e9)throw Error('상시 아이템 보정이 허용 범위를 벗어났어요.');
+      active.push({item:item.name,key:e.key,target:e.target||'stat',amount:delta});
+    }
+  }
+  const maxima=Object.fromEntries(Object.entries(statMaxes).map(([k,n])=>[k,Math.max(0,Math.min(1e9,n+(maxBonuses[k]||0)))]));
+  const stats=Object.create(null);for(const k of new Set([...Object.keys(base),...Object.keys(bonuses)])){
+    const n=(base[k]||0)+(bonuses[k]||0);if(!Number.isFinite(n)||Math.abs(n)>1e9)throw Error('능력치 보정이 허용 범위를 벗어났어요.');stats[k]=Object.hasOwn(maxima,k)?Math.min(n,maxima[k]):n;
+  }
+  return {stats,baseStats:base,bonuses,maxima,active};
+}
+export function boundBaseStats(stats,inventory={},config={}){
+  const base=numericMap(stats),maxima=statView({stats:base,inventory},config).maxima;
+  for(const [k,max] of Object.entries(maxima))if(Object.hasOwn(base,k))base[k]=Math.min(base[k],max);
+  return base;
+}
+export function participantView(actor,config={}){
+  const base=boundBaseStats({...config.fields,...(actor.baseStats||actor.stats)},actor.inventory,config),view=statView({stats:base,inventory:actor.inventory},config);
+  return {...actor,baseStats:base,stats:view.stats,passiveBonuses:view.bonuses,statMaxes:view.maxima,activePassives:view.active};
+}
+export function choiceKeywords(choice){
+  return [...new Set([choice.keyword,...(choice.keywords||[])].filter(k=>typeof k==='string'&&k.trim()).map(k=>k.trim()))];
+}
 export function calculate(expression, stats = {}, {validateOnly=false}={}) {
   const source = String(expression).replace(/\{([^{}]+)\}/g, (_,key) => {
     if (!Object.hasOwn(stats,key)) throw Error('없는 능력치예요: ' + key);
@@ -110,11 +145,13 @@ export function validateRule(rule, depth=0) {
   }
   return rule;
 }
-export function execute(rule, actor, {random=Math.random,history=[],diceTotal,items=[],depth=0}={}) {
+export function execute(rule, actor, {random=Math.random,history=[],diceTotal,items=[],statMaxes={},depth=0}={}) {
   if(depth>4)throw Error('결과 작업이 너무 깊게 연결되어 있어요.');
-  const stats=numericMap(actor.stats), inventory=numericMap(actor.inventory), changes=[], replies=[],trace=[];
+  const stats=boundBaseStats(actor.baseStats||actor.stats,actor.inventory,{items,statMaxes}), inventory=numericMap(actor.inventory), changes=[], replies=[],trace=[];
+  const view=()=>statView({stats,inventory},{items,statMaxes});
+  const setStat=(key,value)=>{const before=view(),target=Object.hasOwn(before.maxima,key)?Math.min(value,before.maxima[key]):value;if(!Number.isFinite(target)||Math.abs(target)>1e9)throw Error('능력치 결과가 허용 범위를 벗어났어요.');if(target!==(before.stats[key]||0)||!Object.hasOwn(stats,key))stats[key]=target-(before.bonuses[key]||0);Object.assign(stats,boundBaseStats(stats,inventory,{items,statMaxes}));return view().stats[key]||0;};
   let result='',diceValue='',verdict='',notation='',itemName='',itemCount=0;
-  const format=text=>String(text||'').replace(/\{([^{}]+)\}/g,(_,key)=>key==='획득물건'?itemName:key==='획득수량'?String(itemCount):key==='닉네임'?actor.name:key==='결과'?String(result):key==='주사위'?String(diceValue):key==='판정'?verdict:key==='주사위식'?notation:key.startsWith('물건:')?String(inventory[key.slice(3)]||0):Object.hasOwn(stats,key)?String(stats[key]):'{'+key+'}');
+  const format=text=>String(text||'').replace(/\{([^{}]+)\}/g,(_,key)=>key==='획득물건'?itemName:key==='획득수량'?String(itemCount):key==='닉네임'?actor.name:key==='결과'?String(result):key==='주사위'?String(diceValue):key==='판정'?verdict:key==='주사위식'?notation:key.startsWith('물건:')?String(inventory[key.slice(3)]||0):Object.hasOwn(view().stats,key)?String(view().stats[key]):'{'+key+'}');
   for(const b of rule.blocks){
     if(b.type==='outcome'||b.type==='useItem'){
       let blocks,message;
@@ -132,16 +169,16 @@ export function execute(rule, actor, {random=Math.random,history=[],diceTotal,it
         blocks=[...(item.consume!==false?[{type:'item',key:b.key,amount:-b.amount}]:[]),...Array.from({length:b.amount},()=>item.effects).flat()];
         message=item.text||b.key+'을(를) 사용했어요.';
       }
-      const child=execute({blocks},{...actor,stats,inventory},{random,history,diceTotal,items,depth:depth+1});
+      const child=execute({blocks},{...actor,baseStats:undefined,stats,inventory},{random,history,diceTotal,items,statMaxes,depth:depth+1});
       if(child.rejected)return {...child,stats:numericMap(actor.stats),inventory:numericMap(actor.inventory),changes:[]};
       Object.assign(stats,child.stats);Object.assign(inventory,child.inventory);changes.push(...child.changes);replies.push(...child.replies);trace.push(...child.trace);
       if(child.context){if(child.context.result!=='')result=child.context.result;if(child.context.diceValue!==''){diceValue=child.context.diceValue;verdict=child.context.verdict;notation=child.context.notation;}}
       if(message)replies.push(format(message));
     }
     if(b.type==='randomStat'){
-      const k=b.keys[Math.min(b.keys.length-1,Math.floor(random()*b.keys.length))],amount=b.min+Math.floor(random()*(b.max-b.min+1)),next=(stats[k]||0)+amount;
+      const k=b.keys[Math.min(b.keys.length-1,Math.floor(random()*b.keys.length))],amount=b.min+Math.floor(random()*(b.max-b.min+1)),before=view().stats[k]||0,next=before+amount;
       if(!Number.isFinite(next)||Math.abs(next)>1e9)throw Error('능력치 결과가 허용 범위를 벗어났어요.');
-      stats[k]=next;result=amount;changes.push(`${k} ${amount>=0?'+':''}${amount} → ${next}`);trace.push(changes.at(-1));
+      const actual=setStat(k,next);result=actual-before;changes.push(`${k} ${actual-before>=0?'+':''}${actual-before} → ${actual}`);trace.push(changes.at(-1));
     }
     if(b.type==='gather'||b.type==='recipe'){
       if(b.type==='recipe'){
@@ -166,7 +203,7 @@ export function execute(rule, actor, {random=Math.random,history=[],diceTotal,it
       replies.push(format(success?b.successText:b.failureText));
     }
     if(b.type==='guard'){
-      const a=b.target==='result'?Number(result):Number((b.target==='item'?inventory:stats)[b.key]||0),n=Number(b.amount);
+      const a=b.target==='result'?Number(result):Number((b.target==='item'?inventory:view().stats)[b.key]||0),n=Number(b.amount);
       const ok={'>=':a>=n,'<=':a<=n,'==':a===n,'>':a>n,'<':a<n}[b.op];
       trace.push(`조건: ${b.target==='result'?'직전 결과':b.key} ${a} ${b.op} ${n} → ${ok?'통과':'불충족 · 변경을 모두 취소'}`);
       if(!ok)return {stats:numericMap(actor.stats),inventory:numericMap(actor.inventory),changes:[],replies:b.text?[format(b.text)]:[],rejected:true,trace};
@@ -188,21 +225,22 @@ export function execute(rule, actor, {random=Math.random,history=[],diceTotal,it
         verdict=range.label;replies.push(format(b.text));
       }
     }
-    if(b.type==='calculate'){result=calculate(b.expression,stats);stats[b.key]=result;changes.push(`${b.key} → ${result}`);}
+    if(b.type==='calculate'){result=setStat(b.key,calculate(b.expression,view().stats));changes.push(`${b.key} → ${result}`);}
     if(b.type==='stat'||b.type==='item'){
-      const map=b.type==='item'?inventory:stats, next=Number(map[b.key]||0)+Number(b.amount);
+      const map=b.type==='item'?inventory:view().stats, before=Number(map[b.key]||0),next=before+Number(b.amount);
       if(!Number.isFinite(next)||Math.abs(next)>1e9||b.type==='item'&&next<0)throw Error('수치 범위를 벗어났거나 물건이 부족해요.');
-      map[b.key]=next;changes.push(`${b.key} ${Number(b.amount)>=0?'+':''}${Number(b.amount)} → ${next}`);
+      if(b.type==='item')inventory[b.key]=next;const actual=b.type==='item'?next:setStat(b.key,next);changes.push(`${b.key} ${actual-before>=0?'+':''}${actual-before} → ${actual}`);
     }
     if(b.type==='roll'||b.type==='dice')trace.push(`주사위: ${notation} → ${result}${verdict?' / '+verdict:''}`);
     if(b.type==='random')trace.push('랜덤 선택: '+result);
     if(['calculate','stat','item'].includes(b.type))trace.push(changes.at(-1));
     if(b.type==='reply')replies.push(format(b.text));
-    if(b.type==='status')replies.push(`${actor.name}의 상태\n`+Object.entries(stats).map(([k,v])=>`${k}: ${v}`).join('\n'));
+    if(b.type==='status')replies.push(`${actor.name}의 상태\n`+Object.entries(view().stats).map(([k,v])=>`${k}: ${v}`).join('\n'));
     if(b.type==='inventory')replies.push(`${actor.name}의 가방\n`+(Object.entries(inventory).filter(([,v])=>v>0).map(([k,v])=>`${k} ×${v}`).join('\n')||'아직 가진 물건이 없어요.'));
     if(b.type==='history')replies.push(`${actor.name}의 최근 기록\n`+(history.slice(0,10).map(h=>h.message).join('\n')||'아직 기록이 없어요.'));
   }
-  return {stats,inventory,changes,replies,rejected:false,trace,context:{result,diceValue,verdict,notation,itemName,itemCount}};
+  Object.assign(stats,boundBaseStats(stats,inventory,{items,statMaxes}));
+  return {stats,inventory,effectiveStats:view().stats,changes,replies,rejected:false,trace,context:{result,diceValue,verdict,notation,itemName,itemCount}};
 }
 export function example(kind,accountId='') {
   const base={id:newId(),accountId,enabled:false,name:'',keyword:'',match:'contains',dailyLimit:0,cooldown:30,blocks:[]};
@@ -256,6 +294,7 @@ export function validateDialogue(rule){
     if(new Set(scene.choices.map(c=>c.keyword?.trim())).size!==scene.choices.length)throw Error(scene.title+': 선택지 키워드가 중복됐어요.');
     for(const c of scene.choices){
       if(typeof c.keyword!=='string'||!c.keyword.trim()||c.keyword!==c.keyword.trim()||c.keyword.length>80||/^\d+(?:번)?$/.test(c.keyword)||controls.some(k=>c.keyword.includes(k)||k.includes(c.keyword))||matches(rule,c.keyword))throw Error(scene.title+': 선택지 키워드는 번호·시작·종료 명령과 겹치지 않게 적어 주세요.');
+      if(c.keywords!==undefined&&(!Array.isArray(c.keywords)||c.keywords.length>12||c.keywords.some(k=>typeof k!=='string'||!k.trim()||k.length>80||/^\d+(?:번)?$/.test(k)||controls.some(control=>k.includes(control)||control.includes(k))||matches(rule,k))))throw Error(scene.title+': 인식 키워드는 쉼표로 나눠 최대 12개까지, 번호·시작·종료 명령과 겹치지 않게 적어 주세요.');
       validateConditions(c.conditions||[]);
       if(!ids.has(c.next))throw Error(scene.title+': 각 선택지에 다음 장면을 골라 주세요.');
     }
@@ -273,7 +312,7 @@ export function availableChoices(scene,actor={stats:{},inventory:{}}){return !sc
 export function dialogueChoices(scene,text,actor){
   const choices=availableChoices(scene,actor),numbered=/^(\d+)(?:번)?[.!。]?\s*$/.exec(text.trim());
   if(numbered)return choices[Number(numbered[1])-1]?[choices[Number(numbered[1])-1]]:[];
-  return choices.filter(c=>text.includes(c.keyword));
+  return choices.filter(c=>choiceKeywords(c).some(k=>text.includes(k)));
 }
 export function formatMessage(text,actor,context={}){const special={닉네임:actor.name,결과:context.result??'',주사위:context.diceValue??'',판정:context.verdict??'',주사위식:context.notation??''};return String(text||'').replace(/\{([^{}]+)\}/g,(_,k)=>Object.hasOwn(special,k)?String(special[k]):k.startsWith('물건:')?String(actor.inventory?.[k.slice(3)]||0):Object.hasOwn(actor.stats||{},k)?String(actor.stats[k]):'{'+k+'}');}
 export function dialoguePrompt(rule,scene,actor,context={}){
@@ -294,8 +333,9 @@ export function selectBotRule(rules,text,session,actor){
 export function advanceDialogue(rule,actor,text,previous=null,options={}){
   const d=rule.dialogue,session=previous?.ruleId===rule.id?structuredClone(previous):null;
   const out={stats:numericMap(actor.stats),inventory:numericMap(actor.inventory),changes:[],replies:[],trace:[],rejected:false,session,started:false};
+  const effectiveActor={...actor,stats:statView(actor,options).stats};
   const current=session&&d.scenes.find(s=>s.id===session.sceneId);
-  const respond=(message,scene=current)=>{out.replies=[message,...(scene?[dialoguePrompt(rule,scene,actor)]:[])].filter(Boolean);return out;};
+  const respond=(message,scene=current)=>{out.replies=[message,...(scene?[dialoguePrompt(rule,scene,effectiveActor)]:[])].filter(Boolean);return out;};
   const live=session&&['active','paused'].includes(session.status);
   if(live&&!current){out.session={...session,status:'ended'};return respond('진행하던 장면이 수정되었어요. 시작 키워드로 새 조사를 시작해 주세요.',null);}
   if(live&&text.trim()===d.endKeyword){out.session.status='ended';return respond('조사를 종료했어요. 다시 시작하려면 '+rule.keyword+' 키워드를 보내 주세요.',null);}
@@ -306,19 +346,19 @@ export function advanceDialogue(rule,actor,text,previous=null,options={}){
     if(!matches(rule,text))return respond('진행 중인 조사가 없어요. '+rule.keyword+' 키워드로 시작해 주세요.',null);
     target=d.scenes.find(s=>s.id===d.start);
   }else{
-    const choices=dialogueChoices(current,text,actor);
+    const choices=dialogueChoices(current,text,effectiveActor);
     if(choices.length!==1)return respond(choices.length?'여러 선택지가 함께 들어 있어요. 하나만 골라 주세요.':'지금 장면의 선택지 중 하나를 골라 주세요.');
     target=d.scenes.find(s=>s.id===choices[0].next);
   }
   if(!target)throw Error('다음 조사 장면을 찾지 못했어요. 운영자에게 알려 주세요.');
   const visited=live?session.visited||[]:[];
   const effect=visited.includes(target.id)?{...out,replies:[],trace:['이미 방문한 장면 · 결과를 다시 적용하지 않음']}:execute({blocks:target.actions},actor,options);
-  if(effect.rejected){out.rejected=true;out.replies=[...effect.replies,...(current?[dialoguePrompt(rule,current,actor)]:[])];out.trace=effect.trace;return out;}
+  if(effect.rejected){out.rejected=true;out.replies=[...effect.replies,...(current?[dialoguePrompt(rule,current,effectiveActor)]:[])];out.trace=effect.trace;return out;}
   Object.assign(out,{stats:effect.stats,inventory:effect.inventory,changes:effect.changes,trace:[...effect.trace,'장면 이동: '+target.title],started:!live});
   out.session={ruleId:rule.id,sceneId:target.id,status:target.end?'ended':'active',visited:[...new Set([...visited,target.id])]};
-  const after={...actor,stats:effect.stats,inventory:effect.inventory};
+  const after={...actor,baseStats:undefined,stats:statView({stats:effect.stats,inventory:effect.inventory},options).stats,inventory:effect.inventory};
   const menu=dialoguePrompt(rule,{...target,text:''},after,effect.context).trim();
-  out.replies=[formatMessage(target.text,actor),...effect.replies,...(effect.changes.length?['기록 변경: '+effect.changes.join(' · ')]:[]),menu].filter(Boolean);
+  out.replies=[formatMessage(target.text,effectiveActor),...effect.replies,...(effect.changes.length?['기록 변경: '+effect.changes.join(' · ')]:[]),menu].filter(Boolean);
   return out;
 }
 
@@ -342,6 +382,10 @@ export function validateCatalog(items=[]){
   const hasUse=blocks=>blocks.some(b=>b.type==='useItem'||b.type==='outcome'&&b.cases.some(c=>hasUse(c.blocks)));
   for(const i of items){
     if(!cleanKey(i.id)||!cleanKey(i.name)||typeof i.usable!=='boolean'||typeof i.description!=='string'||i.description.length>1000||typeof i.text!=='string'||i.text.length>2000||!Array.isArray(i.effects)||i.effects.length>10)throw Error('아이템 이름·설명·사용 효과를 확인해 주세요.');
+    if(i.passive!==undefined&&typeof i.passive!=='boolean')throw Error('상시 발동 설정을 확인해 주세요.');
+    if(i.passiveStack!==undefined&&!['once','quantity'].includes(i.passiveStack))throw Error('상시 효과 중첩 방식을 확인해 주세요.');
+    if(i.passiveEffects!==undefined&&(!Array.isArray(i.passiveEffects)||i.passiveEffects.length>20||i.passiveEffects.some(e=>!cleanKey(e.key)||!['stat','max'].includes(e.target)||!Number.isFinite(e.amount)||Math.abs(e.amount)>1e6)))throw Error('상시 보정의 대상 능력치와 수치를 확인해 주세요.');
+    if(i.passive&&!i.passiveEffects?.length)throw Error('상시 발동 아이템에는 보정을 하나 이상 추가해 주세요.');
     if(i.usable&&(typeof i.keyword!=='string'||!i.keyword.trim()||i.keyword.length>100||used.has(i.keyword)))throw Error('사용 가능한 아이템마다 서로 다른 사용 키워드를 적어 주세요.');
     if(i.usable)used.add(i.keyword);
     if(hasUse(i.effects))throw Error('아이템 사용 효과에서 다른 아이템 사용을 다시 실행할 수 없어요. 획득·소모 작업으로 설정해 주세요.');

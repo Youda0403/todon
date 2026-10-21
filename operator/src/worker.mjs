@@ -1,4 +1,4 @@
-import {execute,validateRule,numericMap,commandText,matches,cleanKey,selectBotRule,advanceDialogue,validateCatalog,itemUseRules} from '../public/engine.mjs';
+import {execute,validateRule,numericMap,commandText,matches,cleanKey,selectBotRule,advanceDialogue,validateCatalog,itemUseRules,validateStatMaxes,statView,boundBaseStats,participantView} from '../public/engine.mjs';
 const json=(value,status=200)=>Response.json(value,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
 const err=(text,status=400)=>Object.assign(Error(text),{status});
 const now=()=>Date.now();
@@ -74,11 +74,12 @@ async function state(db){
     SUM(state='pending') AS pending,SUM(state='held') AS held,SUM(state='sent') AS sent,SUM(state='cancelled') AS cancelled,SUM(state='review') AS review,
     SUM(state='pending' AND first_attempt IS NULL) AS pausable,SUM(state IN ('pending','held') AND first_attempt IS NULL) AS cancellable
     FROM outbox WHERE group_id<>'' GROUP BY group_id ORDER BY MIN(due) DESC`)]);
-  return {config,accounts,participants:participants.map(r=>{const p=actorView(r);return {...p,stats:{...config.fields,...p.stats}};}),audit,outbox,stories,runtime:Object.fromEntries(runtime.map(r=>[r.key,r.value]))};
+  return {config,accounts,participants:participants.map(r=>participantView(actorView(r),config)),audit,outbox,stories,runtime:Object.fromEntries(runtime.map(r=>[r.key,r.value]))};
 }
 function validateConfig(c){
   assert(typeof c.paused==='boolean'&&Array.isArray(c.rules)&&c.rules.length<=60,'설정을 확인해 주세요. 규칙은 최대 60개예요.');
   c.fields=numericMap(c.fields);assert(Object.keys(c.fields).length<=30,'능력치는 최대 30개예요.');
+  c.statMaxes=validateStatMaxes(c.statMaxes||{},c.fields);
   validateCatalog(c.items||[]);
   for(const rule of c.rules)validateRule(rule);
   assert(new Set(c.rules.map(r=>r.id)).size===c.rules.length,'규칙 ID가 중복됐어요.');
@@ -115,7 +116,7 @@ async function addParticipants(body,env){
   for(const name of names){try{
     assert(!/\s/.test(name)&&name.length<150,'아이디 형식을 확인해 주세요.');
     const {data:p}=await mastodon(env,token,'/api/v1/accounts/lookup?acct='+encodeURIComponent(name));
-    await run(env.DB,'INSERT INTO participants(id,acct,name,stats) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET acct=excluded.acct,name=excluded.name',String(p.id),p.acct.includes('@')?p.acct:p.acct+'@'+host(env),p.display_name||p.username,JSON.stringify(config.fields));added.push(name);
+    await run(env.DB,'INSERT INTO participants(id,acct,name,stats) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET acct=excluded.acct,name=excluded.name',String(p.id),p.acct.includes('@')?p.acct:p.acct+'@'+host(env),p.display_name||p.username,JSON.stringify(boundBaseStats(config.fields,{},config)));added.push(name);
   }catch{failed.push(name);}}
   return json({added,failed});
 }
@@ -129,8 +130,8 @@ async function processJob(job,account,config,env){
   const sessionKey='dialog:'+account.id+':'+job.actor_id,d=day();
   const actorRow=await one(env.DB,"SELECT p.*,(SELECT value FROM runtime WHERE key=?) AS used,(SELECT value FROM runtime WHERE key=?) AS session_json,(SELECT json_group_array(json_object('rule_id',rule_id,'count',count,'last_at',last_at)) FROM usage WHERE actor_id=p.id AND day=?) AS usage_json,(SELECT json_group_array(json_object('message',message)) FROM (SELECT message FROM audit WHERE actor_id=p.id ORDER BY id DESC LIMIT 10)) AS history_json FROM participants p WHERE p.id=?",'used:'+d,sessionKey,d,job.actor_id);
   if(!actorRow||config.paused){await run(env.DB,"UPDATE jobs SET state='ignored' WHERE id=?",job.id);return;}
-  const actor=actorView(actorRow);actor.stats={...config.fields,...actor.stats};const session=actorRow.session_json?JSON.parse(actorRow.session_json):null;
-  const rule=selectBotRule([...config.rules.filter(r=>r.enabled&&r.accountId===account.id),...itemUseRules(config.items||[],account.id)],text,session,actor);
+  const actor=actorView(actorRow);actor.stats=boundBaseStats({...config.fields,...actor.stats},actor.inventory,config);const session=actorRow.session_json?JSON.parse(actorRow.session_json):null;
+  const rule=selectBotRule([...config.rules.filter(r=>r.enabled&&r.accountId===account.id),...itemUseRules(config.items||[],account.id)],text,session,{...actor,stats:statView(actor,config).stats});
   if(!rule){await run(env.DB,"UPDATE jobs SET state='ignored' WHERE id=?",job.id);return;}
   const usage=JSON.parse(actorRow.usage_json||'[]').find(u=>u.rule_id===rule.id)||{};
   const dialogue=rule.kind==='dialogue',starting=dialogue&&!(session?.ruleId===rule.id&&['active','paused'].includes(session.status));
@@ -141,7 +142,7 @@ async function processJob(job,account,config,env){
   let output;
   if((!dialogue||starting)&&limited)output={stats:actor.stats,inventory:actor.inventory,changes:[],replies:[dialogue?'오늘 새로 시작할 수 있는 조사 횟수를 모두 사용했어요.':'오늘 사용할 수 있는 횟수를 모두 사용했어요.'],limited:true};
   else if(starting&&cooldown)output={stats:actor.stats,inventory:actor.inventory,changes:[],replies:[`새 조사는 ${Math.ceil((rule.cooldown*1000-now()+usage.last_at)/1000)}초 뒤에 시작할 수 있어요.`],limited:true};
-  else output=dialogue?advanceDialogue(rule,actor,text,session,{history:JSON.parse(actorRow.history_json||'[]'),items:config.items||[]}):execute(rule,actor,{history:JSON.parse(actorRow.history_json||'[]'),items:config.items||[]});
+  else output=dialogue?advanceDialogue(rule,actor,text,session,{history:JSON.parse(actorRow.history_json||'[]'),items:config.items||[],statMaxes:config.statMaxes||{}}):execute(rule,actor,{history:JSON.parse(actorRow.history_json||'[]'),items:config.items||[],statMaxes:config.statMaxes||{}});
   const queries=[statement(env.DB,'UPDATE participants SET stats=?,inventory=?,revision=revision+1 WHERE id=?',JSON.stringify(output.stats),JSON.stringify(output.inventory),actor.id),statement(env.DB,"UPDATE jobs SET state='done' WHERE id=?",job.id),statement(env.DB,'INSERT INTO runtime(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value','used:'+d,String(used+1))];
   if(!output.limited&&(!dialogue||output.started))queries.push(statement(env.DB,'INSERT INTO usage(rule_id,actor_id,day,count,last_at) VALUES(?,?,?,?,?) ON CONFLICT(rule_id,actor_id,day) DO UPDATE SET count=count+excluded.count,last_at=excluded.last_at',rule.id,actor.id,d,1,now()));
   if(dialogue&&output.session)queries.push(statement(env.DB,'INSERT INTO runtime(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',sessionKey,JSON.stringify(output.session)));
@@ -231,7 +232,7 @@ async function apiRoute(request,env,url){
   if(path==='/api/participant'&&method==='PUT'){
     const b=await readBody(request);return locked(env.DB,async()=>{
       const current=await one(env.DB,'SELECT * FROM participants WHERE id=?',b.id);assert(current,'등록된 러너가 아니에요.');if(b.revision!==current.revision)throw err('러너 기록이 바뀌었어요. 새로 불러와 주세요.',409);
-      const stats=numericMap(b.stats),inventory=numericMap(b.inventory);assert(Object.values(inventory).every(v=>v>=0&&Number.isInteger(v)),'물건 수량은 0 이상의 정수여야 해요.');assert(Object.keys(stats).length<=30&&Object.keys(inventory).length<=200,'기록 항목이 너무 많아요.');
+      let stats=numericMap(b.stats);const inventory=numericMap(b.inventory),config=await settings(env.DB);stats=boundBaseStats(stats,inventory,config);assert(Object.values(inventory).every(v=>v>=0&&Number.isInteger(v)),'물건 수량은 0 이상의 정수여야 해요.');assert(Object.keys(stats).length<=30&&Object.keys(inventory).length<=200,'기록 항목이 너무 많아요.');
       const before=actorView(current),changes=[];for(const [label,old,value] of [['능력치',before.stats,stats],['물건',before.inventory,inventory]])for(const k of new Set([...Object.keys(old),...Object.keys(value)]))if(old[k]!==value[k])changes.push(`${label} ${k}: ${old[k]??0} → ${value[k]??0}`);
       const sqls=[statement(env.DB,'UPDATE participants SET stats=?,inventory=?,revision=revision+1 WHERE id=?',JSON.stringify(stats),JSON.stringify(inventory),b.id)];
       if(changes.length)sqls.push(statement(env.DB,'INSERT INTO audit(actor_id,created,message,source) VALUES(?,?,?,?)',b.id,now(),changes.join(' / '),'운영자 수정'));await env.DB.batch(sqls);return json({ok:true});

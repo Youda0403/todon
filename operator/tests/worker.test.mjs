@@ -317,3 +317,26 @@ test('the Worker rejects hidden choice keywords and reveals them after an operat
     e.DB.sql.prepare('UPDATE participants SET inventory=?').run('{"열쇠":1}');await job('valid','숲');assert.equal(JSON.parse(e.DB.sql.prepare("SELECT value FROM runtime WHERE key='dialog:bot:runner'").get().value).sceneId,'forest');
   }finally{globalThis.fetch=original;}
 });
+
+test('passive stats and caps are consistent across bot commands, state views and operator edits',async()=>{
+  const e=env();await account(e);e.DB.sql.prepare('INSERT INTO participants(id,acct,name,stats,inventory) VALUES(?,?,?,?,?)').run('runner','runner@planet.moe','러너','{"HP":90,"힘":5}','{"부적":1,"회복약":1}');
+  const initial=await(await worker.fetch(request('/api/state'),e)).json();initial.config.paused=false;initial.config.fields={HP:100,힘:5};initial.config.statMaxes={HP:100,힘:10};initial.config.rules=[{...example('check','bot'),enabled:true,cooldown:0}];
+  initial.config.items=[{id:'charm',name:'부적',description:'',usable:false,text:'',keyword:'',effects:[],passive:true,passiveStack:'once',passiveEffects:[{key:'힘',target:'stat',amount:2}]},{id:'heal',name:'회복약',description:'',usable:true,consume:true,text:'HP {HP} / 힘 {힘}',keyword:'[회복약]',effects:[{type:'stat',key:'HP',amount:30}]}];
+  assert.equal((await worker.fetch(request('/api/config','PUT',initial.config),e)).status,200);
+  const original=globalThis.fetch,posts=[];globalThis.fetch=async(url,opt)=>{if(url.includes('/notifications'))return Response.json([]);posts.push(JSON.parse(opt.body));return Response.json({id:'post-'+posts.length});};
+  const job=async(id,text)=>{e.DB.sql.prepare('INSERT INTO jobs(id,account_id,actor_id,payload,created) VALUES(?,?,?,?,?)').run(id,'bot','runner',JSON.stringify({text,statusId:id,visibility:'private'}),Date.now());await tick(e);};
+  try{
+    await job('check1','확인');await job('check2','확인');assert.match(posts.at(-1).status,/힘: 7/);assert.equal(JSON.parse(e.DB.sql.prepare('SELECT stats FROM participants').get().stats).힘,5);
+    await job('heal','[회복약]');assert.match(posts.at(-1).status,/HP 100 \/ 힘 7/);assert.equal(JSON.parse(e.DB.sql.prepare('SELECT stats FROM participants').get().stats).HP,100);
+    const state=await(await worker.fetch(request('/api/state'),e)).json(),p=state.participants[0];assert.equal(p.stats.힘,7);assert.equal(p.baseStats.힘,5);assert.equal(p.statMaxes.HP,100);
+    assert.equal((await worker.fetch(request('/api/participant','PUT',{...p,stats:{HP:999,힘:5},inventory:{부적:0}}),e)).status,200);
+    const after=await(await worker.fetch(request('/api/state'),e)).json();assert.equal(after.participants[0].stats.힘,5);assert.equal(after.participants[0].stats.HP,100);assert.equal(JSON.parse(e.DB.sql.prepare('SELECT stats FROM participants').get().stats).HP,100);
+  }finally{globalThis.fetch=original;}
+});
+test('a short alias advances its displayed choice through the server while hidden aliases remain unavailable',async()=>{
+  const e=env();await account(e);e.DB.sql.prepare('INSERT INTO participants(id,acct,name,stats) VALUES(?,?,?,?)').run('runner','runner@planet.moe','러너','{}');
+  const r={...example('dialogue','bot'),enabled:true};r.dialogue.scenes[0].choices[0]={keyword:'칼로 벗긴다',keywords:['칼','벗기기'],next:'forest',conditions:[]};config(e,[r]);
+  const original=globalThis.fetch,posts=[];globalThis.fetch=async(url,opt)=>{if(url.includes('/notifications'))return Response.json([]);posts.push(JSON.parse(opt.body));return Response.json({id:'post-'+posts.length});};
+  const job=async(id,text)=>{e.DB.sql.prepare('INSERT INTO jobs(id,account_id,actor_id,payload,created) VALUES(?,?,?,?,?)').run(id,'bot','runner',JSON.stringify({text,statusId:id,visibility:'private'}),Date.now());await tick(e);};
+  try{await job('start',r.keyword);assert.match(posts.at(-1).status,/1\. 칼로 벗긴다/);await job('choose','칼');assert.equal(JSON.parse(e.DB.sql.prepare("SELECT value FROM runtime WHERE key='dialog:bot:runner'").get().value).sceneId,'forest');}finally{globalThis.fetch=original;}
+});

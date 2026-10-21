@@ -12,6 +12,6 @@ export function mountFlexibleBot(root,ctx){
     if(b.dataset.flexAct==='save'){validateRule(r);b.disabled=true;await ctx.onSave();}
     if(b.dataset.flexAct==='copy')await ctx.onCopy();
     if(b.dataset.flexAct==='delete'&&confirm('이 자동봇 규칙을 삭제할까요?'))await ctx.onDelete();
-    if(b.dataset.flexAct==='test'){validateRule(r);const text=$('#flexTest',root).value;if(!matches(r,text))throw Error('시작 키워드가 맞지 않아요.');const out=execute(r,{name:'연습 러너',stats:structuredClone(c.fields),inventory:{}},{items:c.items||[]});$('#flexOutput',root).innerHTML=`<pre>${esc([...out.replies,...out.changes].join('\n\n'))}</pre>`;}
+    if(b.dataset.flexAct==='test'){validateRule(r);const text=$('#flexTest',root).value;if(!matches(r,text))throw Error('시작 키워드가 맞지 않아요.');const out=execute(r,{name:'연습 러너',stats:structuredClone(c.fields),inventory:{}},{items:c.items||[],statMaxes:c.statMaxes||{}});$('#flexOutput',root).innerHTML=`<pre>${esc([...out.replies,...out.changes].join('\n\n'))}</pre>`;}
   }catch(error){ctx.onError(error.message);}finally{b.disabled=false;}};
 }

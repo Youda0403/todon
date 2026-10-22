@@ -1,6 +1,6 @@
 // 역극툿 서비스 워커: 앱 화면 파일만 캐시하고, 마스토돈 서버 요청은 건드리지 않음
 const CACHE = 'ytt-v5';
-const WORKER_VERSION = '2026-10-23.1';
+const WORKER_VERSION = '2026-10-23.2';
 const BADGES = ['dm', 'reply', 'mention', 'fav', 'boost', 'status', 'follow', 'quote', 'default'].map(k => `./badge-${k}.png`);
 async function appClients(){
   const scope = new URL(self.registration.scope);

@@ -113,6 +113,11 @@ test('concurrent deliveries of the same account and notification share their exa
  const gate=defer(),f=fixture(p=>p.includes('notifications/')?gate.promise:[]);
  const a=f.push(),b=f.push();await until(()=>f.calls.length>0);assert.equal(f.calls.length,1);gate.resolve(notice());assert.deepEqual(await Promise.all([a,b]),[true,true]);assert.equal(f.popups.length,1);
 });
+test('a push arriving after polling already displayed its notification does not display it twice',async()=>{
+ let row=notice('41');const f=fixture(p=>p.includes('notifications?')?[row]:p.includes('notifications/')?row:{});
+ await f.poll();row=notice('42');await f.poll();assert.equal(f.popups.length,1);assert.equal(f.popups[0].id,'42');
+ assert.equal(await f.push(),true);assert.equal(f.popups.length,1);assert.equal(await f.push(),true);assert.equal(f.popups.length,1);
+});
 test('a hidden page, expired push or malformed recipient cannot claim foreground delivery',async()=>{
  const f=fixture();f.ctx.document.hidden=true;assert.equal(await f.push(),false);f.ctx.document.hidden=false;
  assert.equal(await f.push('42','a',f.now),false);assert.equal(await f.push('42','a',f.now+10000),false);

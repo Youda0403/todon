@@ -4484,9 +4484,13 @@ function popup(n, more){
   popTimer = setTimeout(() => popOut(p), 5000);
 }
 function showNew(list, fromPush = false){
-  const fresh = list.filter(n => fromPush || !shownIds.has(n.id));
+  const fresh = list.filter(n => fromPush ? !notificationPoll?.announced.has(n.id) : !shownIds.has(n.id));
   fresh.forEach(n => shownIds.add(n.id));
   if (!fresh.length) return;
+  if (notificationPoll){
+    fresh.forEach(n => notificationPoll.announced.add(n.id));
+    while (notificationPoll.announced.size > 200) notificationPoll.announced.delete(notificationPoll.announced.values().next().value);
+  }
   const {name, arg} = parse();
   const e = cache.get(curKey);
   const visible = fresh.filter(n => {
@@ -4899,7 +4903,7 @@ function mainSettings(root){
   const s7 = secEl('그 밖의 설정', '여기 없는 설정은 마스토돈 웹사이트에서 바꿀 수 있어요.');
   s7.append(linkRow('globe', '마스토돈 웹에서 설정 열기', me.instance + '/settings', () => window.open(`https://${me.instance}/settings/preferences`, '_blank', 'noopener')));
   s7.append(linkRow('memo', '문제 확인용 기록 복사', '최근 요청 시간과 화면 이동만 복사해요. 글 내용과 로그인 정보는 포함하지 않아요.', async () => {
-    const text = JSON.stringify({version:'2026-10-23.1', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
+    const text = JSON.stringify({version:'2026-10-23.2', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
     try{ await navigator.clipboard.writeText(text); toast('문제 확인용 기록을 복사했어요'); }
     catch(e){ toast('복사하지 못했어요. 브라우저의 클립보드 권한을 확인해 주세요.'); }
   }));
@@ -6062,7 +6066,7 @@ let notifCount = 0, dmCount = 0, unread = new Map();
 function resetNotificationPoll(acc = cur()){
   if (notificationPoll && notificationPoll.acc === acc && notificationPoll.token === acc?.token) return notificationPoll;
   notificationPoll?.controller.abort();
-  notificationPoll = {acc,token:acc?.token,controller:new AbortController(),task:null,delivered:new Set(),delivering:new Map()};
+  notificationPoll = {acc,token:acc?.token,controller:new AbortController(),task:null,announced:new Set(),delivered:new Set(),delivering:new Map()};
   pollTop = null; notifTop = null; unread = new Map(); shownIds.clear();
   return notificationPoll;
 }

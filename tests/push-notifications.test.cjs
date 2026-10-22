@@ -109,7 +109,7 @@ test('unverified raw types and titles cannot label a fallback as a new post or a
 test('notification preview and click target come from the same verified response',async()=>{
  const f=fixture();await f.push();const shown=f.shown[0];
  assert.equal(shown.data.routeVersion,4);assert.equal(shown.data.target.kind,'thread');assert.equal(shown.data.target.id,'100');assert.equal(shown.body,'답글 본문');
- assert.equal(shown.data.workerVersion,'2026-10-23.1');assert.ok(shown.tag.includes(hint));assert.doesNotMatch(JSON.stringify(shown.data),/fixture-token|content|본문/);
+ assert.equal(shown.data.workerVersion,'2026-10-23.2');assert.ok(shown.tag.includes(hint));assert.doesNotMatch(JSON.stringify(shown.data),/fixture-token|content|본문/);
 });
 test('failed detail lookup never attaches an unverified status to the fallback preview',async()=>{
  const f=fixture({fetchNotification:async()=>response(503,{})});await f.push();assert.equal(f.shown[0].data.target.kind,'notification');assert.equal(f.shown[0].data.target.id,'42');assert.notEqual(f.shown[0].data.target.id,'100');
@@ -124,7 +124,7 @@ test('a boost wrapper previews and targets the original status together',async()
 });
 test('worker version handshake reports the running worker protocol without credentials',()=>{
  const f=fixture(),messages=[];f.events.get('message')({data:{type:'worker-info'},source:{postMessage:m=>messages.push(m)}});
- assert.equal(messages[0].version,'2026-10-23.1');assert.equal(messages[0].routeVersion,4);assert.doesNotMatch(JSON.stringify(messages),/token|server.test/);
+ assert.equal(messages[0].version,'2026-10-23.2');assert.equal(messages[0].routeVersion,4);assert.doesNotMatch(JSON.stringify(messages),/token|server.test/);
 });
 
 test('a matching notification response supplies the displayed kind even if the raw push hint differs',async()=>{

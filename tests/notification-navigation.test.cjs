@@ -269,6 +269,14 @@ test('new neutral preview recovery is one-use and cannot be replayed after the w
 test('raw subscription events addressed to the recipient retain correct private-message navigation',async()=>{
  const n={...notice(),type:'status',status:{...notice().status,visibility:'direct',mentions:[{id:'b'}]}},f=fixture(async()=>n);await f.start('42',fingerprint('private-b'),{kind:'chat',id:'100'});assert.equal(f.location.hash,'#/chat/dm-key');
 });
+test('a real DM click and neutral recovery build participants for the recipient before switching accounts',async()=>{
+ const participants=html.slice(html.indexOf('const partKey ='),html.indexOf('const stripLead ='));
+ for(const target of [{kind:'chat',id:'100'},{kind:'notification',id:'42'}]){
+  const n={...notice(),status:{...notice().status,account:{id:'peer'},visibility:'direct',mentions:[{id:'b'},{id:'third'}]}};
+  const f=fixture(async()=>n);f.run(participants);await f.start('42',fingerprint('private-b'),target);
+  assert.equal(f.run('curIdx'),1);assert.equal(f.location.hash,'#/chat/peer-third');assert.equal(f.calls[0].acc,f.accounts[1]);
+ }
+});
 test('imported worker diagnostics are bounded, sanitized and deduplicated across version handshakes',()=>{
  const f=fixture(),entry={at:Date.now(),outcome:'http',status:503,attempts:2,typeHint:'status',receivedType:'other',displayKind:'other',hasAccount:true,hasStatus:false,typeMismatch:false,token:'secret',id:'42',body:'private body',url:'https://server.test/status/100'};
  f.context.entries=[entry];f.run('importPushDiagnostics(entries);importPushDiagnostics(entries)');assert.equal(f.events.filter(e=>e.kind==='push-preview').length,1);assert.doesNotMatch(JSON.stringify(f.events),/secret|private body|server\.test|"id"|"body"|"url"/);

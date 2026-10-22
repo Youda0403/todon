@@ -950,7 +950,7 @@ function richName(a){
 let accounts = LS.get('ytt.accounts', []);
 let curIdx = Math.min(LS.get('ytt.cur', 0), Math.max(0, accounts.length - 1));
 const cur = () => accounts[curIdx] || null;
-function saveAccounts(){ LS.set('ytt.accounts', accounts); LS.set('ytt.cur', curIdx); shareAccountsWithSW(); }
+function saveAccounts(){ LS.set('ytt.accounts', accounts); LS.set('ytt.cur', curIdx); resetNotificationPoll(); shareAccountsWithSW(); }
 /* 서비스 워커가 휴대폰 알림을 종류별로 꾸밀 수 있게, 토큰 지문과 서버 주소만 넘겨 둠 (토큰은 넘기지 않음) */
 async function shareAccountsWithSW(){
   try{
@@ -3695,12 +3695,12 @@ function afterPost(acc, isReply, posted){
 const convStore = new Map();
 const pendingParts = new Map();
 const partKey = accs => [...new Set(accs.map(a => String(a.id)))].sort().join('-') || 'me';
-function dmParts(st){
-  const me = cur(), m = new Map();
+function dmParts(st, me = cur()){
+  const m = new Map();
   [st.account, ...(st.mentions || [])].forEach(a => { if (String(a.id) !== String(me.id) && !m.has(String(a.id))) m.set(String(a.id), a); });
   return [...m.values()];
 }
-const dmKeyOf = st => partKey(dmParts(st));
+const dmKeyOf = (st, acc = cur()) => partKey(dmParts(st,acc));
 const isDm = n => n.type === 'mention' && !!n.status && n.status.visibility === 'direct';
 const stripLead = t => t.replace(/^(\s*@[\w.-]+(@[\w.-]+)?)+\s*/, '');
 function stripMentionsDom(root){
@@ -4437,7 +4437,7 @@ function notificationOpenRoute(hash){
 function notificationOpenTarget(hash){ return notificationOpenRoute(hash)?.target || null; }
 function notifTarget(n,acc = cur()){
   const target = notificationTarget(n,acc?.id);
-  if (target.kind === 'chat') return '#/chat/' + dmKeyOf(n.status.reblog || n.status);
+  if (target.kind === 'chat') return '#/chat/' + dmKeyOf(n.status.reblog || n.status,acc);
   if (target.kind === 'thread') return '#/thread/' + target.id;
   if (target.kind === 'user') return '#/user/' + target.id;
   return '#/notifications';
@@ -4460,7 +4460,7 @@ function popup(n, more){
   const kind = dm ? 'dm' : reply ? 'reply' : ({favourite:'fav', reblog:'boost', status:'status', quote:'quote', quoted_update:'quote', mention:'mention'}[type] || 'other');
   const cls = type === 'favourite' ? 'fav' : type === 'reblog' ? 'boost' : 'k-' + kind;
   const tagTxt = {dm:'쪽지', reply:'답글', fav:'좋아요', boost:'부스트', status:'새 글', quote:'인용', mention:'멘션'}[kind] || '알림';
-  const shownDestination = notifTarget(n), shownStatus = s ? {...s} : null;
+  const shownDestination = notifTarget(n,me), shownStatus = s ? {...s} : null;
   const p = h(`<div class="pop" role="status"><img class="av" alt=""><span class="pic ${cls}">${ic(icn)}</span><div class="t"><div class="pt"><span class="ptag k-${kind}">${tagTxt}</span><b></b><span class="ptx"></span></div><small></small></div><button class="ibtn" type="button" aria-label="닫기">${ic('x')}</button></div>`);
   p._notification = n; p._notificationAccount = notificationAccount(me);
   $('img', p).src = avOf(n.account);
@@ -4483,8 +4483,8 @@ function popup(n, more){
   document.body.append(p);
   popTimer = setTimeout(() => popOut(p), 5000);
 }
-function showNew(list){
-  const fresh = list.filter(n => !shownIds.has(n.id));
+function showNew(list, fromPush = false){
+  const fresh = list.filter(n => fromPush || !shownIds.has(n.id));
   fresh.forEach(n => shownIds.add(n.id));
   if (!fresh.length) return;
   const {name, arg} = parse();
@@ -4560,10 +4560,45 @@ function selectNotificationAccount(acc){
   if (i !== curIdx){ curIdx = i; saveAccounts(); cache.clear(); curKey = null; setBadge(false); }
   return true;
 }
+/* 같은 수신 계정의 알림을 기한 안에 처리한 창만 시스템 팝업을 대신한다. */
+async function handleVisiblePush(m){
+  const id = exactNotificationId(m.id), acc = cur(), remaining = m.expiresAt - Date.now();
+  if (!acc || !id || !/^[a-f0-9]{12}$/.test(m.hint || '') || !Number.isFinite(remaining) || remaining <= 100 || remaining > 2500 || document.hidden) return false;
+  const state = resetNotificationPoll(acc);
+  const current = () => notificationPoll === state && cur() === acc && acc.token === state.token && !state.controller.signal.aborted && !document.hidden && Date.now() < m.expiresAt;
+  try{
+    if (await tokHint(acc.token) !== m.hint || !current()) return false;
+    if (state.delivered.has(id)) return true;
+    if (state.delivering.has(id)) return await state.delivering.get(id);
+    const task = (async () => {
+      const timeout = m.expiresAt - Date.now() - 100;
+      if (timeout <= 0) return false;
+      const n = await api('/api/v1/notifications/' + encodeURIComponent(id), {acc, signal:state.controller.signal, timeout});
+      if (!current() || !n || exactNotificationId(n.id) !== id) return false;
+      /* 지원하지 않는 알림은 워커가 안내하고, 이미 숨긴 글은 다시 띄우지 않는다. */
+      if (filterNotifications([n],acc).length){
+        if (!alertKind(n)) return false;
+        rememberStatusData(n,acc); showNew([n],true);
+      }
+      state.delivered.add(id);
+      if (state.delivered.size > 200) state.delivered.delete(state.delivered.values().next().value);
+      recordDiag('push-delivery', {handled:true});
+      checkNotif();
+      return true;
+    })();
+    state.delivering.set(id,task);
+    try{ return await task; }finally{ if (state.delivering.get(id) === task) state.delivering.delete(id); }
+  }catch(e){ return false; }
+}
 /* '받았어요' 응답은 이동 요청을 실제로 처리한 뒤에 보낸다. */
 function onSwMessage(ev){
   const m = ev.data || {};
-  if (m.type === 'push') checkNotif();
+  if (m.type === 'push'){
+    if (m.deliveryVersion === 1 && ev.ports?.[0]){
+      const reply = handled => { try{ ev.ports[0].postMessage({type:'push-handled',handled}); }catch(e){} };
+      handleVisiblePush(m).then(reply,() => reply(false));
+    }else checkNotif();
+  }
   if (m.type === 'push-repair') checkPush({force:true});
   if (m.type === 'worker-info' && /^\d{4}-\d{2}-\d{2}\.\d+$/.test(m.version || '')) recordDiag('worker-info', {version:m.version,routeVersion:[2,3,4].includes(m.routeVersion) ? m.routeVersion : 1});
   if (m.type === 'push-diagnostics') importPushDiagnostics(m.entries);
@@ -4864,7 +4899,7 @@ function mainSettings(root){
   const s7 = secEl('그 밖의 설정', '여기 없는 설정은 마스토돈 웹사이트에서 바꿀 수 있어요.');
   s7.append(linkRow('globe', '마스토돈 웹에서 설정 열기', me.instance + '/settings', () => window.open(`https://${me.instance}/settings/preferences`, '_blank', 'noopener')));
   s7.append(linkRow('memo', '문제 확인용 기록 복사', '최근 요청 시간과 화면 이동만 복사해요. 글 내용과 로그인 정보는 포함하지 않아요.', async () => {
-    const text = JSON.stringify({version:'2026-10-21.1', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
+    const text = JSON.stringify({version:'2026-10-23.1', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
     try{ await navigator.clipboard.writeText(text); toast('문제 확인용 기록을 복사했어요'); }
     catch(e){ toast('복사하지 못했어요. 브라우저의 클립보드 권한을 확인해 주세요.'); }
   }));
@@ -6019,10 +6054,18 @@ function setupPTR(){
 }
 
 /* ---------- 알림 배지 ---------- */
-const seenKey = () => 'ytt.seen.' + cur().acct;
-let pollTop = null, pollAcct = null, notifTop = null;
+const seenKey = (acc = cur()) => 'ytt.seen.' + acc.acct;
+let pollTop = null, notifTop = null, notificationPoll = null;
 const shownIds = new Set();
 let notifCount = 0, dmCount = 0, unread = new Map();
+/* 계정 선택이 바뀌면 이전 조회를 취소한다. 다시 같은 계정으로 돌아와도 이전 실행은 끝난다. */
+function resetNotificationPoll(acc = cur()){
+  if (notificationPoll && notificationPoll.acc === acc && notificationPoll.token === acc?.token) return notificationPoll;
+  notificationPoll?.controller.abort();
+  notificationPoll = {acc,token:acc?.token,controller:new AbortController(),task:null,delivered:new Set(),delivering:new Map()};
+  pollTop = null; notifTop = null; unread = new Map(); shownIds.clear();
+  return notificationPoll;
+}
 const badgeText = (n, plus) => n > 99 ? '99+' : n + (plus ? '+' : '');
 function paintBadge(sel, n, plus){
   const b = $(`#bnav [data-n=${sel}] .badge`);
@@ -6034,36 +6077,40 @@ function updAppBadge(){
 }
 function setBadge(n, plus){ notifCount = Number(n) || 0; paintBadge('notifications', notifCount, plus); updAppBadge(); }
 function setDmBadge(n){ dmCount = Number(n) || 0; paintBadge('dm', dmCount); updAppBadge(); }
-function markSeen(id){
-  if (LS.get(seenKey(), null) === id) return;
-  LS.set(seenKey(), id);
-  api('/api/v1/markers', {method:'POST', body:{notifications:{last_read_id:id}}}).catch(() => {});
+function markSeen(id, acc = cur()){
+  if (LS.get(seenKey(acc), null) === id) return;
+  LS.set(seenKey(acc), id);
+  api('/api/v1/markers', {method:'POST', body:{notifications:{last_read_id:id}}, acc}).catch(() => {});
 }
-async function checkNotif(){
-  const acc = cur(); if (!acc) return;
-  if (pollAcct !== acc.acct){ pollAcct = acc.acct; pollTop = null; notifTop = null; unread = new Map(); }
-  try{
+function checkNotif(){
+  const acc = cur(); if (!acc) return Promise.resolve(false);
+  const state = resetNotificationPoll(acc);
+  if (state.task) return state.task;
+  const current = () => notificationPoll === state && cur() === acc && acc.token === state.token && !state.controller.signal.aborted;
+  const task = (async () => { try{
     const first = pollTop === null;
-    const received = await api('/api/v1/notifications?' + qs(first ? {limit:'40'} : {since_id:pollTop, limit:'40'}));
-    if (cur() !== acc) return;
+    const received = await api('/api/v1/notifications?' + qs(first ? {limit:'40'} : {since_id:pollTop, limit:'40'}), {acc,signal:state.controller.signal});
+    if (!current() || !Array.isArray(received)) return false;
     const list = filterNotifications(received,acc), visible = new Set(list.map(n => n.id));
     received.forEach(n => { if (!visible.has(n.id)) unread.delete(n.id); });
     if (first){
       /* 다른 기기·앱에서 읽은 위치도 반영 */
       try{
-        const mk = await api('/api/v1/markers?' + qs({'timeline[]':['notifications']}));
+        const mk = await api('/api/v1/markers?' + qs({'timeline[]':['notifications']}), {acc,signal:state.controller.signal});
+        if (!current()) return false;
         const sid = mk && mk.notifications && mk.notifications.last_read_id;
-        const ls = LS.get(seenKey(), null);
-        if (sid && (!ls || cmpId(sid, ls) > 0)) LS.set(seenKey(), sid);
+        const ls = LS.get(seenKey(acc), null);
+        if (sid && (!ls || cmpId(sid, ls) > 0)) LS.set(seenKey(acc), sid);
       }catch(e){}
     }
+    if (!current()) return false;
     if (received.length && (first || cmpId(received[0].id, pollTop) > 0)) pollTop = received[0].id;
     const nonDm = list.filter(n => !isDm(n));
     if (nonDm.length && (!notifTop || cmpId(nonDm[0].id, notifTop) > 0)) notifTop = nonDm[0].id;
     const {name} = parse();
     const onNotif = name === 'notifications' || name === 'mentions';
-    let seen = LS.get(seenKey(), null);
-    if (notifTop && (!seen || onNotif)){ markSeen(notifTop); seen = notifTop; }
+    let seen = LS.get(seenKey(acc), null);
+    if (notifTop && (!seen || onNotif)){ markSeen(notifTop,acc); seen = notifTop; }
     nonDm.forEach(n => { if (seen && cmpId(n.id, seen) > 0) unread.set(n.id, n.status ? String(n.status.id) : null); });
     for (const id of [...unread.keys()]) if (!seen || cmpId(id, seen) <= 0) unread.delete(id);
     if (onNotif) unread.clear();
@@ -6071,8 +6118,12 @@ async function checkNotif(){
     if (first) list.forEach(n => shownIds.add(n.id));
     else showNew(list);
     if (onNotif) verifyNotificationStatuses(received,acc);
-  }catch(e){}
-  checkDm();
+    return true;
+  }catch(e){ return false; }
+  finally{ if (current()) checkDm(); }
+  })().finally(() => { if (state.task === task) state.task = null; });
+  state.task = task;
+  return task;
 }
 
 /* ---------- 라우터 ---------- */

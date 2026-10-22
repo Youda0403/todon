@@ -2,6 +2,7 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), vm = require('node:vm'), path = require('node:path');
 const {webcrypto, createHash} = require('node:crypto');
+const {MessageChannel} = require('node:worker_threads');
 const worker = fs.readFileSync(path.join(__dirname,'../sw.js'),'utf8');
 const html = fs.readFileSync(path.join(__dirname,'../index.html'),'utf8');
 const replyCode = /function isReply\(n\)\{[^\n]+\}/.exec(html)[0];
@@ -10,13 +11,13 @@ const token = 'fixture-token', hint = createHash('sha256').update(token).digest(
 const account = {id:'1',instance:'server.test',hint};
 const notice = (fields={}) => ({id:'42',type:'mention',account:{username:'other',display_name:'상대'},status:{id:'100',content:'<p>@me 답글 본문</p>',visibility:'public',in_reply_to_id:'99',in_reply_to_account_id:'1',...fields}});
 const response = (status,n) => ({ok:status>=200&&status<300,status,json:async()=>n});
-function fixture({metadata=[account],fetchNotification=async()=>response(200,notice()),fast=false,visible=false,cryptoError=false}={}){
+function fixture({metadata=[account],fetchNotification=async()=>response(200,notice()),fast=false,visible=false,cryptoError=false,delivery=true,clients=null}={}){
   const events=new Map(),shown=[],calls=[],delays=[],messages=[],storage=new Map();let cleared=0;
   const crypto=cryptoError?{subtle:{digest:async()=>{throw new Error('unavailable');}}}:webcrypto;
   const self={crypto,addEventListener:(name,fn)=>events.set(name,fn),
-    clients:{matchAll:async()=>visible?[{url:'https://app.test/todon/',visibilityState:'visible',postMessage:m=>messages.push(m)}]:[]},
+    clients:{matchAll:async()=>clients || (visible?[{url:'https://app.test/todon/',visibilityState:'visible',postMessage:(m,ports)=>{messages.push(m);if(delivery!=='silent')ports[0].postMessage(delivery==='invalid'?true:{type:'push-handled',handled:delivery});}}]:[])},
     registration:{scope:'https://app.test/todon/',showNotification:async(title,options)=>shown.push({title,...options})}};
-  const context=vm.createContext({self,crypto,TextEncoder,Uint8Array,AbortController,URL,Response,
+  const context=vm.createContext({self,crypto,TextEncoder,Uint8Array,AbortController,URL,Response,MessageChannel,
     caches:{open:async()=>({match:async key=>key==='./ytt-accounts.json'?{json:async()=>metadata}:storage.has(key)?new Response(storage.get(key)):undefined,put:async(key,value)=>storage.set(key,await value.text())})},
     setTimeout:(fn,ms)=>{delays.push(ms);return setTimeout(fn,fast?5:ms);},clearTimeout:id=>{cleared++;clearTimeout(id);},
     fetch:async(url,options)=>{calls.push({url,options});return fetchNotification(url,options);}});
@@ -80,6 +81,23 @@ test('invalid or mismatched notification details cannot turn the fallback into a
 });
 test('a visible app receives the push signal without an extra system popup or detail request',async()=>{
   const f=fixture({visible:true});await f.push();assert.equal(f.calls.length,0);assert.equal(f.shown.length,0);assert.equal(f.messages[0].type,'push');
+  assert.equal(f.messages[0].hint,hint);assert.equal(f.messages[0].id,'42');assert.equal(f.messages[0].deliveryVersion,1);assert.doesNotMatch(JSON.stringify(f.messages),/fixture-token|access_token|본문/);
+});
+test('a visible page for another account cannot suppress the recipient system notification',async()=>{
+ const f=fixture({visible:true,delivery:false});await f.push();assert.equal(f.messages.length,1);assert.equal(f.shown.length,1);assert.equal(f.shown[0].badge,'badge-reply.png');assert.equal(f.shown[0].data.hint,hint);
+});
+test('an older frozen page or invalid acknowledgement falls back to a system notification',async()=>{
+ for(const delivery of ['silent','invalid']){const f=fixture({visible:true,delivery,fast:true});await f.push();assert.equal(f.shown.length,1);assert.equal(f.calls.length,1);assert.ok(f.delays.includes(2100));}
+});
+test('visible delivery tries the focused app first and stops at the first recipient acknowledgement',async()=>{
+ const messages=[];const client=(id,focused,handled)=>({url:'https://app.test/todon/',visibilityState:'visible',focused,postMessage:(m,ports)=>{messages.push(id);ports[0].postMessage({type:'push-handled',handled})}});
+ const f=fixture({clients:[client('recipient',false,true),client('wrong-account',true,false),client('unused',false,true)]});await f.push();assert.deepEqual(messages,['wrong-account','recipient']);assert.equal(f.shown.length,0);assert.equal(f.calls.length,0);
+});
+test('a failed MessageChannel or postMessage still delivers a system popup',async()=>{
+ for(const failure of ['channel','message']){const f=fixture({visible:true,clients:failure==='message'?[{url:'https://app.test/todon/',visibilityState:'visible',postMessage(){throw new Error('frozen')}}]:null});if(failure==='channel')f.context.MessageChannel=class{constructor(){throw new Error('unavailable')}};await f.push();assert.equal(f.shown.length,1);}
+});
+test('an unidentified recipient never delegates a push to whichever account is currently visible',async()=>{
+ const f=fixture({visible:true,cryptoError:true});await f.push();assert.equal(f.messages.length,0);assert.equal(f.calls.length,0);assert.equal(f.shown.length,1);assert.equal(f.shown[0].title,'새 알림');
 });
 test('unverified raw types and titles cannot label a fallback as a new post or another specific event',async()=>{
   for(const type of ['mention','status','favourite','reblog','follow','quote']){
@@ -91,7 +109,7 @@ test('unverified raw types and titles cannot label a fallback as a new post or a
 test('notification preview and click target come from the same verified response',async()=>{
  const f=fixture();await f.push();const shown=f.shown[0];
  assert.equal(shown.data.routeVersion,4);assert.equal(shown.data.target.kind,'thread');assert.equal(shown.data.target.id,'100');assert.equal(shown.body,'답글 본문');
- assert.equal(shown.data.workerVersion,'2026-10-21.1');assert.ok(shown.tag.includes(hint));assert.doesNotMatch(JSON.stringify(shown.data),/fixture-token|content|본문/);
+ assert.equal(shown.data.workerVersion,'2026-10-23.1');assert.ok(shown.tag.includes(hint));assert.doesNotMatch(JSON.stringify(shown.data),/fixture-token|content|본문/);
 });
 test('failed detail lookup never attaches an unverified status to the fallback preview',async()=>{
  const f=fixture({fetchNotification:async()=>response(503,{})});await f.push();assert.equal(f.shown[0].data.target.kind,'notification');assert.equal(f.shown[0].data.target.id,'42');assert.notEqual(f.shown[0].data.target.id,'100');
@@ -106,7 +124,7 @@ test('a boost wrapper previews and targets the original status together',async()
 });
 test('worker version handshake reports the running worker protocol without credentials',()=>{
  const f=fixture(),messages=[];f.events.get('message')({data:{type:'worker-info'},source:{postMessage:m=>messages.push(m)}});
- assert.equal(messages[0].version,'2026-10-21.1');assert.equal(messages[0].routeVersion,4);assert.doesNotMatch(JSON.stringify(messages),/token|server.test/);
+ assert.equal(messages[0].version,'2026-10-23.1');assert.equal(messages[0].routeVersion,4);assert.doesNotMatch(JSON.stringify(messages),/token|server.test/);
 });
 
 test('a matching notification response supplies the displayed kind even if the raw push hint differs',async()=>{

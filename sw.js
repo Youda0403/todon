@@ -1,6 +1,6 @@
 // 역극툿 서비스 워커: 앱 화면 파일만 캐시하고, 마스토돈 서버 요청은 건드리지 않음
 const CACHE = 'ytt-v5';
-const WORKER_VERSION = '2026-10-21.1';
+const WORKER_VERSION = '2026-10-23.1';
 const BADGES = ['dm', 'reply', 'mention', 'fav', 'boost', 'status', 'follow', 'quote', 'default'].map(k => `./badge-${k}.png`);
 async function appClients(){
   const scope = new URL(self.registration.scope);
@@ -243,7 +243,17 @@ async function sendPushDiagnostics(client){
   }catch(e){}
 }
 
-// 휴대폰 알림: 앱이 화면에 떠 있으면 앱 안 팝업으로, 아니면 시스템 알림으로
+function askVisiblePush(client, id, hint){
+  return new Promise(resolve => {
+    const channel = new MessageChannel(); let settled = false;
+    const done = handled => { if (settled) return; settled = true; clearTimeout(timer); channel.port1.close(); resolve(handled); };
+    /* 화면은 기한 전까지만 처리하고, 전송 중인 확인 응답에는 100ms 여유를 둔다. */
+    const expiresAt = Date.now() + 2000, timer = setTimeout(() => done(false),2100);
+    channel.port1.onmessage = e => done(e.data?.type === 'push-handled' && e.data.handled === true);
+    try{ client.postMessage({type:'push',deliveryVersion:1,id,hint,expiresAt},[channel.port2]); }catch(e){ done(false); }
+  });
+}
+// 수신 계정의 열린 화면이 실제로 처리했을 때만 시스템 알림을 생략한다.
 self.addEventListener('push', e => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch (_) {}
@@ -251,9 +261,11 @@ self.addEventListener('push', e => {
   d.notification_id = notificationId;
   e.waitUntil((async () => {
     const cs = await appClients();
-    const vis = cs.find(c => c.visibilityState === 'visible');
-    if (vis) { vis.postMessage({ type: 'push' }); return; }
     const hint = await tokHint(d.access_token);
+    if (hint && d.notification_id){
+      const visible = cs.filter(c => c.visibilityState === 'visible').sort((a,b) => Number(!!b.focused) - Number(!!a.focused));
+      for (const client of visible) if (await askVisiblePush(client,d.notification_id,hint).catch(() => false)) return;
+    }
     // 미확인 미리보기는 종류·본문을 단정하지 않고, 누르면 정확한 알림 번호로 다시 확인한다.
     let title = '새 알림', body = '앱을 열어 알림을 확인해 주세요.', kind = 'other';
     let target = d.notification_id ? {kind:'notification',id:d.notification_id} : {kind:'list',id:'-'};

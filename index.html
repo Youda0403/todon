@@ -2429,7 +2429,7 @@ function threadView(id, threadSeed = null){
   let bodyPending = false, contextPending = false, needsRefresh = true;
   const noteContent = source => { if (!firstContent){ firstContent = true; recordDiag('thread-content', {trace, source, ms:Date.now() - opened}); } };
   let problem = null, failure = null;
-  let state = null, pending = null, stopFit = () => {};
+  let state = null, pending = null, stopFit = () => {}, fitWant;
   const localPosts = new Map(threadSeed?.localPosts || []);
   const noteReplies = source => {
     if (!firstReplies && state?.complete){ firstReplies = true; recordDiag('thread-replies', {trace, source, ms:Date.now() - opened, cards:state.ctx.descendants.length}); }
@@ -2494,8 +2494,9 @@ function threadView(id, threadSeed = null){
         if (Math.abs(d) > 1) window.scrollTo({top:window.scrollY + d, behavior:'instant'});
       };
       fit();
+      fitWant = targetTop;
       const ro = new ResizeObserver(() => { if (f.isConnected) fit(); else stop(); });
-      const stop = () => { ro.disconnect(); removeEventListener('touchstart', stop); removeEventListener('wheel', stop); removeEventListener('keydown', stop); };
+      const stop = () => { if (stopFit === stop) fitWant = undefined; ro.disconnect(); removeEventListener('touchstart', stop); removeEventListener('wheel', stop); removeEventListener('keydown', stop); };
       stopFit = stop;
       for (const c of root.children){ if (c === f) break; ro.observe(c); }
       addEventListener('touchstart', stop, {passive:true}); addEventListener('wheel', stop, {passive:true}); addEventListener('keydown', stop);
@@ -2507,6 +2508,9 @@ function threadView(id, threadSeed = null){
     recordDiag('thread-render', {trace, ms:Date.now() - started, cards:ctx.ancestors.length + order.length + 1, complete:!!state.complete, statusPending:bodyPending, contextPending});
   };
   const show = (s, ctx) => {
+    /* 위치 맞추기가 아직 진행 중이면 그 목표 자리를 그대로 이어 씀.
+       (지금 위치를 재면 사진이 막 커진 순간의 어긋난 값이 잡혀 그 자리에 고정될 수 있음) */
+    if (fitWant !== undefined) return render(s,ctx,true,fitWant);
     const previous = root.isConnected && root.querySelector('.focus');
     const top = previous ? previous.getBoundingClientRect().top : null;
     render(s,ctx,true,top);

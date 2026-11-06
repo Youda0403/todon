@@ -3,14 +3,6 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
-<script>
-/* 아이폰이 아니면 화면을 상태 표시줄 밑까지 늘리지 않음.
-   (viewport-fit=cover는 아이폰 노치용. 안드로이드 브라우저가 상태 표시줄 높이를 알려 주지 않으면 상단이 그 밑에 깔려 잘림) */
-(function(){
-  var ios = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  if (!ios){ var m = document.querySelector('meta[name=viewport]'); m.content = m.content.replace(',viewport-fit=cover', ''); }
-})();
-</script>
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#15181c" media="(prefers-color-scheme: dark)">
 <meta name="mobile-web-app-capable" content="yes">

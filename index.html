@@ -4911,11 +4911,30 @@ function mainSettings(root){
   const s7 = secEl('그 밖의 설정', '여기 없는 설정은 마스토돈 웹사이트에서 바꿀 수 있어요.');
   s7.append(linkRow('globe', '마스토돈 웹에서 설정 열기', me.instance + '/settings', () => window.open(`https://${me.instance}/settings/preferences`, '_blank', 'noopener')));
   s7.append(linkRow('memo', '문제 확인용 기록 복사', '최근 요청 시간과 화면 이동만 복사해요. 글 내용과 로그인 정보는 포함하지 않아요.', async () => {
-    const text = JSON.stringify({version:'2026-10-23.2', viewport:{width:innerWidth, height:innerHeight}, events:diagEvents.slice()}, null, 2);
+    const text = JSON.stringify({version:'2026-10-23.2', viewport:{width:innerWidth, height:innerHeight}, screenInfo:screenDiag(), events:diagEvents.slice()}, null, 2);
     try{ await navigator.clipboard.writeText(text); toast('문제 확인용 기록을 복사했어요'); }
     catch(e){ toast('복사하지 못했어요. 브라우저의 클립보드 권한을 확인해 주세요.'); }
   }));
   root.append(s7);
+}
+/* 화면 위치 문제 확인용: 화면·상단바 위치·안전 영역 값 (개인 정보 없음) */
+function screenDiag(){
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:fixed;visibility:hidden;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)';
+  document.body.append(probe);
+  const cs = getComputedStyle(probe), inset = {top:cs.paddingTop, bottom:cs.paddingBottom};
+  probe.remove();
+  const top = $('#top'), r = top ? top.getBoundingClientRect() : null, vv = window.visualViewport;
+  return {
+    ua:navigator.userAgent, screen:[screen.width, screen.height], dpr:devicePixelRatio,
+    standalone:matchMedia('(display-mode: standalone)').matches, fullscreen:matchMedia('(display-mode: fullscreen)').matches,
+    viewportMeta:(document.querySelector('meta[name=viewport]') || {}).content,
+    inset, scrollY:Math.round(scrollY), docH:document.documentElement.scrollHeight,
+    vv:vv ? {h:Math.round(vv.height), w:Math.round(vv.width), offsetTop:Math.round(vv.offsetTop), pageTop:Math.round(vv.pageTop), scale:vv.scale} : null,
+    topBar:r ? {top:Math.round(r.top), h:Math.round(r.height), pos:getComputedStyle(top).position} : null,
+    body:{cls:document.body.className, pos:document.body.style.position, top:document.body.style.top, overflow:getComputedStyle(document.body).overflow},
+    lockCount, hash:location.hash.replace(/\/\d{6,}.*/, '/…')
+  };
 }
 function tabsEditor(root){
   let tabs = homeTabs().slice();

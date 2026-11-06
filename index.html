@@ -4,8 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <script>
-/* 삼성 인터넷 웹앱(31 버전부터 확인)은 화면을 상태 표시줄·아래 내비게이션 바 밑까지 그리면서 그 높이를 0으로 알려 줌
-   → 앱 상단이 상태 표시줄에, 아래 탭이 내비게이션 바에 가려짐. 브라우저가 높이를 제대로 알려 주면(0이 아니면) 아무것도 안 함 */
+/* 안드로이드 15부터는 앱이 화면을 상태 표시줄·아래 버튼 줄 밑까지 꽉 채워 그리고, 가려지는 높이(위·아래·키보드)를 앱이 직접 처리해야 함.
+   삼성 인터넷 웹앱은 이때 그 높이를 페이지에 0으로 알려 줌 → 위는 상태 표시줄에, 아래는 버튼 줄에, 입력칸은 키보드에 가려짐.
+   그래서 [삼성 인터넷 웹앱 + 높이를 0으로 알려 줌 + 안드로이드 15 이상]일 때만 앱이 직접 비움.
+   안드로이드 14 이하는 원래대로(가려지지 않으므로 아무것도 안 함). 브라우저가 높이를 제대로 알려 주면 역시 아무것도 안 함.
+   (브라우저 정보 문자열은 버전이 'Android 10'으로 고정돼 있어서, 실제 버전은 브라우저에 따로 물어봄) */
 window.EDGE = (function(){
   try{
     if (!/SamsungBrowser\//.test(navigator.userAgent) || !matchMedia('(display-mode: standalone)').matches) return null;
@@ -16,18 +19,50 @@ window.EDGE = (function(){
     d.remove();
     if (reported) return null;
     var saved = {}; try{ saved = JSON.parse(localStorage.getItem('ytt.edge')) || {}; }catch(e){}
-    var E = {on: saved.on !== false, top: saved.top != null ? saved.top : 36, bottom: saved.bottom != null ? saved.bottom : 48, maxH: innerHeight};
+    var E = {top: saved.top != null ? saved.top : 36, bottom: saved.bottom != null ? saved.bottom : 48,
+             manual: typeof saved.on === 'boolean' ? saved.on : null,   /* 사용자가 직접 켜고 끈 값 (없으면 자동) */
+             android: saved.android || 0, kb: 0, maxH: innerHeight, vk: 'virtualKeyboard' in navigator, kbLog: []};
+    E.auto = function(){ return E.android >= 15; };
+    E.isOn = function(){ return E.manual != null ? E.manual : E.auto(); };
     E.apply = function(){
-      var root = document.documentElement.style;
+      var root = document.documentElement.style, on = E.isOn();
       E.maxH = Math.max(E.maxH, innerHeight);
-      /* 키보드가 올라오면 아래 내비게이션 바는 키보드 밑이라 아래 여백은 뺌 */
-      var kb = innerHeight < E.maxH - 150;
-      root.setProperty('--sat', E.on ? E.top + 'px' : 'env(safe-area-inset-top)');
-      root.setProperty('--sab', E.on && !kb ? E.bottom + 'px' : 'env(safe-area-inset-bottom)');
+      /* 키보드가 떠 있으면 아래 버튼 줄은 키보드 밑이라 아래 여백은 뺌 */
+      var kbOpen = E.kb > 0 || innerHeight < E.maxH - 150;
+      root.setProperty('--sat', on ? E.top + 'px' : 'env(safe-area-inset-top)');
+      root.setProperty('--sab', on && !kbOpen ? E.bottom + 'px' : 'env(safe-area-inset-bottom)');
+      useKeyboardApi(on);
+      try{ dispatchEvent(new Event('ytt-kb')); }catch(e){}
     };
-    E.save = function(){ try{ localStorage.setItem('ytt.edge', JSON.stringify({on:E.on, top:E.top, bottom:E.bottom})); }catch(e){} E.apply(); };
+    /* 키보드: 화면이 줄지 않으니, 브라우저의 '키보드 크기 알려 주기' 기능으로 높이를 받아 입력창을 그 위로 올림 */
+    var vkOn = false;
+    function useKeyboardApi(on){
+      if (!E.vk || vkOn === on) return;
+      vkOn = on;
+      try{
+        navigator.virtualKeyboard.overlaysContent = on;
+        if (on && !E.vkBound){
+          E.vkBound = true;
+          navigator.virtualKeyboard.addEventListener('geometrychange', function(ev){
+            var h = Math.round(ev.target.boundingRect.height) || 0;
+            if (E.kbLog.length < 20) E.kbLog.push(h);
+            if (h !== E.kb){ E.kb = h; E.apply(); }
+          });
+        }
+      }catch(e){ E.vk = false; }
+    }
+    E.save = function(){ try{ localStorage.setItem('ytt.edge', JSON.stringify({on:E.manual, top:E.top, bottom:E.bottom, android:E.android})); }catch(e){} E.apply(); };
     E.apply();
     addEventListener('resize', E.apply);
+    /* 실제 안드로이드 버전 묻기 (한 번 알면 저장해 두고 다음부터 바로 씀) */
+    try{
+      if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues){
+        navigator.userAgentData.getHighEntropyValues(['platformVersion']).then(function(v){
+          var major = parseInt(v.platformVersion, 10) || 0;
+          if (major && major !== E.android){ E.android = major; E.save(); }
+        }).catch(function(){});
+      }
+    }catch(e){}
     return E;
   }catch(e){ return null; }
 })();
@@ -3636,13 +3671,17 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
   const fit = () => {
     const off = window.innerHeight - vv.height;
     if (Date.now() - replyToggleAt < 1000) recordDiag('compose-viewport', {height:vv.height, offset:vv.offsetTop});
-    if (off > 120){ ov.style.height = vv.height + 'px'; ov.style.top = vv.offsetTop + 'px'; }
+    /* 삼성 인터넷 웹앱(안드로이드 15+)처럼 키보드가 떠도 화면이 안 줄어드는 경우: 알려 받은 키보드 높이만큼 위로 */
+    const kb = window.EDGE && window.EDGE.isOn() ? window.EDGE.kb : 0;
+    if (kb > 0 && off <= 120){ ov.style.height = (window.innerHeight - kb) + 'px'; ov.style.top = '0px'; }
+    else if (off > 120){ ov.style.height = vv.height + 'px'; ov.style.top = vv.offsetTop + 'px'; }
     else { ov.style.height = ''; ov.style.top = ''; }
   };
   let closed = false, ovId = 0;
   const shut = () => {
     if (closed) return false; closed = true;
     if (vv){ vv.removeEventListener('resize', fit); vv.removeEventListener('scroll', fit); }
+    removeEventListener('ytt-kb', fit);
     S.media.forEach(m => URL.revokeObjectURL(m.preview));
     ov.classList.add('out'); setTimeout(() => ov.remove(), 220); document.body.classList.remove('noscroll'); unlockScroll();
     return true;
@@ -3703,6 +3742,7 @@ function openCompose({replyTo = null, redraft = null, edit = null, quote = null}
   document.body.append(ov); document.body.classList.add('noscroll'); lockScroll();
   ovId = pushOverlay(() => { if (shut()) leave(); });
   if (vv){ vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); fit(); }
+  addEventListener('ytt-kb', fit);
   paintCw(); applyAcc(true); paintMedia(); paintPoll();
   if (quoteLink){ ta.value = '\n\n' + (quote.url || quote.uri); update(); }
   setTimeout(() => { ta.focus(); const L = quoteLink ? 0 : ta.value.length; ta.setSelectionRange(L, L); remember(); }, 60);
@@ -4054,11 +4094,14 @@ function chatView(key){
     const fit = () => {
       if (!root.isConnected || document.activeElement !== ta){ root.style.bottom = ''; return; }
       const off = window.innerHeight - vv.height - vv.offsetTop;
-      root.style.bottom = off > 120 ? off + 'px' : '';
+      /* 삼성 인터넷 웹앱(안드로이드 15+): 화면이 안 줄어드니 알려 받은 키보드 높이만큼 위로 */
+      const kb = window.EDGE && window.EDGE.isOn() ? window.EDGE.kb : 0;
+      root.style.bottom = off > 120 ? off + 'px' : kb > 0 ? kb + 'px' : '';
     };
     ta.addEventListener('blur', () => { root.style.bottom = ''; });
     ta.addEventListener('focus', () => setTimeout(() => { fit(); toBottom(); }, 300));
     vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit);
+    addEventListener('ytt-kb', () => { fit(); if (root.isConnected && document.activeElement === ta) toBottom(); });
   }
   root.refresh = () => { convStore.delete(skey); return load(); };
   load();
@@ -4933,8 +4976,11 @@ function mainSettings(root){
   /* 그 밖 */
   if (window.EDGE){
     const E = window.EDGE;
-    const sE = secEl('화면 가장자리', '삼성 인터넷 웹앱에서 맨 위가 상태 표시줄에, 아래 탭이 휴대폰 버튼 줄에 가려지지 않게 비워 둘 높이예요.');
-    sE.append(toggleRow('가려짐 보정', '켜 두면 아래 높이만큼 비워요', null, E.on, v => { E.on = v; E.save(); }));
+    const why = E.android ? `안드로이드 ${E.android}` : '안드로이드 버전 확인 못 함';
+    const sE = secEl('화면 가장자리', `삼성 인터넷 웹앱은 안드로이드 15부터 맨 위가 상태 표시줄에, 아래가 휴대폰 버튼 줄에, 입력칸이 키보드에 가려질 수 있어요. 이 휴대폰: ${why} → 자동으로 ${E.auto() ? '보정해요' : '보정하지 않아요'}.`);
+    let reset;
+    const tgl = toggleRow('가려짐 보정', E.manual == null ? '지금은 자동으로 정해져요' : '직접 켜고 끈 설정이에요', null, E.isOn(), v => { E.manual = v; E.save(); reset.hidden = false; $('small', tgl).textContent = '직접 켜고 끈 설정이에요'; });
+    sE.append(tgl);
     const stepRow = (label, key) => {
       const r = h(`<div class="srow"><span class="t"><b></b><small></small></span><button class="mini" type="button">−</button><button class="mini" type="button">+</button></div>`);
       $('b', r).textContent = label;
@@ -4945,6 +4991,12 @@ function mainSettings(root){
       show(); return r;
     };
     sE.append(stepRow('위쪽 (상태 표시줄)', 'top'), stepRow('아래쪽 (버튼 줄)', 'bottom'));
+    reset = linkRow('refresh', '자동으로 되돌리기', '안드로이드 버전에 맞춰 알아서 켜고 꺼요', () => {
+      E.manual = null; E.save(); reset.hidden = true;
+      $('small', tgl).textContent = '지금은 자동으로 정해져요'; $('input', tgl).checked = E.isOn();
+    });
+    reset.hidden = E.manual == null;
+    sE.append(reset);
     root.append(sE);
   }
   const s7 = secEl('그 밖의 설정', '여기 없는 설정은 마스토돈 웹사이트에서 바꿀 수 있어요.');
@@ -4972,7 +5024,7 @@ function screenDiag(){
     vv:vv ? {h:Math.round(vv.height), w:Math.round(vv.width), offsetTop:Math.round(vv.offsetTop), pageTop:Math.round(vv.pageTop), scale:vv.scale} : null,
     topBar:r ? {top:Math.round(r.top), h:Math.round(r.height), pos:getComputedStyle(top).position} : null,
     body:{cls:document.body.className, pos:document.body.style.position, top:document.body.style.top, overflow:getComputedStyle(document.body).overflow},
-    edge:window.EDGE ? {on:window.EDGE.on, top:window.EDGE.top, bottom:window.EDGE.bottom} : null,
+    edge:window.EDGE ? {on:window.EDGE.isOn(), manual:window.EDGE.manual, android:window.EDGE.android, top:window.EDGE.top, bottom:window.EDGE.bottom, vk:window.EDGE.vk, kb:window.EDGE.kb, kbLog:window.EDGE.kbLog} : null,
     lockCount, hash:location.hash.replace(/\/\d{6,}.*/, '/…')
   };
 }
